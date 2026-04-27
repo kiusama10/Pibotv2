@@ -59,7 +59,7 @@ from handlers.theme_juegosYcasino import (
     apostar, aceptar, detectar_dado, cancelar_apuesta, jugar, robar
 )
 from handlers.rewards import manejar_imagenes
-
+from blackjack import cmd_blackjack
 # Handler imports - User onboarding
 from handlers.welcoming import nuevo_usuario, mensaje_de_presentaciones
 
@@ -474,6 +474,7 @@ def main() -> None:
 
     # Group 6: Punishment filter (prevents messages outside punishment corner)
     app.add_handler(MessageHandler(filters.ALL, filtro_castigo), group=6)
+app.add_handler(CommandHandler("blackjack", cmd_blackjack))
 
     # Start the bot
     print("🤖 PiBot iniciado e listo para recibir mensajes...")
