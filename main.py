@@ -11,11 +11,21 @@ This module handles:
 - Community blocking/filtering
 """
 import socket
+import threading
+import http.server
+import socketserver
 
 orig_getaddrinfo = socket.getaddrinfo
 
 def getaddrinfo_ipv4(*args, **kwargs):
     return [x for x in orig_getaddrinfo(*args, **kwargs) if x[0] == socket.AF_INET]
+def run_server():
+    PORT = 8080
+    Handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", PORT), Handler) as httpd:
+        httpd.serve_forever()
+        
+
 
 socket.getaddrinfo = getaddrinfo_ipv4
 
@@ -467,6 +477,9 @@ def main() -> None:
 
     # Start the bot
     print("🤖 PiBot iniciado e listo para recibir mensajes...")
+        import threading
+    threading.Thread(target=run_server, daemon=True).start()
+    
     app.run_polling(drop_pending_updates=True)
 
 
