@@ -1,5 +1,5 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from database.database import supabase, restar_dinero_pipesos, sumar_dinero_pipesos
+from src.database.database import supabase, restar_dinero_pipesos, sumar_dinero_pipesos
 
 async def cmd_blackjack(update, context):
     user = update.effective_user
