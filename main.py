@@ -59,7 +59,29 @@ from handlers.theme_juegosYcasino import (
     apostar, aceptar, detectar_dado, cancelar_apuesta, jugar, robar
 )
 from handlers.rewards import manejar_imagenes
-from handlers.blackjack import cmd_blackjack
+import sys
+import os
+
+# Agregamos la ruta de la carpeta src y la raíz al buscador de Python
+actual_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(actual_dir)
+sys.path.append(os.path.join(actual_dir, 'handlers'))
+
+try:
+    from handlers.blackjack import cmd_blackjack
+except ImportError:
+    try:
+        from blackjack import cmd_blackjack
+    except ImportError:
+        # Si todo falla, forzamos la carga del comando
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("blackjack", os.path.join(actual_dir, "handlers/blackjack.py"))
+        if spec is None:
+            spec = importlib.util.spec_from_file_location("blackjack", os.path.join(actual_dir, "blackjack.py"))
+        foo = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(foo)
+        cmd_blackjack = foo.cmd_blackjack
+        
 # Handler imports - User onboarding
 from handlers.welcoming import nuevo_usuario, mensaje_de_presentaciones
 
