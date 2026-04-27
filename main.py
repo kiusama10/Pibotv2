@@ -10,6 +10,14 @@ This module handles:
 - Punishment system (castigados.json management)
 - Community blocking/filtering
 """
+import socket
+
+orig_getaddrinfo = socket.getaddrinfo
+
+def getaddrinfo_ipv4(*args, **kwargs):
+    return [x for x in orig_getaddrinfo(*args, **kwargs) if x[0] == socket.AF_INET]
+
+socket.getaddrinfo = getaddrinfo_ipv4
 
 import json
 import os
