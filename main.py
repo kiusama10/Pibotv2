@@ -59,7 +59,7 @@ from handlers.theme_juegosYcasino import (
     apostar, aceptar, detectar_dado, cancelar_apuesta, jugar, robar
 )
 from handlers.rewards import manejar_imagenes
-from blackjack import cmd_blackjack
+from handlers.blackjack import cmd_blackjack
 # Handler imports - User onboarding
 from handlers.welcoming import nuevo_usuario, mensaje_de_presentaciones
 
