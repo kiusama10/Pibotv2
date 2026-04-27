@@ -477,7 +477,7 @@ def main() -> None:
 
     # Start the bot
     print("🤖 PiBot iniciado e listo para recibir mensajes...")
-        import threading
+    import threading
     threading.Thread(target=run_server, daemon=True).start()
     
     app.run_polling(drop_pending_updates=True)
