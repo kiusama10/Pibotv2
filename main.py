@@ -473,15 +473,15 @@ def main() -> None:
     )
 
     # Group 6: Punishment filter (prevents messages outside punishment corner)
-    app.add_handler(MessageHandler(filters.ALL, filtro_castigo), group=6)
+app.add_handler(MessageHandler(filters.ALL, filtro_castigo), group=6)
 app.add_handler(CommandHandler("blackjack", cmd_blackjack))
 
     # Start the bot
-    print("🤖 PiBot iniciado e listo para recibir mensajes...")
-    import threading
-    threading.Thread(target=run_server, daemon=True).start()
+print("🤖 PiBot iniciado e listo para recibir mensajes...")
+import threading
+threading.Thread(target=run_server, daemon=True).start()
     
-    app.run_polling(drop_pending_updates=True)
+app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
