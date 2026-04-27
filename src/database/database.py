@@ -27,12 +27,12 @@ from src.config import DATABASE_URL
 _connection_pool = None
 def _init_pool():
     """Initialize the PostgreSQL connection pool."""
-    global __connection_pool
-    if __connection_pool is None:
+    global _connection_pool
+    if _connection_pool is None:
         print("[DB] Iniciando intento de conexión a Supabase...")
         try:
             start_time = time.time()
-            __connection_pool = pg_pool.SimpleConnectionPool(
+            _connection_pool = pg_pool.SimpleConnectionPool(
                 1, 10, 
                 DATABASE_URL,
                 sslmode="require",
