@@ -17,6 +17,7 @@ import unicodedata
 from typing import Optional, Dict, List, Any
 
 import psycopg2
+import time
 from psycopg2 import pool as pg_pool
 
 from src.config import DATABASE_URL
@@ -24,14 +25,22 @@ from src.config import DATABASE_URL
 # ==================== CONNECTION POOL ====================
 
 _connection_pool = None
-
-
 def _init_pool():
     """Initialize the PostgreSQL connection pool."""
-    global _connection_pool
-    if _connection_pool is None:
-        _connection_pool = pg_pool.SimpleConnectionPool(1, 10, DATABASE_URL)
-
+    global __connection_pool
+    if __connection_pool is None:
+        print("[DB] Iniciando intento de conexión a Supabase...")
+        try:
+            start_time = time.time()
+            __connection_pool = pg_pool.SimpleConnectionPool(
+                1, 10, 
+                DATABASE_URL,
+                sslmode="require",
+                connect_timeout=10
+            )
+            print(f"[DB] ¡POOL CREADO EXITOSAMENTE! Tiempo: {time.time() - start_time:.2f}s")
+        except Exception as e:
+            print(f"[DB ERROR] No se pudo crear el pool: {str(e)}")
 
 def _get_connection():
     """Get a connection from the pool."""
