@@ -1,5 +1,10 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from src.database.database import db as supabase, restar_dinero_pipesos, sumar_dinero_pipesos
+import src.database.database as db_file
+from src.database.database import restar_dinero_pipesos, sumar_dinero_pipesos
+
+# Esto busca automáticamente si se llama 'supabase', 'db' o 'supabase_client'
+supabase = getattr(db_file, 'supabase', getattr(db_file, 'db', getattr(db_file, 'supabase_client', None)))
+
 
 async def cmd_blackjack(update, context):
     user = update.effective_user
