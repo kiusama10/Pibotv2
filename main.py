@@ -11,7 +11,19 @@ This module handles:
 - Community blocking/filtering
 """
 import socket
+from flask import Flask
+import threading
 
+app_web = Flask('')
+
+@app_web.route('/')
+def home():
+    return "PiBot Online"
+
+def run():
+    port = int(os.environ.get('PORT', 8080))
+    app_web.run(host='0.0.0.0', port=port)
+    
 orig_getaddrinfo = socket.getaddrinfo
 
 def getaddrinfo_ipv4(*args, **kwargs):
@@ -466,7 +478,8 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.ALL, filtro_castigo), group=6)
 
     # Start the bot
-    print("🤖 PiBot iniciado e listo para recibir mensajes...")
+    threading.Thread(target=run, daemon=True).start()
+print("🤖 PiBot iniciado e listo para recibir mensajes...")
     app.run_polling(drop_pending_updates=True)
 
 
