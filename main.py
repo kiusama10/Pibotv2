@@ -11,21 +11,11 @@ This module handles:
 - Community blocking/filtering
 """
 import socket
-import threading
-import http.server
-import socketserver
 
 orig_getaddrinfo = socket.getaddrinfo
 
 def getaddrinfo_ipv4(*args, **kwargs):
     return [x for x in orig_getaddrinfo(*args, **kwargs) if x[0] == socket.AF_INET]
-def run_server():
-    PORT = 8080
-    Handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", PORT), Handler) as httpd:
-        httpd.serve_forever()
-        
-
 
 socket.getaddrinfo = getaddrinfo_ipv4
 
@@ -59,7 +49,7 @@ from handlers.theme_juegosYcasino import (
     apostar, aceptar, detectar_dado, cancelar_apuesta, jugar, robar
 )
 from handlers.rewards import manejar_imagenes
-from src.handlers.blackjack import cmd_blackjack
+
 # Handler imports - User onboarding
 from handlers.welcoming import nuevo_usuario, mensaje_de_presentaciones
 
@@ -473,15 +463,11 @@ def main() -> None:
     )
 
     # Group 6: Punishment filter (prevents messages outside punishment corner)
-app.add_handler(MessageHandler(filters.ALL, filtro_castigo), group=6)
-app.add_handler(CommandHandler("blackjack", cmd_blackjack))
+    app.add_handler(MessageHandler(filters.ALL, filtro_castigo), group=6)
 
     # Start the bot
-print("🤖 PiBot iniciado e listo para recibir mensajes...")
-import threading
-threading.Thread(target=run_server, daemon=True).start()
-    
-app.run_polling(drop_pending_updates=True)
+    print("🤖 PiBot iniciado e listo para recibir mensajes...")
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
