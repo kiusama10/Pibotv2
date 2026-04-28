@@ -450,21 +450,21 @@ def main() -> None:
     # )
 
     # Group 5: Callback handlers for inline keyboards
-    app.add_handler(
+    application.add_handler(
         CallbackQueryHandler(
             menu_callback,
             pattern="^(ver_comandos|abrir_tienda|ver_inventario|perfil)$"
         ),
         group=5
     )
-    app.add_handler(
+    application.add_handler(
         CallbackQueryHandler(
             inventario_callback,
             pattern="^(inv_prev_|inv_next_|ver_item_)"
         ),
         group=5
     )
-    app.add_handler(
+    application.add_handler(
         CallbackQueryHandler(
             tienda_callback,
             pattern="^(producto_|volver_menu|abrir_tienda|volver_catalogo|comprar_)"
@@ -473,15 +473,15 @@ def main() -> None:
     )
 
     # Group 6: Punishment filter (prevents messages outside punishment corner)
-app.add_handler(MessageHandler(filters.ALL, filtro_castigo), group=6)
-app.add_handler(CommandHandler("blackjack", cmd_blackjack))
+application.add_handler(MessageHandler(filters.ALL, filtro_castigo), group=6)
+application.add_handler(CommandHandler("blackjack", cmd_blackjack))
 
     # Start the bot
 print("🤖 PiBot iniciado e listo para recibir mensajes...")
 import threading
 threading.Thread(target=run_server, daemon=True).start()
     
-app.run_polling(drop_pending_updates=True)
+application.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
