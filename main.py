@@ -150,16 +150,25 @@ async def get_theme_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def saludar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a festive welcome message to the chat."""
-    mensaje_bienvenida = (
-        "🎄✨ *¡Ho, ho, ho! Llegó PiBot al chat* ✨🎄\n"
-        "¡Hola a todos! 🤖🎅\n"
-        "Estoy aquí para traer *alegría, buena vibra y espíritu navideño* a este lugar.\n"
-        "Prepárense para luces, diversión y un montón de sorpresas festivas. 🎁❄️\n\n"
-        "¡Que comience la magia navideña! 🎅🤖✨"
+    """Envia un mensaje de bienvenida con el alma de la comunidad."""
+    mensaje_final = (
+        "🦅 **Bienvenidos a nuestra Comunidad BDSM** 🦅\n\n"
+        "El BDSM es mucho más que una práctica; es la valentía de entregar la voluntad y el honor de saber cuidarla. "
+        "Es una danza de **Bondage, Dominación, Sumisión, Sadismo y Masoquismo** donde la piel habla lo que el corazón siente, "
+        "siempre bajo el refugio del respeto y la confianza absoluta.\n\n"
+        "Queremos detenernos un momento para mirarlos a los ojos y darles las gracias. "
+        "A los que están desde el primer día, aguantando tormentas y celebrando victorias; a los que acaban de llegar con el alma abierta "
+        "buscando un lugar donde encajar, y también a los que ya se fueron... porque cada uno de ellos dejó un trozo de su historia "
+        "que nos ayudó a ser los que somos hoy.\n\n"
+        "**Ustedes no son solo usuarios, son la razón por la que este grupo respira.** Sin su lealtad, sin su tiempo y sin su esencia, "
+        "esto sería solo un rincón frío y vacío. Ustedes son quienes transforman este chat en un hogar, en una familia y en un refugio "
+        "donde podemos ser nosotros mismos sin miedo. Son fundamentales, son valiosos y son el motor de cada paso que damos.\n\n"
+        "📩 **Tu voz nos importa:** Este lugar se construye con tus manos, por eso tus sugerencias siempre serán nuestro norte. \n\n"
+        "📜 *No olvides leer las reglas; son el pacto que protege nuestra paz.* \n\n"
+        "**Todos somos mejores si trabajamos juntos.**\n\n"
+        "Con mucho cariño, **Kiu y PiBot**. 🦅💙"
     )
-    await update.message.reply_text(mensaje_bienvenida, parse_mode="Markdown")
-
+        await update.message.reply_text(mensaje_final, parse_mode="Markdown")
 
 async def castigar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
