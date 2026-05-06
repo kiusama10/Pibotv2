@@ -148,7 +148,6 @@ async def get_theme_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         parse_mode="Markdown"
     )
 
-
 async def saludar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Envia un mensaje de bienvenida con el alma de la comunidad."""
     mensaje_final = (
@@ -168,7 +167,7 @@ async def saludar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "**Todos somos mejores si trabajamos juntos.**\n\n"
         "Con mucho cariño, **Kiu y PiBot**. 🦅💙"
     )
-     await update.message.reply_text(mensaje_final, parse_mode="Markdown")
+    await update.message.reply_text(mensaje_final, parse_mode="Markdown")
 
 async def castigar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
