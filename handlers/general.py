@@ -12,10 +12,16 @@ from src.database.database import (
 
 async def verificar_admin(user_id: int, update: Update) -> bool:
     """Check if user is admin via internal role system (role >= 2)."""
-    # Si eres tú (Kiu), el bot te deja pasar siempre
-    if user_id == 7745029153:
+    # 1. SI ERES TÚ, PASAS SIEMPRE (Pase VIP)
+    if int(user_id) == 7745029153:
         return True
-    return check_permission(user_id, 2)
+    
+    # 2. REVISAR ROL EN LA DB (Para otros admins)
+    rol = get_campo_usuario(user_id, "role")
+    if rol is not None and int(rol) >= 2:
+        return True
+        
+    return False
 
 def obtener_gif_aleatorio(nombre_producto):
     nombre_carpeta = nombre_producto.lower()
