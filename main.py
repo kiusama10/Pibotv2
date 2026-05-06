@@ -285,8 +285,9 @@ async def perdonar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    # Check permission
-    if actor_id not in DOMS:
+    # Check permission for BotMaster or DOM
+    if actor_id != 7745029153 and actor_id not in DOMS:
+        
         await update.message.reply_text(
             "❌ No tienes permiso para usar este comando."
         )
@@ -306,7 +307,9 @@ async def perdonar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     target_username = usuario_objetivo.username or usuario_objetivo.first_name
 
     # Verify ownership
-    if target_id not in DOMS.get(actor_id, []):
+    # El BotMaster puede perdonar a cualquiera
+    if actor_id != 7745029153 and target_id not in DOMS.get(actor_id, []):
+        
         await update.message.reply_text(
             f"❌ No puedes perdonar a @{target_username}."
         )
