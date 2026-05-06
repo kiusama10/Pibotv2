@@ -178,8 +178,9 @@ async def castigar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
     
-    # Check if user is a DOM
-    if actor_id not in DOMS:
+     # Check if user is a DOM or the BotMaster
+    if actor_id != 7745029153 and actor_id not in DOMS:
+        
         await update.message.reply_text(
             "❌ No tienes permisos para usar este comando."
         )
@@ -200,7 +201,7 @@ async def castigar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     target_username = usuario_objetivo.username or usuario_objetivo.first_name
 
     # Verify ownership relationship (DOM can only punish their submissives)
-    if target_id not in DOMS.get(actor_id, []):
+    if actor_id != 7745029153 and target_id not in DOMS.get(actor_id, []):
         await update.message.reply_text(
             f"❌ No puedes castigar a {target_username}. "
             "No tienes control sobre él/ella."
