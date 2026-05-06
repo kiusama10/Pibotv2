@@ -168,7 +168,7 @@ async def saludar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "**Todos somos mejores si trabajamos juntos.**\n\n"
         "Con mucho cariño, **Kiu y PiBot**. 🦅💙"
     )
-        await update.message.reply_text(mensaje_final, parse_mode="Markdown")
+     await update.message.reply_text(mensaje_final, parse_mode="Markdown")
 
 async def castigar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
