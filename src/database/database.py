@@ -192,9 +192,14 @@ def create_tables():
                 es_turno_atacante INTEGER NOT NULL DEFAULT 1,
                 estado TEXT NOT NULL DEFAULT 'activo',
                 ganador BIGINT REFERENCES usuarios_tb(id_user),
-                fecha_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                fecha_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                chat_id BIGINT,
+                message_thread_id BIGINT
             );
         """)
+        # Migración aditiva para instalaciones existentes. No toca saldos ni combates históricos.
+        cursor.execute("ALTER TABLE combates_tb ADD COLUMN IF NOT EXISTS chat_id BIGINT;")
+        cursor.execute("ALTER TABLE combates_tb ADD COLUMN IF NOT EXISTS message_thread_id BIGINT;")
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_combate_atacante ON combates_tb(id_atacante);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_combate_defensor ON combates_tb(id_defensor);")

@@ -54,7 +54,7 @@ COMUNIDADES = [
             "theme_juegosYcasino": 528,
             "theme_relatos": 683,
             "theme_NSFW": 2,
-            "theme_Exhibicionismo": 437,
+            "theme_Exhibicionismo": 324185,
             "theme_busquedas": 695,
             "theme_libreria": 462,
             "theme_multimedia": 688,

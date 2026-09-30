@@ -21,18 +21,15 @@ from src.database.database import (
 
 
 # ==================== IN-MEMORY BATTLE STATE ====================
-# Pending challenges: {user_id: {"opponent_id": id, "opponent_username": username, "apuesta": amount, "timestamp": datetime}}
-pending_challenges = {}
-
-# ==================== IN-MEMORY BATTLE STATE ====================
-# Pending challenges: {user_id: {"opponent_id": id, "opponent_username": username, "apuesta": amount, "timestamp": datetime}}
+# Pending challenges preserve the group/topic where /lucha was created.
 pending_challenges = {}
 
 
 # ==================== DATABASE OPERATIONS ====================
 
 def crear_combate(id_atacante: int, id_defensor: int, username_atacante: str,
-                  username_defensor: str, apuesta: int) -> int:
+                  username_defensor: str, apuesta: int, chat_id: int = None,
+                  message_thread_id: int = None) -> int:
     """
     Create a new battle in the database.
     
@@ -45,10 +42,10 @@ def crear_combate(id_atacante: int, id_defensor: int, username_atacante: str,
         
         cursor.execute("""
             INSERT INTO combates_tb 
-            (id_atacante, id_defensor, username_atacante, username_defensor, apuesta, hp_atacante, hp_defensor)
-            VALUES (%s, %s, %s, %s, %s, 20, 20)
+            (id_atacante, id_defensor, username_atacante, username_defensor, apuesta, hp_atacante, hp_defensor, chat_id, message_thread_id)
+            VALUES (%s, %s, %s, %s, %s, 20, 20, %s, %s)
             RETURNING id_combate
-        """, (id_atacante, id_defensor, username_atacante, username_defensor, apuesta))
+        """, (id_atacante, id_defensor, username_atacante, username_defensor, apuesta, chat_id, message_thread_id))
         
         combat_id = cursor.fetchone()[0]
         conn.commit()
@@ -92,7 +89,9 @@ def get_combate_activo(id_user: int) -> dict:
             'es_turno_atacante': resultado[9],
             'estado': resultado[10],
             'ganador': resultado[11],
-            'fecha_inicio': resultado[12]
+            'fecha_inicio': resultado[12],
+            'chat_id': resultado[13] if len(resultado) > 13 else None,
+            'message_thread_id': resultado[14] if len(resultado) > 14 else None
         }
     except Exception as e:
         print(f"[ERROR DB] Error getting active combat: {e}")
@@ -200,7 +199,9 @@ def get_combate_by_id(id_combate: int) -> dict:
             'es_turno_atacante': resultado[9],
             'estado': resultado[10],
             'ganador': resultado[11],
-            'fecha_inicio': resultado[12]
+            'fecha_inicio': resultado[12],
+            'chat_id': resultado[13] if len(resultado) > 13 else None,
+            'message_thread_id': resultado[14] if len(resultado) > 14 else None
         }
     except Exception as e:
         print(f"[ERROR DB] Error getting combat by ID: {e}")
@@ -314,7 +315,9 @@ async def lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "opponent_id": opponent_id,
         "opponent_username": opponent_username,
         "apuesta": apuesta,
-        "timestamp": datetime.now()
+        "timestamp": datetime.now(),
+        "chat_id": update.effective_chat.id,
+        "message_thread_id": update.message.message_thread_id
     }
     
     # Send challenge message to opponent
@@ -348,13 +351,9 @@ async def lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reembolsar_apuesta_doble(sender.id, opponent_id, apuesta)
             
             await context.bot.send_message(
-                chat_id=opponent_id,
-                text=f"⏱️ El desafío de {sender_username} expiró sin respuesta"
-            )
-            await context.bot.send_message(
-                chat_id=sender.id,
-                text=f"⏱️ @{opponent_username} no aceptó el desafío\n"
-                f"Se devolvieron {apuesta} PiPesos"
+                chat_id=update.effective_chat.id,
+                message_thread_id=update.message.message_thread_id,
+                text=f"⏱️ @{opponent_username} no aceptó el desafío de {sender_username}. Se devolvieron {apuesta} PiPesos a cada jugador."
             )
     
     asyncio.create_task(timeout_challenge())
@@ -412,7 +411,9 @@ async def aceptar_lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         challenger_id, user_id,
         challenger_username,
         user_username,
-        apuesta
+        apuesta,
+        challenge.get("chat_id"),
+        challenge.get("message_thread_id")
     )
     
     if combat_id == -1:
@@ -434,19 +435,13 @@ async def aceptar_lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎲 Lanza el dado 🎲 para atacar"
     )
     
-    # Send to both players
+    # El combate vive en el mismo chat/tema donde se creó el desafío.
     await context.bot.send_message(
-        chat_id=challenger_id,
+        chat_id=challenge["chat_id"],
+        message_thread_id=challenge.get("message_thread_id"),
         text=start_msg,
         parse_mode='Markdown'
     )
-    await context.bot.send_message(
-        chat_id=user_id,
-        text=start_msg,
-        parse_mode='Markdown'
-    )
-    
-    await update.message.reply_text("✅ ¡Combate iniciado!")
 
 
 

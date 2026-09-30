@@ -264,136 +264,135 @@ async def cancelar_apuesta(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === DETECTAR DADOS ===
 async def detectar_dado(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Handle dice emoji 🎲
-    First checks if user is in an active combat, then checks for betting.
-    """
+    """Procesa dados de combate en su chat/tema de origen y, si no aplica, casino."""
     msg = update.message
     if not msg or not msg.dice:
-        return  # ignorar mensajes que no sean dados
+        return
 
     user = msg.from_user
-    
+
     # ===== CHECK FOR ACTIVE COMBAT FIRST =====
     from handlers.battles import get_combate_activo, actualizar_combate, terminar_combate
-    
+
     combate = get_combate_activo(user.id)
     if combate:
-        # User is in a combat - process as attack
-        # Check if it's the sender's turn
+        combat_chat_id = combate.get("chat_id")
+        combat_thread_id = combate.get("message_thread_id")
+
+        # Un dado enviado en PV u otro tema no debe alterar el combate.
+        if combat_chat_id is not None and (
+            update.effective_chat.id != combat_chat_id
+            or msg.message_thread_id != combat_thread_id
+        ):
+            return
+
         es_turno = (
             (combate['es_turno_atacante'] == 1 and combate['id_atacante'] == user.id) or
             (combate['es_turno_atacante'] == 0 and combate['id_defensor'] == user.id)
         )
-        
         if not es_turno:
             turno_de = combate['username_atacante'] if combate['es_turno_atacante'] else combate['username_defensor']
-            await update.message.reply_text(
-                f"⏳ No es tu turno\n"
-                f"Aguarda a que {turno_de} ataque"
+            await context.bot.send_message(
+                chat_id=combat_chat_id or update.effective_chat.id,
+                message_thread_id=combat_thread_id,
+                text=f"⏳ No es tu turno\nAguarda a que @{turno_de} ataque"
             )
             return
-        
-        # Get damage from dice result (1-6)
+
         daño = msg.dice.value
-        
-        # Determine attacker and defender based on current turn
-        if combate['es_turno_atacante'] == 1:
-            hp_defensor = combate['hp_defensor'] - daño
+        turno_atacante_original = combate['es_turno_atacante'] == 1
+
+        if turno_atacante_original:
             hp_atacante = combate['hp_atacante']
+            hp_defensor = max(0, combate['hp_defensor'] - daño)
             atacante_nombre = combate['username_atacante']
-            defensor_nombre = combate['username_defensor']
-            id_atacante_turno = combate['id_atacante']
-            id_defensor_turno = combate['id_defensor']
         else:
-            hp_atacante = combate['hp_atacante'] - daño
+            hp_atacante = max(0, combate['hp_atacante'] - daño)
             hp_defensor = combate['hp_defensor']
             atacante_nombre = combate['username_defensor']
-            defensor_nombre = combate['username_atacante']
-            id_atacante_turno = combate['id_defensor']
-            id_defensor_turno = combate['id_atacante']
-        
-        # Ensure HP doesn't go below 0
-        hp_atacante = max(0, hp_atacante)
-        hp_defensor = max(0, hp_defensor)
-        
-        # Update combat
-        actualizar_combate(
-            combate['id_combate'],
-            hp_atacante=hp_atacante,
-            hp_defensor=hp_defensor,
-            es_turno_atacante=1 if combate['es_turno_atacante'] == 0 else 0,
-            turno=combate['turno'] + 1
-        )
-        
-        # Check if combat is over
-        if hp_defensor <= 0:
-            # Attacker wins
-            id_ganador = id_atacante_turno
-            terminar_combate(combate['id_combate'], id_ganador)
-            
-            # Determine actual original roles for message
-            if combate['es_turno_atacante'] == 1:
-                ganador_name = combate['username_atacante']
-                perdedor_name = combate['username_defensor']
-            else:
+
+        # Primero resolvemos muerte; no cambiamos turno de un combate ya terminado.
+        if hp_atacante <= 0 or hp_defensor <= 0:
+            if hp_atacante <= 0:
+                id_ganador = combate['id_defensor']
                 ganador_name = combate['username_defensor']
                 perdedor_name = combate['username_atacante']
-            
+                hp_ganador = hp_defensor
+            else:
+                id_ganador = combate['id_atacante']
+                ganador_name = combate['username_atacante']
+                perdedor_name = combate['username_defensor']
+                hp_ganador = hp_atacante
+
+            # Persistir HP final y pagar exactamente una vez.
+            if not actualizar_combate(
+                combate['id_combate'], hp_atacante=hp_atacante, hp_defensor=hp_defensor,
+                turno=combate['turno'] + 1
+            ):
+                await context.bot.send_message(
+                    chat_id=combat_chat_id or update.effective_chat.id,
+                    message_thread_id=combat_thread_id,
+                    text="⚠️ No pude guardar el último turno. No se entregó el premio; intenta nuevamente."
+                )
+                return
+
+            if not terminar_combate(combate['id_combate'], id_ganador):
+                await context.bot.send_message(
+                    chat_id=combat_chat_id or update.effective_chat.id,
+                    message_thread_id=combat_thread_id,
+                    text="⚠️ No pude finalizar/pagar el combate. El premio no se duplicó; revisa el registro antes de continuar."
+                )
+                return
+
+
             fin_msg = (
                 f"🎉 **¡COMBATE FINALIZADO!**\n\n"
                 f"🏆 Ganador: {ganador_name}\n"
                 f"💀 Perdedor: {perdedor_name}\n\n"
                 f"🎲 Último turno: {atacante_nombre} lanzó {daño} de daño\n"
-                f"❤️ {ganador_name}: {hp_atacante if id_ganador == combate['id_atacante'] else hp_defensor} HP\n"
+                f"❤️ {ganador_name}: {hp_ganador} HP\n"
                 f"💀 {perdedor_name}: 0 HP\n\n"
                 f"💰 Ganador recibió {combate['apuesta'] * 2} PiPesos"
             )
-            
             await context.bot.send_message(
-                chat_id=combate['id_atacante'],
+                chat_id=combat_chat_id or update.effective_chat.id,
+                message_thread_id=combat_thread_id,
                 text=fin_msg,
                 parse_mode='Markdown'
             )
+            return
+
+        siguiente_turno_atacante = 0 if turno_atacante_original else 1
+        if not actualizar_combate(
+            combate['id_combate'],
+            hp_atacante=hp_atacante, hp_defensor=hp_defensor,
+            es_turno_atacante=siguiente_turno_atacante,
+            turno=combate['turno'] + 1
+        ):
             await context.bot.send_message(
-                chat_id=combate['id_defensor'],
-                text=fin_msg,
-                parse_mode='Markdown'
+                chat_id=combat_chat_id or update.effective_chat.id,
+                message_thread_id=combat_thread_id,
+                text="⚠️ No pude guardar este turno. Vuelve a lanzar el dado."
             )
-        else:
-            # Combat continues
-            siguiente_atacante = defensor_nombre if combate['es_turno_atacante'] == 1 else atacante_nombre
-            siguiente_id = id_defensor_turno
-            original_atacante = combate['username_atacante']
-            original_defensor = combate['username_defensor']
-            
-            combate_msg = (
-                f"⚔️ **COMBATE EN CURSO**\n\n"
-                f"{original_atacante}: ❤️ {hp_atacante}\n"
-                f"{original_defensor}: ❤️ {hp_defensor}\n\n"
-                f"🎲 {atacante_nombre} lanzó {daño} de daño\n\n"
-                f"📊 Turno de: @{siguiente_atacante}\n"
-                f"Lanza el dado 🎲 para atacar"
-            )
-            
-            await context.bot.send_message(
-                chat_id=combate['id_atacante'],
-                text=combate_msg,
-                parse_mode='Markdown'
-            )
-            await context.bot.send_message(
-                chat_id=combate['id_defensor'],
-                text=combate_msg,
-                parse_mode='Markdown'
-            )
-            
-            await context.bot.send_message(
-                chat_id=siguiente_id,
-                text=f"🎲 Es tu turno, @{siguiente_atacante}. Lanza el dado para atacar"
-            )
-        
-        return  # Combat processed, exit
-    
+            return
+
+        siguiente_atacante = combate['username_defensor'] if turno_atacante_original else combate['username_atacante']
+        combate_msg = (
+            f"⚔️ **COMBATE EN CURSO**\n\n"
+            f"{combate['username_atacante']}: ❤️ {hp_atacante}\n"
+            f"{combate['username_defensor']}: ❤️ {hp_defensor}\n\n"
+            f"🎲 {atacante_nombre} lanzó {daño} de daño\n\n"
+            f"📊 Turno de: @{siguiente_atacante}\n"
+            f"Lanza el dado 🎲 para atacar"
+        )
+        await context.bot.send_message(
+            chat_id=combat_chat_id or update.effective_chat.id,
+            message_thread_id=combat_thread_id,
+            text=combate_msg,
+            parse_mode='Markdown'
+        )
+        return
+
     # ===== NO ACTIVE COMBAT - CHECK FOR BETTING =====
 
     thread_id = msg.message_thread_id
