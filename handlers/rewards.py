@@ -8,30 +8,36 @@ from src.database.database import normalizar_nombre,get_campo_usuario,insert_use
 
 contador_imagenes_multimedia = {}
 contador_imagenes_nsfw = {}
+contador_imagenes_exhibicion = {}
 contador_imagenes_presentacion = []
+reset_tasks_multimedia = {}
+reset_tasks_nsfw = {}
+reset_tasks_exhibicion = {}
 
 async def manejar_imagenes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message == None:
         return
     group_id = update.effective_chat.id
     CHAT_IDS = obtener_temas_por_comunidad(group_id)
+    if not CHAT_IDS:
+        return
     thread_id = update.message.message_thread_id
 
-    if thread_id == CHAT_IDS["theme_multimedia"]:
+    if thread_id == CHAT_IDS.get("theme_multimedia"):
         await detectar_imagenes_multimedia(update, context)
         return
     if group_id != -1003290179217: 
-        if thread_id == CHAT_IDS["theme_presentaciones"]:
+        if thread_id == CHAT_IDS.get("theme_presentaciones"):
             await detectar_imagen_presentacion(update, context)
             return
     else:
         if thread_id == None:
             await detectar_imagen_presentacion(update, context)
             return
-    if thread_id == CHAT_IDS["theme_NSFW"]:
+    if thread_id == CHAT_IDS.get("theme_NSFW"):
         await detectar_imagenes_nsfw(update,context)
         return
-    if thread_id == CHAT_IDS["theme_Exhibicionismo"]:
+    if thread_id == CHAT_IDS.get("theme_Exhibicionismo"):
         await detectar_exhibicion(update,context)
         return
     
@@ -66,8 +72,10 @@ async def detectar_imagen_presentacion(update: Update, context: ContextTypes.DEF
     if get_campo_usuario(user_id,"id_user") is None:
         insert_user(user_id,0,username,nombre)
     
+    if not dar_puntos(user_id, 5):
+        print(f"[REWARDS] No se pudo acreditar presentación a {user_id}; podrá volver a intentarse.")
+        return
     contador_imagenes_presentacion.append(user_id)
-    dar_puntos(user_id,5)
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
@@ -105,27 +113,31 @@ async def detectar_imagenes_multimedia(update: Update, context: ContextTypes.DEF
 
     # Recompensa cada 3 imágenes
     if contador_imagenes_multimedia[user_id] >= 3:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"🎉 @{username or nombre} ha sido recompensado con 10 PiPesos por su actividad en multimedia 📸",
-            message_thread_id=thread_id
-        )
         if get_campo_usuario(user_id,"id_user") is None:
             insert_user(user_id,0,username,nombre)
-        dar_puntos(user_id,10)
+        # Solo consumir el bloque y anunciar si el abono realmente se confirmó.
+        if dar_puntos(user_id,10):
+            contador_imagenes_multimedia[user_id] = 0
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"🎉 @{username or nombre} ha sido recompensado con 10 PiPesos por su actividad en multimedia 📸",
+                message_thread_id=thread_id
+            )
 
-        # Reiniciar contador del usuario
-        contador_imagenes_multimedia[user_id] = 0
-
-    # Reinicio automático del contador después de 2 minutos sin enviar fotos
-    async def resetear_contador(user_id):
-        await asyncio.sleep(120)
-        contador_imagenes_multimedia[user_id] = 0
-
-    asyncio.create_task(resetear_contador(user_id))
+    # Reiniciar 2 minutos después de la ÚLTIMA publicación, no de la primera.
+    old_task = reset_tasks_multimedia.get(user_id)
+    if old_task and not old_task.done():
+        old_task.cancel()
+    async def resetear_contador(uid):
+        try:
+            await asyncio.sleep(120)
+            contador_imagenes_multimedia[uid] = 0
+        except asyncio.CancelledError:
+            pass
+    reset_tasks_multimedia[user_id] = asyncio.create_task(resetear_contador(user_id))
 
 async def detectar_imagenes_nsfw(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Detecta imágenes en el tema NSFW y recompensa con 10 PiPesos cada 5 imágenes seguidas."""
+    """Detecta archivos multimedia en NSFW y recompensa 1,000 PiPesos por cada bloque de 5."""
     mensaje = update.message
 
     if not mensaje:
@@ -154,60 +166,64 @@ async def detectar_imagenes_nsfw(update: Update, context: ContextTypes.DEFAULT_T
     # Incrementar contador de imágenes consecutivas
     contador_imagenes_nsfw[user_id] += 1
 
-    # Recompensa cada 5 imágenes
-    if contador_imagenes_nsfw[user_id] >= 5:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"🔥 @{username or nombre} ha sido recompensado con 19 PiPesos por su actividad en NSFW 😏",
-            message_thread_id=thread_id
-        )
+    # Recompensa acumulable: 1,000 PiPesos por CADA bloque completo de 5 archivos.
+    # Se conserva cualquier sobrante para el siguiente bloque (ej.: 12 = 2,000 + 2 pendientes).
+    bloques, sobrante = divmod(contador_imagenes_nsfw[user_id], 5)
+    if bloques:
+        recompensa = bloques * 1000
         if get_campo_usuario(user_id,"id_user") is None:
             insert_user(user_id,0,username,nombre)
-        dar_puntos(user_id,16)
-
-        # Reiniciar contador del usuario
-        contador_imagenes_nsfw[user_id] = 0
-    # Reinicio automático del contador después de 2 minutos sin enviar fotos
-    async def resetear_contador(user_id):
-        await asyncio.sleep(120)
-        contador_imagenes_nsfw[user_id] = 0
-
-    asyncio.create_task(resetear_contador(user_id))
+        if dar_puntos(user_id, recompensa):
+            contador_imagenes_nsfw[user_id] = sobrante
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"🔥 @{username or nombre} ha sido recompensado con {recompensa:,} PiPesos por su actividad en NSFW 😏",
+                message_thread_id=thread_id
+            )
+    # Reiniciar 2 minutos después de la ÚLTIMA publicación.
+    old_task = reset_tasks_nsfw.get(user_id)
+    if old_task and not old_task.done():
+        old_task.cancel()
+    async def resetear_contador(uid):
+        try:
+            await asyncio.sleep(120)
+            contador_imagenes_nsfw[uid] = 0
+        except asyncio.CancelledError:
+            pass
+    reset_tasks_nsfw[user_id] = asyncio.create_task(resetear_contador(user_id))
 
 async def detectar_exhibicion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Detecta imágenes, videos o GIFs en el canal Exhibición.
-    Recompensa con 10 PiPesos por cada publicación multimedia.
-    """
+    """Recompensa Exhibición por publicación: foto=1,000, video=2,000; GIF/animación no cuenta."""
     mensaje = update.message
     if not mensaje:
         return
 
-    # ✅ Detectar tipos de contenido multimedia
+    # Los GIF de Telegram llegan normalmente como animation. Se ignoran por completo
+    # para evitar recompensar respuestas/reacciones con GIF.
+    if mensaje.animation:
+        return
+
     tiene_foto = bool(mensaje.photo)
     tiene_video = bool(mensaje.video)
-    tiene_gif = bool(mensaje.animation)  # Los GIFs llegan como "animation"
+    if not (tiene_foto or tiene_video):
+        return
 
-    if not (tiene_foto or tiene_video or tiene_gif):
-        return  # Ignorar mensajes sin multimedia
-
+    recompensa = 2000 if tiene_video else 1000
     thread_id = mensaje.message_thread_id
     user = mensaje.from_user
-
-    # ✅ Solo si el mensaje está en el canal de Exhibición
-
     user_id = user.id
     username = user.username
-    nombre = normalizar_nombre(user.first_name,user.last_name)
-    if get_campo_usuario(user_id,"id_user") is None:
-        insert_user(user_id,0,username,nombre)
-    
-    # Cargar y actualizar usuarios
-    dar_puntos(user_id,10)
+    nombre = normalizar_nombre(user.first_name, user.last_name)
 
-    # ✅ Enviar mensaje de confirmación al mismo hilo
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=f"✨ @{username or nombre} ha sido recompensado con 10 PiPesos por su publicación en Exhibicionismo 💫",
-        message_thread_id=thread_id
-    )
+    if get_campo_usuario(user_id, "id_user") is None:
+        insert_user(user_id, 0, username, nombre)
+
+    if dar_puntos(user_id, recompensa):
+        tipo = "video" if tiene_video else "foto"
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"✨ @{username or nombre} recibió {recompensa:,} PiPesos por su {tipo} en Exhibicionismo 💫",
+            message_thread_id=thread_id
+        )
+    else:
+        print(f"[REWARDS] No se pudo acreditar Exhibición a {user_id}; no se registró recompensa.")

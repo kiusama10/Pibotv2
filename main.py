@@ -44,7 +44,7 @@ from telegram.ext import (
 
 # Local imports
 from src.config import BOT_TOKEN, DOMS, obtener_temas_por_comunidad, PUNISHMENT_FILE, BOTMASTER_IDS
-from src.database.database import create_database, create_tables, restart_all_combats, seed_items, init_botmaster_roles, get_campo_usuario, insert_user, normalizar_nombre, update_perfil
+from src.database.database import create_database, create_tables, restart_all_combats, seed_items, init_botmaster_roles, get_campo_usuario, get_usuario_resumen, insert_user, normalizar_nombre, update_perfil
 
 # Handler imports - General commands
 from handlers.general import dar, ver, regalar, numero_azar, quitar, userid
@@ -56,7 +56,7 @@ from handlers.roles import asignar_rol, ver_rol, suerte
 
 # Handler imports - Games and rewards
 from handlers.theme_juegosYcasino import (
-    apostar, aceptar, detectar_dado, cancelar_apuesta, jugar, robar
+    apostar, aceptar, detectar_dado, cancelar_apuesta, jugar, robar, reiniciar_apuesta_callback, recuperar_apuestas_al_iniciar
 )
 from handlers.rewards import manejar_imagenes
 
@@ -69,6 +69,9 @@ RUTA_CASTIGADOS = PUNISHMENT_FILE
 
 # ==================== AUTO-REGISTRATION ====================
 
+# Cache only registration/profile metadata. Never caches balances or inventory.
+_auto_registered_cache = {}
+
 async def auto_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Silently register any user who sends a message, if not already in the DB.
@@ -79,14 +82,28 @@ async def auto_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     try:
-        existing = get_campo_usuario(user.id, "id_user")
-        if existing is None:
-            nombre = normalizar_nombre(user.first_name or "", user.last_name or "")
-            if not nombre.strip():
-                nombre = user.username or f"user{user.id}"
-            insert_user(user.id, 0, user.username, nombre)
-        elif user.username and get_campo_usuario(user.id, "username") != user.username:
-            update_perfil(user.id, username=user.username)
+        nombre = normalizar_nombre(user.first_name or "", user.last_name or "")
+        if not nombre.strip():
+            nombre = user.username or f"user{user.id}"
+        signature = (user.username, nombre)
+
+        # Most messages now require zero DB round-trips here. The cache contains
+        # no economy data, so balances/inventory can never become stale through it.
+        if _auto_registered_cache.get(user.id) == signature:
+            return
+
+        resumen = get_usuario_resumen(user.id)
+        if resumen is None:
+            if insert_user(user.id, 0, user.username, nombre):
+                _auto_registered_cache[user.id] = signature
+        else:
+            cambios = {}
+            if resumen.get("username") != user.username:
+                cambios["username"] = user.username
+            if resumen.get("nombre") != nombre:
+                cambios["nombre"] = nombre
+            if not cambios or update_perfil(user.id, **cambios):
+                _auto_registered_cache[user.id] = signature
     except Exception as e:
         print(f"[AUTO-REG] Error: {e}")
 
@@ -397,7 +414,7 @@ def main() -> None:
     print("[INIT] Restarting active combats...")
     restart_all_combats()
     
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(recuperar_apuestas_al_iniciar).build()
 
     # Group -2: Auto-register users on any message (silent, never blocks)
     app.add_handler(MessageHandler(filters.ALL, auto_registrar), group=-2)
@@ -481,6 +498,11 @@ def main() -> None:
             tienda_callback,
             pattern="^(producto_|volver_menu|abrir_tienda|volver_catalogo|comprar_)"
         ),
+        group=5
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(reiniciar_apuesta_callback, pattern="^reiniciar_apuesta$"),
         group=5
     )
 

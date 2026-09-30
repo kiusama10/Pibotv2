@@ -320,3 +320,10 @@ async def usar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         animation=open(gif_path, "rb"),
         caption=caption_final
     )
+
+    # Consumir solo después de que el efecto se haya enviado correctamente.
+    nueva_cantidad = cantidad - 1
+    if nueva_cantidad > 0:
+        update_cantidad(user.id, item_id, nueva_cantidad)
+    else:
+        delete_item_user(user.id, item_id)

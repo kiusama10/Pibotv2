@@ -1,7 +1,7 @@
 import os
 from telegram import InputMediaPhoto, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from src.database.database import get_campo_usuario, get_campo_item, quitar_puntos, insert_user_item, get_cantidad_item_inventario, update_cantidad
+from src.database.database import get_campo_usuario, get_campo_item, comprar_item_atomico
 from src.config import BOT_USERNAME
 from telegram.error import TelegramError
 
@@ -173,7 +173,24 @@ async def comprar_item(id_item, update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
-    # --- COMPRA EXITOSA ---
+    # Cobro + entrega son una sola transacción. Si algo falla, no se cobra nada.
+    if not comprar_item_atomico(user_id, id_item, item_precio):
+        saldo_actual = get_campo_usuario(user_id, "saldo") or 0
+        await query.edit_message_caption(
+            caption=(
+                f"❌ *No se pudo completar la compra*\n\n"
+                f"Item: *{item_nombre}*\n"
+                f"Precio: `{item_precio}`\n"
+                f"Tu saldo actual: `{saldo_actual}`\n\n"
+                "No se descontaron PiPesos si la operación falló."
+            ),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Volver al catálogo", callback_data="volver_catalogo")
+            ]])
+        )
+        return
+
     await query.edit_message_caption(
         caption=(
             f"🎉 *¡Compra exitosa!*\n\n"
@@ -182,17 +199,10 @@ async def comprar_item(id_item, update: Update, context: ContextTypes.DEFAULT_TY
             f"💼 El item ha sido añadido a tu inventario."
         ),
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Volver al catálogo", callback_data="volver_catalogo")]
-        ])
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ Volver al catálogo", callback_data="volver_catalogo")
+        ]])
     )
-    quitar_puntos(user_id,item_precio)
-    cantidad_actual = get_cantidad_item_inventario(user_id,id_item)
-    print(f"La cantidad del item {id_item} para el usuario {user_id} es de: {cantidad_actual}")
-    if cantidad_actual == 0:
-        insert_user_item(user_id,id_item,cantidad_actual+1)
-    else:
-        update_cantidad(user_id,id_item,cantidad_actual+1)
 # ==============================
 #    MOSTRAR ITEM ESPECÍFICO
 # ==============================

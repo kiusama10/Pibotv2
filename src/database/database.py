@@ -1,4 +1,4 @@
-﻿"""
+"""
 Database management module for PiBot.
 
 This module handles all PostgreSQL database operations including:
@@ -18,6 +18,7 @@ from typing import Optional, Dict, List, Any
 
 import psycopg2
 import time
+import threading
 from psycopg2 import pool as pg_pool
 
 from src.config import DATABASE_URL
@@ -25,33 +26,75 @@ from src.config import DATABASE_URL
 # ==================== CONNECTION POOL ====================
 
 _connection_pool = None
+_pool_lock = threading.Lock()
+
+
 def _init_pool():
-    """Initialize the PostgreSQL connection pool."""
+    """Initialize the PostgreSQL connection pool once, safely across threads."""
     global _connection_pool
-    if _connection_pool is None:
+    if _connection_pool is not None:
+        return
+
+    with _pool_lock:
+        if _connection_pool is not None:
+            return
         print("[DB] Iniciando intento de conexión a Supabase...")
         try:
             start_time = time.time()
-            _connection_pool = pg_pool.SimpleConnectionPool(
-                1, 10, 
+            candidate = pg_pool.ThreadedConnectionPool(
+                1, 10,
                 DATABASE_URL,
                 sslmode="require",
                 connect_timeout=10
             )
+            _connection_pool = candidate
             print(f"[DB] ¡POOL CREADO EXITOSAMENTE! Tiempo: {time.time() - start_time:.2f}s")
         except Exception as e:
+            # Keep None so a later request can retry initialization.
+            _connection_pool = None
             print(f"[DB ERROR] No se pudo crear el pool: {str(e)}")
 
+
 def _get_connection():
-    """Get a connection from the pool."""
+    """Get a live connection, discarding stale pooled connections when needed."""
     _init_pool()
-    return _connection_pool.getconn()
+    if _connection_pool is None:
+        raise ConnectionError("PostgreSQL connection pool is unavailable")
+
+    last_error = None
+    for _ in range(2):
+        conn = None
+        try:
+            conn = _connection_pool.getconn()
+            if conn.closed:
+                raise psycopg2.InterfaceError("pooled PostgreSQL connection is closed")
+            # A tiny round-trip prevents handing a stale TCP connection to a handler.
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+            return conn
+        except (psycopg2.InterfaceError, psycopg2.OperationalError) as exc:
+            last_error = exc
+            if conn is not None:
+                try:
+                    _connection_pool.putconn(conn, close=True)
+                except Exception:
+                    pass
+
+    raise ConnectionError(f"PostgreSQL connection unavailable after retry: {last_error}")
 
 
 def _put_connection(conn):
-    """Return a connection to the pool."""
-    if _connection_pool:
-        _connection_pool.putconn(conn)
+    """Return a healthy connection to the pool; discard broken connections."""
+    if conn is None or _connection_pool is None:
+        return
+    try:
+        _connection_pool.putconn(conn, close=bool(conn.closed))
+    except (psycopg2.InterfaceError, psycopg2.OperationalError):
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # ==================== INITIALIZATION ====================
@@ -163,6 +206,39 @@ def create_tables():
                 role INTEGER NOT NULL DEFAULT 1 CHECK (role IN (1, 2, 3))
             );
         """)
+
+        # Persistent daily command limits. Additive table: does not modify existing user balances.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS usos_diarios_tb (
+                id_user BIGINT NOT NULL REFERENCES usuarios_tb(id_user) ON DELETE CASCADE,
+                comando TEXT NOT NULL,
+                fecha DATE NOT NULL,
+                veces INTEGER NOT NULL DEFAULT 0 CHECK (veces >= 0),
+                PRIMARY KEY (id_user, comando, fecha)
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_usos_diarios_fecha ON usos_diarios_tb(fecha);")
+
+        # Durable casino settlements. One row per accepted wager prevents a
+        # winner/refund from being applied twice after callbacks, timeouts or restarts.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS apuestas_casino_tb (
+                apuesta_id TEXT PRIMARY KEY,
+                chat_id BIGINT NOT NULL,
+                thread_id BIGINT NOT NULL,
+                apostador_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user),
+                rival_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user),
+                cantidad INTEGER NOT NULL CHECK (cantidad > 0),
+                estado TEXT NOT NULL DEFAULT 'reservada',
+                resultado TEXT,
+                fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                fecha_resolucion TIMESTAMP
+            );
+        """)
+        # Phase 14: persist dice too, so accepted wagers survive bot restarts.
+        cursor.execute("ALTER TABLE apuestas_casino_tb ADD COLUMN IF NOT EXISTS dado_apostador INTEGER")
+        cursor.execute("ALTER TABLE apuestas_casino_tb ADD COLUMN IF NOT EXISTS dado_rival INTEGER")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_apuestas_casino_contexto ON apuestas_casino_tb(chat_id, thread_id, estado);")
 
         conn.commit()
     except Exception as e:
@@ -345,6 +421,34 @@ def get_campo_usuario(id_user: int, columna: str) -> Optional[Any]:
         _put_connection(conn)
 
 
+def get_usuario_resumen(id_user: int) -> Optional[Dict[str, Any]]:
+    """Fetch the fields most handlers need in one round-trip.
+
+    Read-only helper: it never creates, updates or normalizes user data.
+    """
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT u.id_user, u.saldo, p.username, p.nombre
+            FROM usuarios_tb u
+            LEFT JOIN perfiles_tb p ON p.id_user = u.id_user
+            WHERE u.id_user = %s
+            """,
+            (id_user,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {"id_user": row[0], "saldo": row[1], "username": row[2], "nombre": row[3]}
+    except Exception as e:
+        print(f"[ERROR DB] Error retrieving user summary: {e}")
+        return None
+    finally:
+        _put_connection(conn)
+
+
 def update_perfil(id_user: int, **datos) -> bool:
     """Update user profile fields."""
     columnas_validas = {
@@ -409,16 +513,288 @@ def update_saldo(id_user: int, saldo: int) -> bool:
 
 
 def dar_puntos(id_user: int, cantidad: int) -> bool:
-    """Add points to a user's balance."""
-    saldo_actual = get_campo_usuario(id_user, "saldo") or 0
-    return update_saldo(id_user, saldo_actual + cantidad)
+    """Add points atomically, without a read/modify/write race."""
+    if cantidad < 0:
+        return quitar_puntos(id_user, -cantidad)
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE usuarios_tb SET saldo = saldo + %s WHERE id_user = %s",
+            (cantidad, id_user),
+        )
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return False
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR DB] Error adding balance: {e}")
+        return False
+    finally:
+        _put_connection(conn)
 
 
 def quitar_puntos(id_user: int, cantidad: int) -> bool:
-    """Remove points from a user's balance."""
-    saldo_actual = get_campo_usuario(id_user, "saldo") or 0
-    nuevo_saldo = max(0, saldo_actual - cantidad)
-    return update_saldo(id_user, nuevo_saldo)
+    """Remove points atomically only when the full amount is available."""
+    if cantidad < 0:
+        return dar_puntos(id_user, -cantidad)
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE usuarios_tb SET saldo = saldo - %s WHERE id_user = %s AND saldo >= %s",
+            (cantidad, id_user, cantidad),
+        )
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return False
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR DB] Error removing balance: {e}")
+        return False
+    finally:
+        _put_connection(conn)
+
+
+def reservar_apuesta_doble(id_a: int, id_b: int, cantidad: int) -> bool:
+    """Atomically reserve the same wager from two users."""
+    if cantidad <= 0 or id_a == id_b:
+        return False
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        # Deterministic lock order avoids deadlocks when requests cross.
+        ids = sorted((id_a, id_b))
+        cursor.execute(
+            "SELECT id_user, saldo FROM usuarios_tb WHERE id_user IN (%s, %s) ORDER BY id_user FOR UPDATE",
+            (ids[0], ids[1]),
+        )
+        rows = cursor.fetchall()
+        if len(rows) != 2 or any(row[1] < cantidad for row in rows):
+            conn.rollback()
+            return False
+        cursor.execute(
+            "UPDATE usuarios_tb SET saldo = saldo - %s WHERE id_user IN (%s, %s)",
+            (cantidad, id_a, id_b),
+        )
+        if cursor.rowcount != 2:
+            conn.rollback()
+            return False
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR DB] Error reserving double wager: {e}")
+        return False
+    finally:
+        _put_connection(conn)
+
+
+def reembolsar_apuesta_doble(id_a: int, id_b: int, cantidad: int) -> bool:
+    """Refund a previously reserved two-player wager in one transaction."""
+    if cantidad <= 0 or id_a == id_b:
+        return False
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE usuarios_tb SET saldo = saldo + %s WHERE id_user IN (%s, %s)",
+            (cantidad, id_a, id_b),
+        )
+        if cursor.rowcount != 2:
+            conn.rollback()
+            return False
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR DB] Error refunding double wager: {e}")
+        return False
+    finally:
+        _put_connection(conn)
+
+
+def reservar_apuesta_persistente(apuesta_id: str, chat_id: int, thread_id: int, id_a: int, id_b: int, cantidad: int) -> bool:
+    """Reserve both stakes and persist the accepted wager in ONE transaction."""
+    if not apuesta_id or cantidad <= 0 or id_a == id_b:
+        return False
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        ids = sorted((id_a, id_b))
+        cursor.execute(
+            "SELECT id_user, saldo FROM usuarios_tb WHERE id_user IN (%s, %s) ORDER BY id_user FOR UPDATE",
+            (ids[0], ids[1]),
+        )
+        rows = cursor.fetchall()
+        if len(rows) != 2 or any(int(row[1]) < cantidad for row in rows):
+            conn.rollback()
+            return False
+        cursor.execute(
+            "UPDATE usuarios_tb SET saldo = saldo - %s WHERE id_user IN (%s, %s)",
+            (cantidad, id_a, id_b),
+        )
+        if cursor.rowcount != 2:
+            conn.rollback()
+            return False
+        cursor.execute(
+            """INSERT INTO apuestas_casino_tb
+               (apuesta_id, chat_id, thread_id, apostador_id, rival_id, cantidad, estado)
+               VALUES (%s, %s, %s, %s, %s, %s, 'reservada')""",
+            (apuesta_id, chat_id, thread_id, id_a, id_b, cantidad),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR DB] Error reserving persistent wager: {e}")
+        return False
+    finally:
+        _put_connection(conn)
+
+
+def liquidar_apuesta_persistente(apuesta_id: str, resultado: str, ganador_id: Optional[int] = None) -> str:
+    """Settle a reserved wager exactly once. Returns paid/refunded/already/error."""
+    if resultado not in ("ganador", "empate", "cancelada"):
+        return "error"
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT apostador_id, rival_id, cantidad, estado
+               FROM apuestas_casino_tb WHERE apuesta_id = %s FOR UPDATE""",
+            (apuesta_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            conn.rollback()
+            return "error"
+        id_a, id_b, cantidad, estado = row
+        if estado != "reservada":
+            conn.rollback()
+            return "already"
+        if resultado == "ganador":
+            if ganador_id not in (id_a, id_b):
+                conn.rollback()
+                return "error"
+            cursor.execute("UPDATE usuarios_tb SET saldo = saldo + %s WHERE id_user = %s", (cantidad * 2, ganador_id))
+            if cursor.rowcount != 1:
+                conn.rollback()
+                return "error"
+        else:
+            cursor.execute("UPDATE usuarios_tb SET saldo = saldo + %s WHERE id_user IN (%s, %s)", (cantidad, id_a, id_b))
+            if cursor.rowcount != 2:
+                conn.rollback()
+                return "error"
+        cursor.execute(
+            """UPDATE apuestas_casino_tb SET estado='liquidada', resultado=%s,
+               fecha_resolucion=CURRENT_TIMESTAMP WHERE apuesta_id=%s""",
+            (resultado, apuesta_id),
+        )
+        conn.commit()
+        return "paid" if resultado == "ganador" else "refunded"
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR DB] Error settling persistent wager: {e}")
+        return "error"
+    finally:
+        _put_connection(conn)
+
+
+
+def registrar_dado_apuesta(apuesta_id: str, id_user: int, valor: int) -> str:
+    """Persist one player's die exactly once. Returns saved/already/error."""
+    if not 1 <= int(valor) <= 6:
+        return "error"
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT apostador_id, rival_id, dado_apostador, dado_rival, estado
+               FROM apuestas_casino_tb WHERE apuesta_id=%s FOR UPDATE""",
+            (apuesta_id,),
+        )
+        row = cursor.fetchone()
+        if not row or row[4] != "reservada":
+            conn.rollback(); return "error"
+        id_a, id_b, dado_a, dado_b, _ = row
+        if id_user == id_a:
+            if dado_a is not None:
+                conn.rollback(); return "already"
+            cursor.execute("UPDATE apuestas_casino_tb SET dado_apostador=%s WHERE apuesta_id=%s", (valor, apuesta_id))
+        elif id_user == id_b:
+            if dado_b is not None:
+                conn.rollback(); return "already"
+            cursor.execute("UPDATE apuestas_casino_tb SET dado_rival=%s WHERE apuesta_id=%s", (valor, apuesta_id))
+        else:
+            conn.rollback(); return "error"
+        conn.commit(); return "saved"
+    except Exception as e:
+        conn.rollback(); print(f"[ERROR DB] Error persisting wager die: {e}"); return "error"
+    finally:
+        _put_connection(conn)
+
+
+def obtener_apuestas_reservadas() -> List[Dict[str, Any]]:
+    """Load accepted, unsettled wagers for restart recovery."""
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT a.apuesta_id, a.chat_id, a.thread_id, a.apostador_id, a.rival_id,
+                   a.cantidad, a.dado_apostador, a.dado_rival, a.fecha_creacion,
+                   COALESCE(NULLIF(u1.username,''), u1.nombre, a.apostador_id::text),
+                   COALESCE(NULLIF(u2.username,''), u2.nombre, a.rival_id::text)
+            FROM apuestas_casino_tb a
+            LEFT JOIN usuarios_tb u1 ON u1.id_user=a.apostador_id
+            LEFT JOIN usuarios_tb u2 ON u2.id_user=a.rival_id
+            WHERE a.estado='reservada'
+            ORDER BY a.fecha_creacion
+        """)
+        rows = cursor.fetchall()
+        return [{
+            "apuesta_id": r[0], "chat_id": r[1], "thread_id": r[2],
+            "apostador_id": r[3], "rival_id": r[4], "cantidad": r[5],
+            "dado_apostador": r[6], "dado_rival": r[7], "fecha_creacion": r[8],
+            "apostador_username": r[9], "rival_username": r[10],
+        } for r in rows]
+    except Exception as e:
+        print(f"[ERROR DB] Error loading reserved wagers: {e}"); return []
+    finally:
+        _put_connection(conn)
+
+def comprar_item_atomico(id_user: int, id_item: int, precio: int) -> bool:
+    """Charge and deliver an item as one PostgreSQL transaction."""
+    if precio < 0:
+        return False
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE usuarios_tb SET saldo = saldo - %s WHERE id_user = %s AND saldo >= %s",
+            (precio, id_user, precio),
+        )
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return False
+        cursor.execute(
+            """INSERT INTO items_usuarios_tb (id_user, id_item, cantidad) VALUES (%s, %s, 1)
+               ON CONFLICT (id_user, id_item) DO UPDATE
+               SET cantidad = items_usuarios_tb.cantidad + 1""",
+            (id_user, id_item),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR DB] Atomic purchase failed: {e}")
+        return False
+    finally:
+        _put_connection(conn)
 
 
 # ==================== LUCK (SUERTE) OPERATIONS ====================
@@ -461,6 +837,98 @@ def set_suerte(id_user: int, valor: int) -> bool:
         conn.rollback()
         print(f"[ERROR DB] Error setting suerte: {e}")
         return False
+    finally:
+        _put_connection(conn)
+
+
+def consumir_uso_diario(id_user: int, comando: str, fecha: str, limite: int) -> Optional[int]:
+    """Atomically consume one daily use and return the new count; None if limit/error."""
+    if not comando or limite <= 0:
+        return None
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO usos_diarios_tb (id_user, comando, fecha, veces)
+            VALUES (%s, %s, %s, 1)
+            ON CONFLICT (id_user, comando, fecha) DO UPDATE
+            SET veces = usos_diarios_tb.veces + 1
+            WHERE usos_diarios_tb.veces < %s
+            RETURNING veces
+            """,
+            (id_user, comando, fecha, limite),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            conn.rollback()
+            return None
+        conn.commit()
+        return int(row[0])
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR DB] Error consuming daily use: {e}")
+        return None
+    finally:
+        _put_connection(conn)
+
+
+def transferir_puntos_atomico(id_origen: int, id_destino: int, cantidad: int) -> bool:
+    """Transfer an exact positive amount atomically without allowing overdrafts."""
+    if cantidad <= 0 or id_origen == id_destino:
+        return False
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        ids = sorted((id_origen, id_destino))
+        cursor.execute(
+            "SELECT id_user, saldo FROM usuarios_tb WHERE id_user IN (%s, %s) ORDER BY id_user FOR UPDATE",
+            (ids[0], ids[1]),
+        )
+        rows = dict(cursor.fetchall())
+        if id_origen not in rows or id_destino not in rows or int(rows[id_origen]) < cantidad:
+            conn.rollback()
+            return False
+        cursor.execute("UPDATE usuarios_tb SET saldo = saldo - %s WHERE id_user = %s", (cantidad, id_origen))
+        cursor.execute("UPDATE usuarios_tb SET saldo = saldo + %s WHERE id_user = %s", (cantidad, id_destino))
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR DB] Error transferring balance: {e}")
+        return False
+    finally:
+        _put_connection(conn)
+
+
+def transferir_robo_atomico(id_ladron: int, id_victima: int, cantidad_maxima: int) -> Optional[int]:
+    """Transfer up to cantidad_maxima from victim to thief atomically; return actual amount."""
+    if cantidad_maxima <= 0 or id_ladron == id_victima:
+        return 0
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        ids = sorted((id_ladron, id_victima))
+        cursor.execute(
+            "SELECT id_user, saldo FROM usuarios_tb WHERE id_user IN (%s, %s) ORDER BY id_user FOR UPDATE",
+            (ids[0], ids[1]),
+        )
+        rows = dict(cursor.fetchall())
+        if id_ladron not in rows or id_victima not in rows:
+            conn.rollback()
+            return None
+        cantidad = min(int(cantidad_maxima), max(0, int(rows[id_victima])))
+        if cantidad == 0:
+            conn.commit()
+            return 0
+        cursor.execute("UPDATE usuarios_tb SET saldo = saldo - %s WHERE id_user = %s", (cantidad, id_victima))
+        cursor.execute("UPDATE usuarios_tb SET saldo = saldo + %s WHERE id_user = %s", (cantidad, id_ladron))
+        conn.commit()
+        return cantidad
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR DB] Error transferring robbery balance: {e}")
+        return None
     finally:
         _put_connection(conn)
 
@@ -820,15 +1288,31 @@ def check_permission(id_user: int, min_role: int) -> bool:
 # ==================== COMBAT OPERATIONS ====================
 
 def restart_all_combats():
-    """Reset all active combats to 'cancelado' on startup."""
+    """Cancel active combats on startup and refund their already-reserved wagers atomically."""
     conn = _get_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("UPDATE combates_tb SET estado = 'cancelado' WHERE estado = 'activo'")
-        affected = cursor.rowcount
+        cursor.execute(
+            "SELECT id_combate, id_atacante, id_defensor, apuesta FROM combates_tb WHERE estado = 'activo' FOR UPDATE"
+        )
+        rows = cursor.fetchall()
+        for id_combate, id_atacante, id_defensor, apuesta in rows:
+            if apuesta > 0:
+                cursor.execute(
+                    "UPDATE usuarios_tb SET saldo = saldo + %s WHERE id_user IN (%s, %s)",
+                    (apuesta, id_atacante, id_defensor),
+                )
+                if cursor.rowcount != 2:
+                    raise RuntimeError(f"No se pudo reembolsar el combate {id_combate}")
+            cursor.execute(
+                "UPDATE combates_tb SET estado = 'cancelado' WHERE id_combate = %s AND estado = 'activo'",
+                (id_combate,),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError(f"No se pudo cancelar el combate {id_combate}")
         conn.commit()
-        if affected > 0:
-            print(f"[INIT] Reset {affected} active combats")
+        if rows:
+            print(f"[INIT] Reset {len(rows)} active combats and refunded reserved wagers")
     except Exception as e:
         conn.rollback()
         print(f"[ERROR DB] Error restarting combats: {e}")

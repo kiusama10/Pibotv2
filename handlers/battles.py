@@ -16,7 +16,7 @@ from telegram.ext import ContextTypes, CommandHandler
 
 from src.database.database import (
     get_campo_usuario, update_saldo, dar_puntos, quitar_puntos,
-    _get_connection, _put_connection
+    _get_connection, _put_connection, reservar_apuesta_doble, reembolsar_apuesta_doble
 )
 
 
@@ -134,36 +134,45 @@ def actualizar_combate(id_combate: int, **datos) -> bool:
 
 
 def terminar_combate(id_combate: int, id_ganador: int) -> bool:
-    """
-    End a combat and process rewards.
-    
-    Args:
-        id_combate: Combat ID
-        id_ganador: Winner's user ID
-    
-    Returns:
-        True if successful, False otherwise
-    """
+    """Finalize an active combat and pay its reserved pot exactly once."""
+    conn = _get_connection()
     try:
-        combate = get_combate_by_id(id_combate)
-        if not combate:
-            return False
-        
-        # Update combat status
-        actualizar_combate(
-            id_combate,
-            estado='finalizado',
-            ganador=id_ganador
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT apuesta, id_atacante, id_defensor, estado FROM combates_tb WHERE id_combate = %s FOR UPDATE",
+            (id_combate,),
         )
-        
-        # Transfer bet to winner
-        if combate['apuesta'] > 0:
-            dar_puntos(id_ganador, combate['apuesta'] * 2)
-        
+        row = cursor.fetchone()
+        if not row:
+            conn.rollback()
+            return False
+        apuesta, id_atacante, id_defensor, estado = row
+        if estado != "activo" or id_ganador not in (id_atacante, id_defensor):
+            conn.rollback()
+            return False
+        cursor.execute(
+            "UPDATE combates_tb SET estado = 'finalizado', ganador = %s WHERE id_combate = %s AND estado = 'activo'",
+            (id_ganador, id_combate),
+        )
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return False
+        if apuesta > 0:
+            cursor.execute(
+                "UPDATE usuarios_tb SET saldo = saldo + %s WHERE id_user = %s",
+                (apuesta * 2, id_ganador),
+            )
+            if cursor.rowcount != 1:
+                conn.rollback()
+                return False
+        conn.commit()
         return True
     except Exception as e:
+        conn.rollback()
         print(f"[ERROR DB] Error ending combat: {e}")
         return False
+    finally:
+        _put_connection(conn)
 
 
 def get_combate_by_id(id_combate: int) -> dict:
@@ -293,9 +302,12 @@ async def lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Deduct bet from both players
-    quitar_puntos(sender.id, apuesta)
-    quitar_puntos(opponent_id, apuesta)
+    # Reserve both bets atomically. No partial charge is possible.
+    if not reservar_apuesta_doble(sender.id, opponent_id, apuesta):
+        await update.message.reply_text(
+            "❌ No se pudo reservar la apuesta. Verifica que ambos sigan teniendo saldo suficiente."
+        )
+        return
     
     # Store challenge in memory
     pending_challenges[sender.id] = {
@@ -332,9 +344,8 @@ async def lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Challenge expired
             del pending_challenges[sender.id]
             
-            # Return bet to both players
-            dar_puntos(sender.id, apuesta)
-            dar_puntos(opponent_id, apuesta)
+            # Return both reserved bets atomically
+            reembolsar_apuesta_doble(sender.id, opponent_id, apuesta)
             
             await context.bot.send_message(
                 chat_id=opponent_id,
@@ -382,7 +393,8 @@ async def aceptar_lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if challenger_id in pending_challenges:
             del pending_challenges[challenger_id]
         
-        await update.message.reply_text("⏱️ Este desafío ya expiró")
+        reembolsar_apuesta_doble(challenger_id, user_id, challenge["apuesta"])
+        await update.message.reply_text("⏱️ Este desafío ya expiró. Las apuestas fueron devueltas.")
         return
     
     # Remove challenge from pending
@@ -405,9 +417,8 @@ async def aceptar_lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if combat_id == -1:
         await update.message.reply_text("❌ Error al crear el combate")
-        # Refund the bets
-        dar_puntos(challenger_id, apuesta)
-        dar_puntos(user_id, apuesta)
+        # Refund both reserved bets as one transaction
+        reembolsar_apuesta_doble(challenger_id, user_id, apuesta)
         return
     
     # Get combat details

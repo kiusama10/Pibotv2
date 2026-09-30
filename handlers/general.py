@@ -1,11 +1,11 @@
-﻿import os
+import os
 import random
 from telegram import Update
 from telegram.ext import ContextTypes
 from src.database.database import (
     get_campo_usuario, normalizar_nombre, update_perfil,
     insert_user, get_id_user, quitar_puntos, dar_puntos,
-    reemplazar_acentos, check_permission,
+    reemplazar_acentos, check_permission, get_usuario_resumen, transferir_puntos_atomico,
 )
 
 #region FUNCIONES AUXILIARES
@@ -86,10 +86,12 @@ async def ver(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     tmp_nombre = normalizar_nombre(user.first_name, user.last_name)
     tmp_username = user.username
-    sql_username = get_campo_usuario(user.id, "username")
-    sql_nombre = get_campo_usuario(user.id, "nombre")
+    resumen = get_usuario_resumen(user.id)
+    sql_username = resumen["username"] if resumen else None
+    sql_nombre = resumen["nombre"] if resumen else None
+    saldo = resumen["saldo"] if resumen else 0
 
-    if get_campo_usuario(user.id, "id_user") is None:
+    if resumen is None:
         insert_user(user.id, 0, tmp_username, tmp_nombre)
         sql_username = tmp_username
         sql_nombre = tmp_nombre
@@ -98,11 +100,6 @@ async def ver(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update_perfil(user.id, username=tmp_username, nombre=tmp_nombre)
         sql_username = tmp_username
         sql_nombre = tmp_nombre
-
-    saldo = get_campo_usuario(user.id, "saldo")
-
-    if saldo is False or saldo is None:
-        saldo = 0
 
     await update.message.reply_text(
         f"💰 {sql_username}, tienes {saldo} PiPesos."
@@ -150,7 +147,7 @@ async def dar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sql_sender_nombre = tmp_sender_nombre
         sql_sender_username = tmp_sender_username
 
-    sender_saldo = get_campo_usuario(sender_id, "saldo")
+    sender_saldo = get_campo_usuario(sender_id, "saldo") or 0
 
     receptor_id = receptor.id
     receptor_username = receptor.username
@@ -159,8 +156,12 @@ async def dar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"💸 Saldo insuficiente. Tienes {sender_saldo} PiPesos.")
         return
 
-    quitar_puntos(sender_id, cantidad)
-    dar_puntos(receptor.id, cantidad)
+    # Transferencia exacta y atómica: nunca se descuenta al emisor sin acreditar al receptor.
+    if not transferir_puntos_atomico(sender_id, receptor_id, cantidad):
+        await update.message.reply_text(
+            "⚠️ No se pudo completar la transferencia. No se movieron PiPesos; verifica tu saldo e intenta de nuevo."
+        )
+        return
 
     await update.message.reply_text(
         f"🤝 {sql_sender_username or sql_sender_nombre} dio {cantidad} PiPesos a "
@@ -228,7 +229,11 @@ async def quitar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     receptor_id = receptor.id
     receptor_username = receptor.username
 
-    quitar_puntos(receptor_id, cantidad)
+    if not quitar_puntos(receptor_id, cantidad):
+        await update.message.reply_text(
+            "⚠️ No se pudieron quitar los PiPesos. El usuario puede no tener saldo suficiente o la base de datos no respondió."
+        )
+        return
     await update.message.reply_text(
         f"✅ Se han quitado {cantidad} PiPesos a @{receptor_username}."
     )
@@ -265,7 +270,11 @@ async def regalar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     receptor_id = receptor.id
     receptor_username = receptor.username
 
-    dar_puntos(receptor_id, cantidad)
+    if not dar_puntos(receptor_id, cantidad):
+        await update.message.reply_text(
+            "⚠️ No se pudo acreditar el regalo. No se anunció una entrega que la base de datos no confirmó."
+        )
+        return
 
     await update.message.reply_text(
         f"🎁 {sender.username} regaló {cantidad} PiPesos a "
