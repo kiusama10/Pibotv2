@@ -25,13 +25,35 @@ def _resolve_target(update, context):
     m=update.effective_message
     if m and m.reply_to_message and m.reply_to_message.from_user:
         u=m.reply_to_message.from_user
-        return u.id, (u.full_name or u.username or str(u.id))
+        return u.id, (("@"+u.username) if u.username else (u.full_name or str(u.id)))
     if not context.args: return None
     raw=context.args[0].lstrip('@')
     conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("SELECT id_user,nombre FROM perfiles_tb WHERE lower(username)=lower(%s) LIMIT 1",(raw,)); row=c.fetchone()
-        return (row[0],row[1] or raw) if row else None
+        c=conn.cursor(); c.execute("SELECT id_user,username,nombre FROM perfiles_tb WHERE lower(username)=lower(%s) LIMIT 1",(raw,)); row=c.fetchone()
+        return (row[0],(("@"+row[1].lstrip("@")) if row[1] else (row[2] or raw))) if row else None
+    finally:_put_connection(conn)
+
+
+def _display_name(uid):
+    if not uid:
+        return "Sin postor"
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT username,nombre FROM perfiles_tb WHERE id_user=%s",(uid,)); r=c.fetchone()
+        if r:
+            username,nombre=r
+            if username: return "@"+str(username).lstrip('@')
+            if nombre: return str(nombre)
+        return f"Usuario {uid}"
+    finally:_put_connection(conn)
+
+def _active_snapshot():
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("""SELECT auction_id,subastado_nombre,puja_actual,postor_id,termina_en
+          FROM user_auctions_tb WHERE estado='activa' AND chat_id=%s AND thread_id=%s
+          ORDER BY auction_id DESC LIMIT 1""",(MAIN_CHAT,EVENT_THREAD)); return c.fetchone()
     finally:_put_connection(conn)
 
 def _create(seller_id,seller_name):
@@ -119,6 +141,18 @@ async def puja(update:Update,context:ContextTypes.DEFAULT_TYPE):
     msgs={'none':'No hay una subasta activa.','self':'JAJAJA no puedes pujar por tu propia subasta.','low':f'La puja actual ya es de {data:,} PiPesos. Toca superar eso.','money':'No tienes PiPesos disponibles suficientes para reservar esa puja.'}
     await update.effective_message.reply_text(msgs.get(st,'No pude registrar esa puja.'))
 
+
+async def versubasta(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    if not _event_location(update):
+        return await update.effective_message.reply_text("🎉 Las subastas viven exclusivamente en Eventos.")
+    row=_active_snapshot()
+    if not row: return await update.effective_message.reply_text("🔨 No hay una subasta activa ahora mismo.")
+    aid,name,amount,bidder,end=row; amount=amount or 0
+    if end.tzinfo is None: end=end.replace(tzinfo=timezone.utc)
+    secs=max(0,int((end-datetime.now(timezone.utc)).total_seconds())); mins,ss=divmod(secs,60); hh,mins=divmod(mins,60)
+    leader=_display_name(bidder) if bidder else "Todavía nadie"
+    await update.effective_message.reply_text(f"🔨 SUBASTA ACTIVA #{aid}\n\n👤 {name}\n💰 Puja actual: {amount:,} PiPesos\n🏆 Mejor postor: {leader}\n⏳ Tiempo restante: {hh:02d}:{mins:02d}:{ss:02d}\n\nUsa /puja cantidad para superar la oferta.")
+
 async def cancelarsubasta(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if not _event_location(update): return
     if get_user_role(update.effective_user.id)<2: return
@@ -138,7 +172,7 @@ async def auction_maintenance_job(context:ContextTypes.DEFAULT_TYPE):
             result=_settle_one(aid)
             if not result: continue
             status,nm,total,bidder,seller,kiu=result
-            if status=='ok': text=f"🔨 ¡VENDIDO!\n\n👤 {nm}\n💰 Puja final: {total:,} PiPesos\n🏆 Ganador de la subasta: usuario {bidder}\n\n💵 80% → {seller:,} PiPesos para {nm}\n👑 20% → {kiu:,} PiPesos para Kiu\n\nPiBot da por terminadas las malas decisiones financieras de esta hora. 😂"
+            if status=='ok': text=f"🔨 ¡VENDIDO!\n\n👤 {nm}\n💰 Puja final: {total:,} PiPesos\n🏆 Ganador de la subasta: {_display_name(bidder)}\n\n💵 80% → {seller:,} PiPesos para {nm}\n👑 20% → {kiu:,} PiPesos para Kiu\n\nPiBot da por terminadas las malas decisiones financieras de esta hora. 😂"
             elif status=='empty': text=f"🔨 Terminó la subasta de {nm} sin pujas. El mercado ha hablado… cruelmente. 😂"
             else: continue
             await context.bot.send_message(MAIN_CHAT,text,message_thread_id=EVENT_THREAD)

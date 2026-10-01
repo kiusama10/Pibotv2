@@ -40,9 +40,7 @@ def ensure_presentation_tables():
 
 
 def _create_pending_if_new(chat_id: int, user_id: int) -> bool:
-    # IMPORTANT: this runs before auto_registrar. Existing DB users are grandfathered.
-    if get_usuario_resumen(user_id) is not None:
-        return False
+    # Cada entrada/reentrada inicia un plazo nuevo de 30 minutos.
     conn = _get_connection()
     try:
         with conn.cursor() as cur:

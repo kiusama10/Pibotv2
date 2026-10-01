@@ -42,6 +42,14 @@ CUSTOM_FRAME_BORDERS = {
     "marco_cyberpunk": "💠⚡━━━━ 2099 ━━━━⚡💠",
     "marco_angel_caido": "🖤🪽━━━━ FALLEN ━━━━🪽🖤",
     "marco_rey_tortugas": "👑🐢━━━━ REY ━━━━🐢👑",
+    "marco_saiyajin": "⚡✦━━━━ AURA ━━━━✦⚡",
+    "marco_ninja_rojo": "🌙🔴━━━━ NINJA ━━━━🔴🌙",
+    "marco_grand_line": "☠️🌊━━━━ GRAND LINE ━━━━🌊☠️",
+    "marco_cazador_demonios": "🌊🔥━━━━ RESPIRACIÓN ━━━━🔥🌊",
+    "marco_infinito": "🔵♾️━━━━ INFINITO ━━━━♾️🔵",
+    "marco_luna_magica": "🌙✨━━━━ GUARDIANA ━━━━✨🌙",
+    "marco_mecha_neon": "🟣⚡━━━━ MECHA ━━━━⚡🟢",
+    "marco_titan": "🪽🧱━━━━ MURALLA ━━━━🧱🪽",
 }
 
 
@@ -462,6 +470,14 @@ FRAME_THEMES = {
     "marco_cyberpunk": ((0, 245, 255), (255, 20, 200), "CYBERPUNK"),
     "marco_angel_caido": ((190, 190, 230), (80, 20, 130), "FALLEN ANGEL"),
     "marco_rey_tortugas": ((255, 215, 50), (50, 210, 120), "TURTLE KING"),
+    "marco_saiyajin": ((255, 220, 35), (40, 150, 255), "SAIYAJIN AURA"),
+    "marco_ninja_rojo": ((220, 25, 55), (35, 35, 45), "CRIMSON NINJA"),
+    "marco_grand_line": ((35, 170, 255), (245, 205, 60), "GRAND LINE"),
+    "marco_cazador_demonios": ((35, 175, 235), (255, 75, 45), "NIGHT BREATH"),
+    "marco_infinito": ((50, 130, 255), (170, 70, 255), "INFINITY"),
+    "marco_luna_magica": ((255, 120, 220), (255, 225, 80), "MOON GUARDIAN"),
+    "marco_mecha_neon": ((145, 255, 40), (180, 45, 255), "MECHA UNIT"),
+    "marco_titan": ((185, 85, 55), (220, 205, 175), "WALL TITAN"),
 }
 
 
@@ -501,6 +517,24 @@ def _draw_frame_details(d, code, c1, c2, W, H):
     elif code in {"marco_dragon","marco_rey_tortugas","marco_realeza"}:
         d.polygon([(470,105),(505,70),(540,110),(575,70),(610,105),(600,135),(480,135)],fill=c1,outline=c2)
         for yy in (260,560,860): d.polygon([(62,yy),(95,yy-35),(128,yy),(95,yy+35)],outline=c2)
+    elif code in {"marco_saiyajin","marco_infinito","marco_mecha_neon"}:
+        # Anime-energy orbit: luminous circular arcs, stars and sparks around the portrait area.
+        for rr,w in ((155,7),(170,4),(184,2)):
+            d.arc((62-rr+155,122-rr+155,62+rr+155,122+rr+155),195,520,fill=c1 if rr!=170 else c2,width=w)
+        for px,py in ((75,185),(340,135),(360,345),(105,390),(300,95)):
+            d.polygon([(px,py-9),(px+4,py-3),(px+11,py),(px+4,py+3),(px,py+10),(px-4,py+3),(px-11,py),(px-4,py-3)],fill=c2)
+        if code=="marco_mecha_neon":
+            for yy in (150,205,330,385): d.line((70,yy,125,yy-22),fill=c1,width=4)
+    elif code in {"marco_ninja_rojo","marco_luna_magica"}:
+        d.ellipse((95,135,335,375),outline=c1,width=7); d.arc((78,118,352,392),205,500,fill=c2,width=4)
+        d.ellipse((278,120,338,180),fill=c2); d.ellipse((296,110,350,170),fill=(7,7,20))
+        for px,py in ((95,155),(345,230),(115,365),(320,390)): d.ellipse((px,py,px+10,py+10),fill=c1)
+    elif code in {"marco_grand_line","marco_cazador_demonios"}:
+        for rr in (158,174): d.arc((60,120,370,430),15,170,fill=c1,width=5); d.arc((60,120,370,430),195,350,fill=c2,width=5)
+        for px,py in ((90,300),(125,355),(330,160),(355,210)): d.arc((px-25,py-12,px+25,py+18),180,355,fill=c1,width=3)
+    elif code=="marco_titan":
+        for xx in range(70,370,42): d.rectangle((xx,125,xx+28,150),outline=c2,width=3)
+        d.arc((75,125,360,420),190,350,fill=c1,width=8)
     elif code=="marco_mictlan":
         for x in (110,880):
             d.ellipse((x,H-170,x+90,H-80),outline=c1,width=5); d.ellipse((x+20,H-145,x+35,H-130),fill=c2); d.ellipse((x+55,H-145,x+70,H-130),fill=c2)

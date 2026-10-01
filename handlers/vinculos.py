@@ -91,6 +91,23 @@ async def vinculo(update:Update,context:ContextTypes.DEFAULT_TYPE):
     kb=InlineKeyboardMarkup([[InlineKeyboardButton("💞 Aceptar",callback_data=f"vin:accept:{pid}"),InlineKeyboardButton("🌙 Rechazar",callback_data=f"vin:reject:{pid}")]])
     await msg.reply_text(_proposal_text(a,b),reply_markup=kb)
 
+
+async def cancelarvinculo(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    """Cancela únicamente una propuesta pendiente creada por quien ejecuta el comando."""
+    uid=update.effective_user.id; conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("""SELECT proposal_id,target_id FROM vinculo_proposals_tb
+          WHERE proposer_id=%s AND status='pending' ORDER BY created_at DESC LIMIT 1 FOR UPDATE""",(uid,)); row=c.fetchone()
+        if not row:
+            conn.rollback(); return await update.effective_message.reply_text("💞 No tienes una propuesta de vínculo pendiente para cancelar.")
+        pid,target=row; target_name=_name(c,target)
+        c.execute("UPDATE vinculo_proposals_tb SET status='cancelled',resolved_at=NOW() WHERE proposal_id=%s AND status='pending'",(pid,))
+        conn.commit()
+        await update.effective_message.reply_text(f"🌙 Propuesta de vínculo con {target_name} cancelada. No se cobró ningún PiPeso.")
+    except Exception as e:
+        conn.rollback(); print('[VINCULO cancel proposal]',e); await update.effective_message.reply_text("⚠️ No pude cancelar la propuesta.")
+    finally:_put_connection(conn)
+
 async def separarse(update:Update,context:ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id; conn=_get_connection()
     try:

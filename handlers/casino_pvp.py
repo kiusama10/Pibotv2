@@ -137,6 +137,8 @@ def _turtle_stake_menu():
 async def tortuga(update:Update, context:ContextTypes.DEFAULT_TYPE):
     """Ver o nombrar la tortuga personal. /tortuga Mi Nombre"""
     uid=update.effective_user.id; msg=update.effective_message
+    if not _in_games(update):
+        return await msg.reply_text("🐢 Las tortugas viven únicamente en el tema Juegos.")
     conn=_get_connection()
     try:
         c=conn.cursor()
@@ -169,13 +171,20 @@ async def process_turtle_input(update:Update, context:ContextTypes.DEFAULT_TYPE)
     msg=update.effective_message; user=update.effective_user
     if not msg or not user or not msg.text or msg.text.startswith('/'):
         return
-    mode=context.user_data.get('turtle_input')
-    if not mode: return
+    pending=context.user_data.get('turtle_input')
+    if not pending: return
+    # El texto solo pertenece a la acción iniciada por ESTE usuario y en Juegos.
+    if not _in_games(update): return
+    if isinstance(pending,dict):
+        if pending.get('user_id')!=user.id or pending.get('chat_id')!=update.effective_chat.id or pending.get('thread_id')!=getattr(msg,'message_thread_id',None): return
+        mode=pending.get('mode')
+    else:
+        mode=pending
     context.user_data.pop('turtle_input',None)
     if mode=='rename':
         new=_clean_turtle_name(msg.text)
         if not new:
-            context.user_data['turtle_input']='rename'
+            context.user_data['turtle_input']={'mode':'rename','user_id':user.id,'chat_id':update.effective_chat.id,'thread_id':getattr(msg,'message_thread_id',None)}
             await msg.reply_text("🐢 Ese nombre no sirve. Escribe uno de 2 a 28 caracteres, o usa /cancelar para salir."); return
         conn=_get_connection()
         try:
@@ -188,7 +197,7 @@ async def process_turtle_input(update:Update, context:ContextTypes.DEFAULT_TYPE)
         try: stake=int(msg.text.replace(',','').replace('.',''))
         except: stake=0
         if not 100 <= stake <= 1_000_000:
-            context.user_data['turtle_input']='stake'; await msg.reply_text("💰 Escribe una apuesta entre 100 y 1,000,000 PiPesos."); return
+            context.user_data['turtle_input']={'mode':'stake','user_id':user.id,'chat_id':update.effective_chat.id,'thread_id':getattr(msg,'message_thread_id',None)}; await msg.reply_text("💰 Escribe una apuesta entre 100 y 1,000,000 PiPesos."); return
         context.args=[str(stake)]; await tortugas(update,context)
 
 async def ranking_tortugas(update:Update, context:ContextTypes.DEFAULT_TYPE):
@@ -463,14 +472,18 @@ async def casino_pvp_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         elif len(parts)==2 and parts[1]=='home':
             await q.answer(); await _send_turtle_home(q.message,q.from_user.id)
         elif len(parts)==2 and parts[1]=='rename':
-            context.user_data['turtle_input']='rename'; await q.answer(); await q.message.reply_text("✏️🐢 Escribe ahora el nuevo nombre de tu tortuga.\n\nDebe tener entre 2 y 28 caracteres. No necesitas usar ningún comando.")
+            if q.message.chat_id!=MAIN_CHAT_ID or q.message.message_thread_id!=JUEGOS_THREAD_ID:
+                return await q.answer('🐢 Esto solo funciona en el tema Juegos.',show_alert=True)
+            context.user_data['turtle_input']={'mode':'rename','user_id':q.from_user.id,'chat_id':q.message.chat_id,'thread_id':q.message.message_thread_id}; await q.answer(); await q.message.reply_text("✏️🐢 Escribe ahora el nuevo nombre de tu tortuga.\n\nDebe tener entre 2 y 28 caracteres. No necesitas usar ningún comando.")
         elif len(parts)==2 and parts[1]=='create':
             await q.answer()
             if q.message.chat_id!=MAIN_CHAT_ID or q.message.message_thread_id!=JUEGOS_THREAD_ID:
                 await q.message.reply_text("🏁 Las carreras se crean en el tema Juegos. Abre /tortuga allí y toca Crear carrera.")
             else: await q.message.reply_text("🐢 ¿Cuánto costará entrar a la carrera?",reply_markup=_turtle_stake_menu())
         elif len(parts)==2 and parts[1]=='customstake':
-            context.user_data['turtle_input']='stake'; await q.answer(); await q.message.reply_text("💰 Escribe la cantidad de la entrada (100 a 1,000,000 PiPesos).")
+            if q.message.chat_id!=MAIN_CHAT_ID or q.message.message_thread_id!=JUEGOS_THREAD_ID:
+                return await q.answer('🐢 Esto solo funciona en el tema Juegos.',show_alert=True)
+            context.user_data['turtle_input']={'mode':'stake','user_id':q.from_user.id,'chat_id':q.message.chat_id,'thread_id':q.message.message_thread_id}; await q.answer(); await q.message.reply_text("💰 Escribe la cantidad de la entrada (100 a 1,000,000 PiPesos).")
         elif len(parts)==3 and parts[1]=='stake':
             await q.answer(); context.args=[parts[2]]
             # Reuse the same safe creator path using the callback message as effective context is not possible; create via helper update facade.

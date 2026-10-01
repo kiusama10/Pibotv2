@@ -241,7 +241,17 @@ async def drawing_guess(update:Update, context:ContextTypes.DEFAULT_TYPE):
     except Exception: conn.rollback(); return
     finally:_put_connection(conn)
     _stop_live_jobs(context,gid)
-    await update.effective_message.reply_text(f"🏆 ¡{_name(update.effective_user)} acertó!\nLa palabra era {word.upper()}.\n💰 +1,500 PiPesos\n\nLa ronda terminó.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🎨 Tomar turno',callback_data=f'draw:take:{gid}')]]))
+    winner=_name(update.effective_user)
+    text=f"🏆 ¡{winner} acertó!\n🎨 La palabra era {word.upper()}.\n💰 +1,500 PiPesos\n\n✅ La ronda terminó."
+    kb=InlineKeyboardMarkup([[InlineKeyboardButton('🎨 Tomar turno',callback_data=f'draw:take:{gid}')]])
+    # Aviso independiente en el mismo tema: no depende de que Telegram conserve el reply.
+    await context.bot.send_message(chat_id=chat,message_thread_id=thread,text=text,reply_markup=kb)
+    # El mensaje del dibujo también queda marcado como finalizado para que el artista lo vea al instante.
+    try:
+        conn=_get_connection(); c=conn.cursor(); c.execute("SELECT live_message_id FROM drawing_games_tb WHERE game_id=%s",(gid,)); rr=c.fetchone(); conn.rollback(); _put_connection(conn)
+        if rr and rr[0]:
+            await context.bot.edit_message_caption(chat_id=chat,message_id=rr[0],caption=f"🎉 {winner} ADIVINÓ · {word.upper()}\n💰 Premio: 1,500 PiPesos\n✅ Ronda terminada",reply_markup=kb)
+    except Exception: pass
 
 async def _round_timeout(context:ContextTypes.DEFAULT_TYPE):
     gid=context.job.data['gid']; rno=context.job.data['round']; conn=_get_connection()
