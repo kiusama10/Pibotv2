@@ -640,7 +640,7 @@ async def perfil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = await _edit_profile_url(context)
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("🏷️ Mis títulos", callback_data="soc:title_owned"), InlineKeyboardButton("🎁 Mis regalos", callback_data="soc:gift_owned")],
-        [InlineKeyboardButton("✨ Mi vestidor", callback_data="cos_home"), InlineKeyboardButton("📸 Mi foto", url=url)],
+        [InlineKeyboardButton("✨ Mi vestidor / Tienda", url=url.replace("start=editar_perfil", "start=vestidor")), InlineKeyboardButton("📸 Mi foto", url=url)],
         [InlineKeyboardButton("✏️ Editar mi perfil", url=url)],
     ])
     if card:

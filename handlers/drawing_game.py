@@ -134,13 +134,17 @@ async def _live_canvas_job(context:ContextTypes.DEFAULT_TYPE):
     data=context.job.data; gid=data['gid']; rno=data['round']
     conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("SELECT d.chat_id,d.live_message_id,d.status,d.round_no,COALESCE(p.display_name,'Alguien') FROM drawing_games_tb d LEFT JOIN drawing_players_tb p ON p.game_id=d.game_id AND p.user_id=d.drawer_id WHERE d.game_id=%s",(gid,)); g=c.fetchone()
+        c=conn.cursor(); c.execute("SELECT d.chat_id,d.live_message_id,d.status,d.round_no,COALESCE(p.display_name,'Alguien'),d.drawer_token FROM drawing_games_tb d LEFT JOIN drawing_players_tb p ON p.game_id=d.game_id AND p.user_id=d.drawer_id WHERE d.game_id=%s",(gid,)); g=c.fetchone()
     finally:_put_connection(conn)
     if not g or g[2]!='active' or g[3]!=rno or not g[1]: context.job.schedule_removal(); return
     with _version_lock: ver=_canvas_versions.get(gid,0)
     if ver==data.get('last'): return
     try:
-        await context.bot.edit_message_media(chat_id=g[0],message_id=g[1],media=InputMediaPhoto(media=_render_canvas_bytes(gid),caption=_round_caption(rno,g[4])))
+        
+        live_kb=None
+        if WEBAPP_BASE_URL and g[5]:
+            live_kb=InlineKeyboardMarkup([[InlineKeyboardButton('🖌️ ABRIR LIENZO · SOLO DIBUJANTE',url=f"{WEBAPP_BASE_URL}/pibot-canvas-v4?game={gid}&token={g[5]}&mode=draw")]])
+        await context.bot.edit_message_media(chat_id=g[0],message_id=g[1],media=InputMediaPhoto(media=_render_canvas_bytes(gid),caption=_round_caption(rno,g[4])),reply_markup=live_kb)
         data['last']=ver
     except Exception:
         # Un fallo temporal de Telegram no mata la ronda; se reintenta en el siguiente tick.
