@@ -34,14 +34,14 @@ from telegram.ext import (
 
 # Local imports
 from src.config import BOT_TOKEN, DOMS, obtener_temas_por_comunidad, PUNISHMENT_FILE, BOTMASTER_IDS
-from src.database.database import create_database, create_tables, restart_all_combats, seed_items, init_botmaster_roles, get_campo_usuario, get_usuario_resumen, insert_user, normalizar_nombre, update_perfil
+from src.database.database import create_database, create_tables, restart_all_combats, seed_items, init_botmaster_roles, get_campo_usuario, get_usuario_resumen, insert_user, normalizar_nombre, update_perfil, is_botmaster
 
 # Handler imports - General commands
 from handlers.general import dar, ver, regalar, numero_azar, quitar, userid
 from handlers.starting_menu import start, comandos, menu_callback
 from handlers.tienda import tienda, tienda_callback
 from handlers.inventario import inventario, inventario_callback, usar
-from handlers.battles import lucha, ataque, aceptar_lucha
+from handlers.battles import lucha, ataque, aceptar_lucha, cancelar_lucha
 from handlers.roles import asignar_rol, ver_rol, suerte, hacer_botmaster, quitar_botmaster
 
 # Handler imports - Games and rewards
@@ -208,7 +208,7 @@ async def castigar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     
      # Check if user is a DOM or the BotMaster
-    if actor_id not in BOTMASTER_IDS and actor_id not in DOMS:
+    if not is_botmaster(actor_id) and actor_id not in DOMS:
         
         await update.message.reply_text(
             "❌ No tienes permisos para usar este comando."
@@ -230,7 +230,7 @@ async def castigar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     target_username = usuario_objetivo.username or usuario_objetivo.first_name
 
     # Verify ownership relationship (DOM can only punish their submissives)
-    if actor_id not in BOTMASTER_IDS and target_id not in DOMS.get(actor_id, []):
+    if not is_botmaster(actor_id) and target_id not in DOMS.get(actor_id, []):
         await update.message.reply_text(
             f"❌ No puedes castigar a {target_username}. "
             "No tienes control sobre él/ella."
@@ -315,7 +315,7 @@ async def perdonar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     # Check permission for BotMaster or DOM
-    if actor_id not in BOTMASTER_IDS and actor_id not in DOMS:
+    if not is_botmaster(actor_id) and actor_id not in DOMS:
         
         await update.message.reply_text(
             "❌ No tienes permiso para usar este comando."
@@ -337,7 +337,7 @@ async def perdonar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Verify ownership
     # El BotMaster puede perdonar a cualquiera
-    if actor_id not in BOTMASTER_IDS and target_id not in DOMS.get(actor_id, []):
+    if not is_botmaster(actor_id) and target_id not in DOMS.get(actor_id, []):
         
         await update.message.reply_text(
             f"❌ No puedes perdonar a @{target_username}."
@@ -536,6 +536,7 @@ def main() -> None:
     # Group 2.5: Battle/Combat system (refactored)
     app.add_handler(CommandHandler("lucha", lucha), group=2)
     app.add_handler(CommandHandler("aceptarlucha", aceptar_lucha), group=2)
+    app.add_handler(CommandHandler("cancelarlucha", cancelar_lucha), group=2)
     # Dice handler for combat is in group=1 with detectar_dado
     app.add_handler(CommandHandler("ataque", ataque), group=2)  # Backward compatibility
 
