@@ -1564,6 +1564,14 @@ def check_permission(id_user: int, min_role: int) -> bool:
 
 # ==================== COMBAT OPERATIONS ====================
 
+
+def is_botmaster(id_user: int) -> bool:
+    """Role 3 is the universal in-bot superuser."""
+    try:
+        return get_user_role(int(id_user)) >= 3
+    except Exception:
+        return False
+
 def restart_all_combats():
     """Cancel active combats on startup and refund their already-reserved wagers atomically."""
     conn = _get_connection()
