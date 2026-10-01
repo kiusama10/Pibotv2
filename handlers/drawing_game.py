@@ -1,8 +1,9 @@
 """Dibuja y Adivina: partida por chat+tema, canvas privado del dibujante y respuestas en Telegram."""
-import os, random, secrets, threading, time, unicodedata
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+import os, random, secrets, threading, time, unicodedata, io
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ContextTypes
 from src.database.database import _get_connection, _put_connection
+from PIL import Image, ImageDraw
 
 ROUND_SECONDS=120
 CHANGE_COST=100
@@ -13,6 +14,8 @@ WORDS_BDSM=["collar","cuerda","antifaz","fusta","látigo","aftercare","consentim
 WORDS=WORDS_NORMAL+WORDS_BDSM
 # Estado de trazos es efímero: si Render reinicia, la ronda persistente expira/reinicia sin tocar dinero.
 _strokes={}; _stroke_lock=threading.Lock()
+_chat_feed={}; _feed_lock=threading.Lock()
+_canvas_versions={}; _version_lock=threading.Lock()
 
 def ensure_drawing_tables():
     conn=_get_connection()
@@ -24,6 +27,7 @@ def ensure_drawing_tables():
           drawer_id bigint, word text, drawer_token text, viewer_token text, round_no int NOT NULL DEFAULT 0,
           round_ends_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())""")
         c.execute("ALTER TABLE drawing_games_tb ADD COLUMN IF NOT EXISTS viewer_token text")
+        c.execute("ALTER TABLE drawing_games_tb ADD COLUMN IF NOT EXISTS live_message_id bigint")
         c.execute("DROP INDEX IF EXISTS uq_drawing_active_location")
         c.execute("""CREATE UNIQUE INDEX uq_drawing_active_location ON drawing_games_tb(chat_id,COALESCE(thread_id,0)) WHERE status='active'""")
         c.execute("""CREATE TABLE IF NOT EXISTS drawing_players_tb(game_id text REFERENCES drawing_games_tb(game_id) ON DELETE CASCADE,user_id bigint NOT NULL,display_name text NOT NULL,turn_order int NOT NULL,joined_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(game_id,user_id))""")
@@ -68,13 +72,31 @@ async def dibujar(update:Update, context:ContextTypes.DEFAULT_TYPE):
     except Exception:
         conn.rollback(); await update.effective_message.reply_text("⚠️ No pude crear la partida."); return
     finally:_put_connection(conn)
-    await update.effective_message.reply_text("🎨 DIBUJA Y ADIVINA\n\nLa ronda empieza aquí mismo. Todo el grupo puede adivinar escribiendo en Telegram; no hay salas ni hace falta unirse para jugar.\n\n⏱️ 2 minutos por dibujo\n🏆 Primer acierto: 1,500 PiPesos\n🔄 Cambiar palabra: 100 PiPesos")
     await _start_round(context,gid)
 
 async def _send_drawer(context, gid, uid, word, token):
-    # Ya no enviamos mensajes privados. La palabra queda en la WebApp del dibujante.
-    # El enlace de edición se publica en la ronda; solo debe usarlo el dibujante.
+    # Sin PV: el acceso al lienzo vive en el mensaje de la ronda.
     return True
+
+def _render_canvas_bytes(gid):
+    """Renderiza los trazos actuales como JPEG para mostrarlos dentro de Telegram."""
+    with _stroke_lock:
+        strokes=list(_strokes.get(gid,[]))
+    im=Image.new('RGB',(1200,900),'white'); d=ImageDraw.Draw(im)
+    for x in strokes:
+        if not isinstance(x,dict): continue
+        if x.get('t')=='clear':
+            d.rectangle((0,0,1200,900),fill='white'); continue
+        if x.get('t')!='s': continue
+        try:
+            a=x.get('a') or [0,0]; b=x.get('b') or [0,0]
+            col=x.get('c') or '#111111'; w=max(1,min(60,int(float(x.get('w',7)))))
+            d.line((float(a[0]),float(a[1]),float(b[0]),float(b[1])),fill=col,width=w)
+        except Exception: pass
+    out=io.BytesIO(); im.save(out,'JPEG',quality=88,optimize=True); out.seek(0); out.name='pibot_dibujo.jpg'; return out
+
+def _round_caption(nr,drawer_name):
+    return f"🎨 RONDA {nr} · {drawer_name} está dibujando\n⏱️ Tienes 2 minutos\n\n💬 Adivina escribiendo en este chat.\n🏆 Primer acierto: 1,500 PiPesos"
 
 async def _start_round(context,gid):
     conn=_get_connection()
@@ -85,20 +107,44 @@ async def _start_round(context,gid):
         c.execute("SELECT user_id,display_name FROM drawing_players_tb WHERE game_id=%s ORDER BY turn_order",(gid,)); ps=c.fetchall()
         if len(ps)<1: conn.rollback(); return False
         nr=rno+1; drawer=ps[(nr-1)%len(ps)]; word=_new_word(); token=secrets.token_urlsafe(24); viewer_token=secrets.token_urlsafe(24)
-        c.execute("UPDATE drawing_games_tb SET status='active',drawer_id=%s,word=%s,drawer_token=%s,viewer_token=%s,round_no=%s,round_ends_at=now()+(%s||' seconds')::interval,updated_at=now() WHERE game_id=%s",(drawer[0],word,token,viewer_token,nr,ROUND_SECONDS,gid)); conn.commit()
+        c.execute("UPDATE drawing_games_tb SET status='active',drawer_id=%s,word=%s,drawer_token=%s,viewer_token=%s,round_no=%s,round_ends_at=now()+(%s||' seconds')::interval,live_message_id=NULL,updated_at=now() WHERE game_id=%s",(drawer[0],word,token,viewer_token,nr,ROUND_SECONDS,gid)); conn.commit()
     except Exception: conn.rollback(); return False
     finally:_put_connection(conn)
     with _stroke_lock:_strokes[gid]=[]
+    with _feed_lock:_chat_feed[gid]=[]
+    with _version_lock:_canvas_versions[gid]=1
     rows=[]
     if WEBAPP_BASE_URL:
-        # Ruta nueva para evitar caché del lienzo anterior. El botón de edición contiene el token del dibujante.
-        rows.append([InlineKeyboardButton('🖌️ LIENZO DEL DIBUJANTE',url=f"{WEBAPP_BASE_URL}/pibot-canvas-v3?game={gid}&token={token}&mode=draw")])
-        rows.append([InlineKeyboardButton('👀 Ver lienzo en vivo',url=f"{WEBAPP_BASE_URL}/pibot-canvas-v3?game={gid}&token={viewer_token}&mode=view")])
-    rows.append([InlineKeyboardButton('🎨 Tomar siguiente turno',callback_data=f'draw:take:{gid}')])
-    viewer_kb=InlineKeyboardMarkup(rows)
-    await context.bot.send_message(chat,f"🎨 RONDA {nr}\n🖌️ Dibuja: {drawer[1]}\n⏱️ 2:00\n\n🖌️ {drawer[1]}: abre LIENZO DEL DIBUJANTE. La palabra y todas las herramientas están dentro.\n👀 Los demás pueden usar Ver lienzo en vivo.\n\nEscriban sus respuestas aquí. ¡Primer acierto gana 1,500 PiPesos!",message_thread_id=thread,reply_markup=viewer_kb)
+        rows.append([InlineKeyboardButton('🖌️ ABRIR LIENZO · SOLO DIBUJANTE',url=f"{WEBAPP_BASE_URL}/pibot-canvas-v4?game={gid}&token={token}&mode=draw")])
+    kb=InlineKeyboardMarkup(rows) if rows else None
+    try:
+        msg=await context.bot.send_photo(chat,photo=_render_canvas_bytes(gid),caption=_round_caption(nr,drawer[1]),message_thread_id=thread,reply_markup=kb)
+        conn=_get_connection()
+        try:
+            c=conn.cursor(); c.execute("UPDATE drawing_games_tb SET live_message_id=%s WHERE game_id=%s AND round_no=%s",(msg.message_id,gid,nr)); conn.commit()
+        except Exception: conn.rollback()
+        finally:_put_connection(conn)
+    except Exception:
+        return False
+    context.job_queue.run_repeating(_live_canvas_job,interval=3,first=2,data={"gid":gid,"round":nr,"last":-1},name=f"drawlive:{gid}:{nr}")
     context.job_queue.run_once(_round_timeout,ROUND_SECONDS+1,data={"gid":gid,"round":nr},name=f"draw:{gid}:{nr}")
     return True
+
+async def _live_canvas_job(context:ContextTypes.DEFAULT_TYPE):
+    data=context.job.data; gid=data['gid']; rno=data['round']
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT d.chat_id,d.live_message_id,d.status,d.round_no,COALESCE(p.display_name,'Alguien') FROM drawing_games_tb d LEFT JOIN drawing_players_tb p ON p.game_id=d.game_id AND p.user_id=d.drawer_id WHERE d.game_id=%s",(gid,)); g=c.fetchone()
+    finally:_put_connection(conn)
+    if not g or g[2]!='active' or g[3]!=rno or not g[1]: context.job.schedule_removal(); return
+    with _version_lock: ver=_canvas_versions.get(gid,0)
+    if ver==data.get('last'): return
+    try:
+        await context.bot.edit_message_media(chat_id=g[0],message_id=g[1],media=InputMediaPhoto(media=_render_canvas_bytes(gid),caption=_round_caption(rno,g[4])))
+        data['last']=ver
+    except Exception:
+        # Un fallo temporal de Telegram no mata la ronda; se reintenta en el siguiente tick.
+        pass
 
 async def matar_dibujo(update:Update, context:ContextTypes.DEFAULT_TYPE):
     """Cierra a la fuerza la ronda del tema. Creador o admin; no mueve PiPesos."""
@@ -118,7 +164,7 @@ async def matar_dibujo(update:Update, context:ContextTypes.DEFAULT_TYPE):
         c.execute("UPDATE drawing_games_tb SET status='cancelled',word=NULL,drawer_token=NULL,viewer_token=NULL,round_ends_at=NULL,updated_at=now() WHERE chat_id=%s AND COALESCE(thread_id,0)=COALESCE(%s,0) AND status IN ('waiting','active','between')",(chat,thread)); conn.commit()
         try:
             for job in context.job_queue.jobs():
-                if job.name and job.name.startswith(f"draw:{gid}:"):
+                if job.name and (job.name.startswith(f"draw:{gid}:") or job.name.startswith(f"drawlive:{gid}:")):
                     job.schedule_removal()
         except Exception:
             pass
@@ -161,6 +207,14 @@ async def drawing_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
     finally:_put_connection(conn)
     if action=='start': await _start_round(context,gid)
 
+def _stop_live_jobs(context,gid):
+    try:
+        for job in context.job_queue.jobs():
+            if job.name and (job.name.startswith(f"drawlive:{gid}:") or job.name.startswith(f"draw:{gid}:")):
+                job.schedule_removal()
+    except Exception: pass
+
+
 async def drawing_guess(update:Update, context:ContextTypes.DEFAULT_TYPE):
     if not update.effective_message or not update.effective_message.text or update.effective_message.text.startswith('/') or update.effective_chat.type=='private': return
     chat,thread=_loc(update); uid=update.effective_user.id; guess=_norm(update.effective_message.text)
@@ -169,6 +223,12 @@ async def drawing_guess(update:Update, context:ContextTypes.DEFAULT_TYPE):
         c=conn.cursor(); c.execute("SELECT game_id,drawer_id,word,round_no FROM drawing_games_tb WHERE chat_id=%s AND COALESCE(thread_id,0)=COALESCE(%s,0) AND status='active' AND round_ends_at>now() FOR UPDATE",(chat,thread)); g=c.fetchone()
         if not g: conn.rollback(); return
         gid,drawer,word,rno=g
+        # Todo comentario de espectadores se refleja en el lienzo del artista en tiempo casi real.
+        if uid!=drawer:
+            txt=(update.effective_message.text or '').strip()[:180]
+            if txt:
+                with _feed_lock:
+                    feed=_chat_feed.setdefault(gid,[]); feed.append({'name':_name(update.effective_user)[:40],'text':txt,'ts':int(time.time())}); del feed[:-40]
         if uid==drawer or guess!=_norm(word): conn.rollback(); return
         c.execute("INSERT INTO drawing_round_wins_tb(game_id,round_no,winner_id,prize) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING",(gid,rno,uid,WIN_PRIZE))
         if c.rowcount!=1: conn.rollback(); return
@@ -176,6 +236,7 @@ async def drawing_guess(update:Update, context:ContextTypes.DEFAULT_TYPE):
         c.execute("UPDATE drawing_games_tb SET status='finished',word=NULL,drawer_token=NULL,viewer_token=NULL,round_ends_at=NULL,updated_at=now() WHERE game_id=%s AND round_no=%s",(gid,rno)); conn.commit()
     except Exception: conn.rollback(); return
     finally:_put_connection(conn)
+    _stop_live_jobs(context,gid)
     await update.effective_message.reply_text(f"🏆 ¡{_name(update.effective_user)} acertó!\nLa palabra era {word.upper()}.\n💰 +1,500 PiPesos\n\nLa ronda terminó.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🎨 Tomar turno',callback_data=f'draw:take:{gid}')]]))
 
 async def _round_timeout(context:ContextTypes.DEFAULT_TYPE):
@@ -186,6 +247,7 @@ async def _round_timeout(context:ContextTypes.DEFAULT_TYPE):
         chat,thread,word,_,_=g; c.execute("UPDATE drawing_games_tb SET status='finished',word=NULL,drawer_token=NULL,viewer_token=NULL,round_ends_at=NULL,updated_at=now() WHERE game_id=%s",(gid,)); conn.commit()
     except Exception: conn.rollback(); return
     finally:_put_connection(conn)
+    _stop_live_jobs(context,gid)
     await context.bot.send_message(chat,f"⏰ Tiempo. La palabra era {word.upper()}. Nadie cobró esta ronda.\n\nLa ronda terminó. Quien quiera dibujar puede tomar el siguiente turno.",message_thread_id=thread,reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🎨 Tomar turno',callback_data=f'draw:take:{gid}')]]))
 
 async def _next_round_job(context): await _start_round(context,context.job.data['gid'])
@@ -231,10 +293,19 @@ def canvas_change_word(gid,token):
         if not _reserve(uid,CHANGE_COST,c): conn.rollback(); return {"error":"money"}
         nw=_new_word(old); c.execute("UPDATE drawing_games_tb SET word=%s,updated_at=now() WHERE game_id=%s",(nw,gid)); conn.commit()
         with _stroke_lock:_strokes[gid]=[]
+        with _version_lock:_canvas_versions[gid]=_canvas_versions.get(gid,0)+1
         return {"word":nw}
     except Exception:
         conn.rollback(); return None
     finally:_put_connection(conn)
+
+def canvas_chat(gid,token):
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT 1 FROM drawing_games_tb WHERE game_id=%s AND drawer_token=%s AND status='active' AND round_ends_at>now()",(gid,token)); ok=bool(c.fetchone())
+    finally:_put_connection(conn)
+    if not ok:return None
+    with _feed_lock:return list(_chat_feed.get(gid,[]))
 
 def canvas_append(gid,token,items):
     if not isinstance(items,list) or len(items)>200:return False
@@ -249,4 +320,6 @@ def canvas_append(gid,token,items):
             clean.append(x)
     with _stroke_lock:
         arr=_strokes.setdefault(gid,[]); arr.extend(clean); del arr[:-8000]
+    if clean:
+        with _version_lock:_canvas_versions[gid]=_canvas_versions.get(gid,0)+1
     return True
