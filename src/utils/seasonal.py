@@ -15,6 +15,10 @@ TZ = ZoneInfo("America/Mexico_City")
 def current_season(now: datetime | None = None) -> str:
     now = now.astimezone(TZ) if now and now.tzinfo else (now.replace(tzinfo=TZ) if now else datetime.now(TZ))
     m, d = now.month, now.day
+    if m == 1 and d <= 7:
+        return "anio_nuevo"
+    if m == 9 and 15 <= d <= 16:
+        return "independencia_mx"
     # Halloween collection begins one day before October starts.
     if (m == 9 and d >= 30) or m == 10:
         return "halloween"
@@ -31,6 +35,8 @@ def current_season(now: datetime | None = None) -> str:
 
 THEMES = {
     "normal": {"icon": "✨", "name": "PiBot"},
+    "anio_nuevo": {"icon": "🎆", "name": "PiBot: Año Nuevo"},
+    "independencia_mx": {"icon": "🇲🇽", "name": "PiBot: Septiembre Mexicano"},
     "halloween": {"icon": "🎃", "name": "PiBot: Noche de Brujas"},
     "dia_muertos": {"icon": "💀🌼", "name": "PiBot: Día de Muertos"},
     "navidad": {"icon": "🎄", "name": "PiBot: Navidad"},
@@ -43,6 +49,8 @@ WELCOME_LINES = {
         "Pasa, mira los comandos y procura no perder todos tus PiPesos el primer día.",
         "Aquí hay juegos, tienda y caos cuidadosamente administrado.",
     ],
+    "anio_nuevo": ["Año nuevo, acuerdos claros y muchas historias nuevas por construir.", "Empezamos otro año recordando que confianza y consentimiento también se construyen día a día."],
+    "independencia_mx": ["Septiembre llegó al grupo: comunidad, respeto y un poco de caos mexicano cuidadosamente administrado.", "Entre celebración y comunidad, PiBot sigue recordando que el consentimiento no se toma vacaciones."],
     "halloween": [
         "Entra bajo tu propio riesgo. Los fantasmas no cobran intereses; BANKIU sí.",
         "Esta temporada hay sustos, juegos y decisiones financieras aterradoras.",
@@ -69,6 +77,8 @@ WELCOME_LINES = {
 
 COMMAND_INTROS = {
     "normal": ["¿Qué quieres hacer hoy?", "Elige tu siguiente desastre cuidadosamente."],
+    "anio_nuevo": ["Año nuevo, menú nuevo... bueno, casi.", "Empieza el año eligiendo tu siguiente aventura."],
+    "independencia_mx": ["Elige qué quieres hacer hoy.", "Menú patrio activado."],
     "halloween": ["Elige tu siguiente travesura... si te atreves.", "El menú despertó. No preguntes qué lo invocó."],
     "dia_muertos": ["Entre flores y velas, elige qué quieres hacer.", "Hasta los comandos regresaron para la ocasión."],
     "navidad": ["Elige un regalo... digo, un comando.", "El menú navideño ya está servido."],
@@ -95,6 +105,8 @@ def commands_intro() -> str:
 
 PROFILE_STYLES = {
     "normal": ("✨", "━━━━━━━━━━━━━━━━━━"),
+    "anio_nuevo": ("🎆", "✨━━━━━━━━━━━━━━✨"),
+    "independencia_mx": ("🇲🇽", "✨━━━━━━━━━━━━━━✨"),
     "halloween": ("🎃", "🕸️━━━━━━━━━━━━━━🕸️"),
     "dia_muertos": ("💀🌼", "🌼━━━━━━━━━━━━━━🌼"),
     "navidad": ("🎄", "❄️━━━━━━━━━━━━━━❄️"),
@@ -108,6 +120,8 @@ def profile_style() -> tuple[str, str]:
 
 SEASONAL_PREFIXES = {
     "normal": ["✨"],
+    "anio_nuevo": ["🎆", "✨", "🥂"],
+    "independencia_mx": ["🇲🇽", "🎉"],
     "halloween": ["🎃", "🕸️", "👻", "🦇"],
     "dia_muertos": ["💀🌼", "🕯️", "🌼"],
     "navidad": ["🎄", "❄️", "🎁", "🔔"],
@@ -115,6 +129,8 @@ SEASONAL_PREFIXES = {
 }
 SEASONAL_SUFFIXES = {
     "normal": [""],
+    "anio_nuevo": ["Que el año empiece con buenos acuerdos. ✨", "Nueva vuelta al calendario, misma regla: consentimiento primero. 🎆"],
+    "independencia_mx": ["PiBot también anda de celebración. 🇲🇽", "Que siga la fiesta con respeto. 🎉"],
     "halloween": ["La noche está mirando. 👁️", "Que empiece la travesura. 🦇", "Octubre reclama otro mensaje. 🎃"],
     "dia_muertos": ["Entre flores y velas. 🌼", "Que no falten las historias. 🕯️"],
     "navidad": ["Que no se pierdan los PiPesos entre los regalos. 🎁", "PiBot anda con espíritu navideño. ❄️"],
