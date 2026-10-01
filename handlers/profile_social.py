@@ -3,6 +3,7 @@ from src.utils.seasonal import seasonalize
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from io import BytesIO
+import time
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from telegram.ext import ContextTypes
 
@@ -400,7 +401,14 @@ async def profile_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 
+_PHOTO_CACHE = {}
+
 async def _profile_photo_bytes(uid: int, context: ContextTypes.DEFAULT_TYPE, custom_file_id: str | None):
+    # Cache corto: evita pedir la misma foto a Telegram en cada /perfil.
+    key=(int(uid), custom_file_id or "telegram")
+    cached=_PHOTO_CACHE.get(key)
+    if cached and time.monotonic()-cached[0] < 600:
+        return cached[1]
     file_id = custom_file_id
     if not file_id:
         try:
@@ -410,10 +418,12 @@ async def _profile_photo_bytes(uid: int, context: ContextTypes.DEFAULT_TYPE, cus
         except Exception:
             file_id = None
     if not file_id:
-        return None
+        _PHOTO_CACHE[key]=(time.monotonic(),None); return None
     try:
         tg_file = await context.bot.get_file(file_id)
-        return bytes(await tg_file.download_as_bytearray())
+        data=bytes(await tg_file.download_as_bytearray())
+        _PHOTO_CACHE[key]=(time.monotonic(),data)
+        return data
     except Exception:
         return None
 
@@ -455,6 +465,64 @@ FRAME_THEMES = {
 }
 
 
+
+def _draw_frame_details(d, code, c1, c2, W, H):
+    """Distinct motifs: higher-rank frames get visibly richer ornamentation."""
+    code=code or "season"
+    # corner ornaments
+    for x,y,sx,sy in ((78,78,1,1),(W-78,78,-1,1),(78,H-78,1,-1),(W-78,H-78,-1,-1)):
+        d.line((x,y,x+sx*105,y),fill=c1,width=5); d.line((x,y,x,y+sy*105),fill=c2,width=5)
+        d.ellipse((x-8,y-8,x+8,y+8),fill=c2)
+    if code=="marco_halloween":
+        # moon, bats, webs, pumpkins - deliberately graphic rather than emoji fonts.
+        d.ellipse((820,105,940,225),fill=(245,220,130)); d.ellipse((855,90,955,205),fill=(7,7,20))
+        for bx,by in ((145,110),(210,145),(760,170)):
+            d.arc((bx-28,by-10,bx,by+20),180,350,fill=c2,width=4); d.arc((bx,by-10,bx+28,by+20),190,360,fill=c2,width=4)
+        for cx,cy in ((95,1110),(885,1110)):
+            d.ellipse((cx,cy,cx+95,cy+72),fill=(235,92,20),outline=(255,165,30),width=4); d.rectangle((cx+42,cy-14,cx+53,cy+3),fill=(90,150,60))
+            d.polygon([(cx+23,cy+32),(cx+37,cy+22),(cx+42,cy+38)],fill=(20,15,20)); d.polygon([(cx+58,cy+38),(cx+64,cy+22),(cx+78,cy+32)],fill=(20,15,20))
+        for base in (105,975):
+            for r in range(24,110,22): d.arc((base-r,70-r,base+r,70+r),0,90,fill=(150,150,180),width=2)
+    elif code in {"marco_vampiro","marco_angel_caido","marco_void"}:
+        for yy in range(150,1180,105): d.polygon([(65,yy),(95,yy-24),(125,yy),(95,yy+24)],outline=c1)
+        d.polygon([(540,85),(575,130),(540,118),(505,130)],fill=c2)
+    elif code in {"marco_celestial","marco_aurora"}:
+        for x in range(120,980,110): d.ellipse((x,105,x+8,113),fill=(245,245,255))
+        d.arc((120,900,450,1240),190,330,fill=c1,width=9); d.arc((630,900,960,1240),210,350,fill=c2,width=9)
+    elif code in {"marco_infernal","marco_fenix"}:
+        for x in range(90,1000,75):
+            d.polygon([(x,1240),(x+28,1160),(x+50,1240)],fill=c1 if (x//75)%2 else c2)
+    elif code in {"marco_kitsune","marco_sakura"}:
+        for x,y in ((130,130),(870,160),(160,1110),(850,1080),(700,115)):
+            d.ellipse((x,y,x+18,y+11),fill=c2); d.ellipse((x+14,y+5,x+30,y+16),fill=c1)
+    elif code in {"marco_cyberpunk","marco_anime_neon"}:
+        for yy in range(160,1180,90): d.line((65,yy,115,yy),fill=c1,width=3); d.line((965,yy+25,1015,yy+25),fill=c2,width=3)
+        d.text((760,92),"// ONLINE",font=_font(22,True),fill=c1)
+    elif code in {"marco_dragon","marco_rey_tortugas","marco_realeza"}:
+        d.polygon([(470,105),(505,70),(540,110),(575,70),(610,105),(600,135),(480,135)],fill=c1,outline=c2)
+        for yy in (260,560,860): d.polygon([(62,yy),(95,yy-35),(128,yy),(95,yy+35)],outline=c2)
+    elif code=="marco_mictlan":
+        for x in (110,880):
+            d.ellipse((x,1080,x+90,1170),outline=c1,width=5); d.ellipse((x+20,1105,x+35,1120),fill=c2); d.ellipse((x+55,1105,x+70,1120),fill=c2)
+
+def _gift_icon(d, x, y, name, c1, c2):
+    n=str(name).lower(); box=(x,y,x+64,y+64)
+    d.rounded_rectangle(box,radius=14,fill=(18,18,38),outline=c1,width=2)
+    if "rosa" in n:
+        d.ellipse((x+18,y+12,x+46,y+40),fill=(220,45,80)); d.line((x+32,y+38,x+32,y+56),fill=(70,190,90),width=4)
+    elif "chocolate" in n:
+        d.rectangle((x+14,y+16,x+50,y+50),fill=(110,62,38)); d.line((x+32,y+16,x+32,y+50),fill=(180,120,80),width=2); d.line((x+14,y+33,x+50,y+33),fill=(180,120,80),width=2)
+    elif "peluche" in n:
+        d.ellipse((x+18,y+18,x+46,y+50),fill=(190,135,85)); d.ellipse((x+12,y+12,x+27,y+27),fill=(190,135,85)); d.ellipse((x+37,y+12,x+52,y+27),fill=(190,135,85))
+    elif "collar" in n or "cuerda" in n:
+        d.arc((x+10,y+10,x+54,y+54),20,330,fill=c2,width=6); d.ellipse((x+27,y+42,x+37,y+52),fill=c1)
+    elif "corona" in n:
+        d.polygon([(x+10,y+45),(x+16,y+18),(x+30,y+35),(x+40,y+14),(x+53,y+45)],fill=(235,195,55))
+    elif "anillo" in n:
+        d.ellipse((x+15,y+18,x+49,y+52),outline=(210,210,230),width=7); d.polygon([(x+25,y+16),(x+32,y+7),(x+40,y+16),(x+32,y+24)],fill=c2)
+    else:
+        d.polygon([(x+32,y+10),(x+52,y+28),(x+32,y+54),(x+12,y+28)],fill=c2,outline=c1)
+
 def _wrap(draw, text, font, max_width):
     words = str(text).split(); lines=[]; current=""
     for word in words:
@@ -491,6 +559,7 @@ async def _build_profile_card(uid: int, viewer: int, context: ContextTypes.DEFAU
     for i in range(5):
         inset=48+i*8; col=c1 if i%2==0 else c2
         d.rounded_rectangle((inset,inset,W-inset,H-inset),radius=34,outline=col,width=3)
+    _draw_frame_details(d,frame_code,c1,c2,W,H)
     title_font=_font(46,True); small=_font(26); body=_font(30); body_b=_font(31,True)
     d.text((90,82),"P I B O T   //   "+theme_name,font=small,fill=c2)
     photo=await _profile_photo_bytes(uid,context,custom_photo_file_id)
@@ -520,8 +589,16 @@ async def _build_profile_card(uid: int, viewer: int, context: ContextTypes.DEFAU
     d.text((100,y),f"COLECCIÓN  •  {counts.get('titulo',0)} títulos  •  {counts.get('cos_marco',0)} marcos  •  {counts.get('cos_insignia',0)} insignias",font=small,fill=(200,205,225)); y+=48
     d.text((100,y),"R E G A L O S",font=small,fill=c2); y+=38
     if gifts:
-        gift_text="  •  ".join(f"{n} ×{q}" if q>1 else n for n,q in gifts)
-        for line in _wrap(d,gift_text,small,850)[:5]: d.text((115,y),line,font=small,fill=(240,240,248)); y+=34
+        # Colección visual: mini ficha por tipo de regalo, no una línea de nombres.
+        for idx,(n,q) in enumerate(gifts[:8]):
+            col=idx%4; row=idx//4; gx=105+col*225; gy=y+row*92
+            _gift_icon(d,gx,gy,n,c1,c2)
+            clean=str(n)
+            # quita el primer símbolo no ASCII de los nombres del catálogo para evitar cuadros vacíos
+            clean=' '.join(part for part in clean.split() if any(ch.isalnum() for ch in part))
+            d.text((gx+74,gy+7),clean[:15],font=_font(21,True),fill=(242,242,250))
+            d.text((gx+74,gy+38),f"×{q}",font=_font(22,True),fill=c1)
+        y += 92*((min(len(gifts),8)+3)//4)
     else:
         d.text((115,y),"Sin regalos visibles todavía.",font=small,fill=(165,170,190)); y+=34
     # Optional bio/gustos, clipped so the card remains clean.
@@ -533,7 +610,7 @@ async def _build_profile_card(uid: int, viewer: int, context: ContextTypes.DEFAU
         y+=18; d.text((100,y),label,font=small,fill=c1); y+=34
         for line in _wrap(d,val,small,850)[:2]: d.text((115,y),line,font=small,fill=(225,225,238)); y+=32
     d.text((100,1270),"PiBot Social Profile",font=small,fill=(120,125,150)); d.text((790,1270),theme_name,font=small,fill=c1)
-    out=BytesIO(); im.save(out,format='PNG',optimize=True); out.seek(0); out.name='perfil.png'
+    out=BytesIO(); im.save(out,format='JPEG',quality=88,optimize=False,subsampling=1); out.seek(0); out.name='perfil.jpg'
     return out, _render(uid,viewer)
 
 

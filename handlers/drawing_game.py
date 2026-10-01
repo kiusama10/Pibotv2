@@ -58,8 +58,11 @@ async def dibujar(update:Update, context:ContextTypes.DEFAULT_TYPE):
     chat,thread=_loc(update); uid=update.effective_user.id; gid=secrets.token_hex(8)
     conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("SELECT 1 FROM drawing_games_tb WHERE chat_id=%s AND COALESCE(thread_id,0)=COALESCE(%s,0) AND status IN ('waiting','active','between')",(chat,thread))
-        if c.fetchone(): conn.rollback(); await update.effective_message.reply_text("🎨 Ya hay una partida de Dibuja y Adivina aquí."); return
+        c=conn.cursor()
+        # Cada /dibujar es una ronda independiente; limpia estados legado que no deben bloquear.
+        c.execute("UPDATE drawing_games_tb SET status='cancelled',word=NULL,drawer_token=NULL,viewer_token=NULL,round_ends_at=NULL,updated_at=now() WHERE chat_id=%s AND COALESCE(thread_id,0)=COALESCE(%s,0) AND (status IN ('waiting','between') OR (status='active' AND (round_ends_at IS NULL OR round_ends_at<=now())))",(chat,thread))
+        c.execute("SELECT 1 FROM drawing_games_tb WHERE chat_id=%s AND COALESCE(thread_id,0)=COALESCE(%s,0) AND status='active' AND round_ends_at>now()",(chat,thread))
+        if c.fetchone(): conn.rollback(); await update.effective_message.reply_text("🎨 Hay un dibujo activo en este tema. Espera a que termine o usa /matardibujo."); return
         c.execute("INSERT INTO drawing_games_tb(game_id,chat_id,thread_id,creator_id) VALUES(%s,%s,%s,%s)",(gid,chat,thread,uid))
         c.execute("INSERT INTO drawing_players_tb(game_id,user_id,display_name,turn_order) VALUES(%s,%s,%s,0)",(gid,uid,_name(update.effective_user))); conn.commit()
     except Exception:
@@ -108,16 +111,23 @@ async def matar_dibujo(update:Update, context:ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type=='private': return await update.effective_message.reply_text("Úsalo en el grupo/tema del dibujo.")
     chat,thread=_loc(update); uid=update.effective_user.id; conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("SELECT game_id,creator_id FROM drawing_games_tb WHERE chat_id=%s AND COALESCE(thread_id,0)=COALESCE(%s,0) AND status='active' ORDER BY created_at DESC LIMIT 1 FOR UPDATE",(chat,thread)); row=c.fetchone()
-        if not row: conn.rollback(); return await update.effective_message.reply_text("🎨 No hay ningún dibujo activo en este tema.")
-        gid,creator=row
+        c=conn.cursor(); c.execute("SELECT game_id,creator_id,status FROM drawing_games_tb WHERE chat_id=%s AND COALESCE(thread_id,0)=COALESCE(%s,0) AND status IN ('waiting','active','between') ORDER BY created_at DESC LIMIT 1 FOR UPDATE",(chat,thread)); row=c.fetchone()
+        if not row:
+            conn.rollback(); return await update.effective_message.reply_text("🎨 No había dibujo activo. El tema ya está limpio y listo para /dibujar.")
+        gid,creator,_status=row
         allowed=(uid==creator)
         if not allowed:
             try:
                 member=await context.bot.get_chat_member(chat,uid); allowed=member.status in ('administrator','creator')
             except Exception: allowed=False
         if not allowed: conn.rollback(); return await update.effective_message.reply_text("❌ Solo quien inició el dibujo o un administrador puede cerrarlo.")
-        c.execute("UPDATE drawing_games_tb SET status='cancelled',word=NULL,drawer_token=NULL,viewer_token=NULL,round_ends_at=NULL,updated_at=now() WHERE game_id=%s AND status='active'",(gid,)); conn.commit()
+        c.execute("UPDATE drawing_games_tb SET status='cancelled',word=NULL,drawer_token=NULL,viewer_token=NULL,round_ends_at=NULL,updated_at=now() WHERE chat_id=%s AND COALESCE(thread_id,0)=COALESCE(%s,0) AND status IN ('waiting','active','between')",(chat,thread)); conn.commit()
+        try:
+            for job in context.job_queue.jobs():
+                if job.name and job.name.startswith(f"draw:{gid}:"):
+                    job.schedule_removal()
+        except Exception:
+            pass
         with _stroke_lock: _strokes.pop(gid,None)
         await update.effective_message.reply_text("☠️ Dibujo cerrado. Ya no existe una ronda activa aquí. Usa /dibujar o 🎨 Tomar turno para iniciar otra.")
     except Exception:

@@ -578,9 +578,15 @@ async def recuperar_apuestas_al_iniciar(application):
                 print(f"[CASINO RECOVERY] Settlement notification failed: {e}")
             continue
         created = row["fecha_creacion"]
-        elapsed = max(0.0, (now - created).total_seconds()) if created else 120.0
+        # PostgreSQL devuelve timestamptz aware; usa el mismo tz para evitar estados fantasma.
+        current_now = datetime.now(created.tzinfo) if created is not None and getattr(created, "tzinfo", None) else datetime.now()
+        elapsed = max(0.0, (current_now - created).total_seconds()) if created else 120.0
         remaining = max(0.0, 120.0 - elapsed)
-        asyncio.create_task(_resolver_timeout_recuperado(application.bot, key, bet, remaining))
+        if remaining <= 0.0:
+            # Una reserva vencida se resuelve durante el arranque, antes de aceptar comandos.
+            await _resolver_timeout_recuperado(application.bot, key, bet, 0)
+        else:
+            asyncio.create_task(_resolver_timeout_recuperado(application.bot, key, bet, remaining))
     if rows:
         print(f"[CASINO RECOVERY] {len(rows)} apuesta(s) reservada(s) revisadas al iniciar.")
 
