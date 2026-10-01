@@ -7,14 +7,14 @@ from src.config import BOTMASTER_IDS
 from src.database.database import (
     get_campo_usuario, normalizar_nombre, update_perfil,
     insert_user, get_id_user, quitar_puntos, dar_puntos,
-    reemplazar_acentos, check_permission, get_usuario_resumen, transferir_puntos_atomico, get_user_role,
+    reemplazar_acentos, check_permission, get_usuario_resumen, transferir_puntos_atomico, get_user_role, is_botmaster,
 )
 
 #region FUNCIONES AUXILIARES
 
 async def verificar_admin(user_id: int, update: Update) -> bool:
     """Admin if protected root BotMaster or persistent roles_tb role >= 2."""
-    if int(user_id) in BOTMASTER_IDS:
+    if int(user_id) in BOTMASTER_IDS or is_botmaster(user_id):
         return True
     return get_user_role(user_id) >= 2
 

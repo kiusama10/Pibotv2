@@ -16,7 +16,7 @@ Commands:
 
 from telegram import Update
 from telegram.ext import ContextTypes
-from src.database.database import get_id_user, get_user_role, set_user_role, check_permission, set_suerte
+from src.database.database import get_id_user, get_user_role, set_user_role, check_permission, set_suerte, is_botmaster
 from src.config import BOTMASTER_IDS
 
 ROLE_NAMES = {1: "Usuario", 2: "Admin", 3: "BotMaster"}
@@ -69,15 +69,22 @@ async def asignar_rol(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ El rol debe ser 1, 2 o 3.")
         return
 
-    # Hierarchical restrictions for Admins
-    if sender_role == 2:
-        target_role = get_user_role(target_id)
-        if target_role >= 3:
-            await update.message.reply_text("❌ No puedes modificar el rol de un BotMaster.")
-            return
-        if role >= 3:
-            await update.message.reply_text("❌ Solo un BotMaster puede asignar el rol de BotMaster.")
-            return
+    # BotMaster role 3 has broad admin powers, but only the protected root
+    # configured in BOTMASTER_IDS may create/remove BotMasters.
+    target_role = get_user_role(target_id)
+    is_root = sender.id in BOTMASTER_IDS
+    if target_id in BOTMASTER_IDS and target_id != sender.id:
+        await update.message.reply_text("🛡️ Ese BotMaster principal está protegido.")
+        return
+    if target_role >= 3 and not is_root:
+        await update.message.reply_text("❌ Solo el BotMaster principal puede modificar a otro BotMaster.")
+        return
+    if role >= 3 and not is_root:
+        await update.message.reply_text("❌ Solo el BotMaster principal puede nombrar BotMasters.")
+        return
+    if sender_role == 2 and role >= 3:
+        await update.message.reply_text("❌ No puedes asignar el rol de BotMaster.")
+        return
 
     # Set role
     if set_user_role(target_id, role):

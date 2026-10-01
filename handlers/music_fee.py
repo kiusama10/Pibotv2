@@ -4,7 +4,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from src.config import BOTMASTER_IDS
 from src.config.settings import MUSIC_POST_PRICE
-from src.database.database import _get_connection, _put_connection
+from src.database.database import _get_connection, _put_connection, is_botmaster
 
 MAIN_CHAT_ID=-1003290179217
 LINK_RE=re.compile(r"https?://(?:www\.)?(?:youtube\.com|youtu\.be|music\.youtube\.com|open\.spotify\.com)/\S+",re.I)
@@ -81,8 +81,8 @@ def _is_music(msg):
     return bool(LINK_RE.search(msg.text or msg.caption or ""))
 
 async def activarmusica(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in BOTMASTER_IDS:
-        return await update.effective_message.reply_text("❌ Solo el BotMaster principal puede configurar Música.")
+    if not is_botmaster(update.effective_user.id):
+        return await update.effective_message.reply_text("❌ Solo un BotMaster puede configurar Música.")
     if update.effective_chat.id!=MAIN_CHAT_ID:
         return await update.effective_message.reply_text("❌ Configura Música dentro de la comunidad principal.")
     msg=update.effective_message
@@ -100,8 +100,8 @@ async def activarmusica(update:Update,context:ContextTypes.DEFAULT_TYPE):
     else: await msg.reply_text("⚠️ No pude guardar la configuración.")
 
 async def desactivarmusica(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in BOTMASTER_IDS:
-        return await update.effective_message.reply_text("❌ Solo el BotMaster principal puede desactivar Música.")
+    if not is_botmaster(update.effective_user.id):
+        return await update.effective_message.reply_text("❌ Solo un BotMaster puede desactivar Música.")
     cfg=_config(update.effective_chat.id)
     if not cfg:return await update.effective_message.reply_text("ℹ️ No hay un tema de Música configurado.")
     thread_id,_,price=cfg

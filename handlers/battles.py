@@ -210,6 +210,29 @@ def get_combate_by_id(id_combate: int) -> dict:
         _put_connection(conn)
 
 
+def cancelar_combate_activo_atomico(id_combate: int, actor_id: int):
+    conn=_get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id_atacante,id_defensor,apuesta,estado FROM combates_tb WHERE id_combate=%s FOR UPDATE",(id_combate,))
+            row=cursor.fetchone()
+            if not row: conn.rollback(); return "missing"
+            atacante,defensor,apuesta,estado=row
+            if actor_id not in (atacante,defensor): conn.rollback(); return "forbidden"
+            if estado != "activo": conn.rollback(); return "closed"
+            cursor.execute("UPDATE combates_tb SET estado='cancelado' WHERE id_combate=%s AND estado='activo'",(id_combate,))
+            if cursor.rowcount != 1: conn.rollback(); return "closed"
+            if apuesta > 0:
+                cursor.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(apuesta,atacante))
+                if cursor.rowcount != 1: conn.rollback(); return "error"
+                cursor.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(apuesta,defensor))
+                if cursor.rowcount != 1: conn.rollback(); return "error"
+        conn.commit(); return "cancelled"
+    except Exception as exc:
+        conn.rollback(); print(f"[ERROR DB] Error cancelling combat: {exc}"); return "error"
+    finally: _put_connection(conn)
+
+
 # ==================== BATTLE COMMANDS ====================
 
 async def lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -353,6 +376,31 @@ async def lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     
     asyncio.create_task(timeout_challenge())
+
+
+async def cancelar_lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id=update.effective_user.id; chat_id=update.effective_chat.id; thread_id=update.message.message_thread_id
+    challenge=pending_challenges.get(user_id); challenger_id=user_id
+    if challenge is None:
+        for cid,data in list(pending_challenges.items()):
+            if data.get("opponent_id")==user_id: challenge=data; challenger_id=cid; break
+    if challenge is not None:
+        if chat_id != challenge.get("chat_id") or thread_id != challenge.get("message_thread_id"):
+            return await update.message.reply_text("⚠️ Cancela la lucha en el mismo tema donde fue creada.")
+        removed=pending_challenges.pop(challenger_id,None)
+        if removed is None: return await update.message.reply_text("ℹ️ Ese desafío ya no está pendiente.")
+        if not reembolsar_apuesta_doble(challenger_id,removed["opponent_id"],removed["apuesta"]):
+            pending_challenges[challenger_id]=removed
+            return await update.message.reply_text("⚠️ No pude cancelar la lucha de forma segura. No marqué el desafío como cancelado.")
+        return await update.message.reply_text(f"🛑 Lucha cancelada. Se devolvieron {removed['apuesta']} PiPesos a cada jugador.")
+    combate=get_combate_activo(user_id)
+    if not combate: return await update.message.reply_text("ℹ️ No tienes una lucha pendiente ni un combate activo.")
+    if chat_id != combate.get("chat_id") or thread_id != combate.get("message_thread_id"):
+        return await update.message.reply_text("⚠️ Cancela la lucha en el mismo tema donde está ocurriendo.")
+    result=cancelar_combate_activo_atomico(combate["id_combate"],user_id)
+    if result=="cancelled": return await update.message.reply_text(f"🛑 Combate cancelado. Se devolvieron {combate['apuesta']} PiPesos a cada jugador.")
+    if result=="closed": return await update.message.reply_text("ℹ️ Esa lucha ya terminó o fue cancelada.")
+    await update.message.reply_text("⚠️ No pude cancelar la lucha de forma segura; no se hizo ningún reembolso parcial.")
 
 
 async def aceptar_lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
