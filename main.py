@@ -57,11 +57,11 @@ from handlers.bankiu_rankings import bankiu, pagarbanco, ranking, ranking_pipeso
 from handlers.bdsm_quiz import quiz_tick, quiz_callback, quiz_manual, quiz_now, ensure_quiz_tables
 from handlers.bdsm_facts import bdsm_fact_tick, ensure_fact_tables, FACT_INTERVAL_SECONDS
 from handlers.casino_pvp import tortugas, tortuga, ranking_tortugas, blackjack, cancelar_blackjack, casino_pvp_callback, ensure_casino_pvp_tables, turtle_season_maintenance_job, process_turtle_input
-from handlers.auctions import subasta, puja, cancelarsubasta, auction_maintenance_job
+from handlers.auctions import subasta, puja, versubasta, cancelarsubasta, auction_maintenance_job
 from handlers.assassin_game import asesino, assassin_callback
 from handlers.help_center import pipesos, instrucciones, canales, help_callback, channel_callback
 from handlers.bounty import caza
-from handlers.vinculos import vinculo, separarse, vinculo_callback, ensure_vinculo_tables
+from handlers.vinculos import vinculo, cancelarvinculo, separarse, vinculo_callback, ensure_vinculo_tables
 from handlers.drawing_game import dibujar, matar_dibujo, drawing_callback, drawing_guess, ensure_drawing_tables, drawing_maintenance_job
 from handlers.presentation_watchdog import silent_new_member_watch, detect_presentation_message, presentation_watchdog_job, ensure_presentation_tables
 from handlers.music_fee import paid_music_post, ensure_music_tables, activarmusica, desactivarmusica
@@ -485,7 +485,7 @@ def main() -> None:
         _qnow=datetime.now(ZoneInfo("America/Mexico_City")); _qnext=(_qnow+timedelta(hours=1)).replace(minute=0,second=0,microsecond=0)
         app.job_queue.run_repeating(quiz_tick, interval=3600, first=max(1,(_qnext-_qnow).total_seconds()), name="bdsm_quiz_hourly")
         # Educational BDSM capsule every 2.5 hours. No economy side effects.
-        app.job_queue.run_repeating(bdsm_fact_tick, interval=FACT_INTERVAL_SECONDS, first=FACT_INTERVAL_SECONDS, name="bdsm_fact_2h")
+        app.job_queue.run_repeating(bdsm_fact_tick, interval=FACT_INTERVAL_SECONDS, first=300, name="bdsm_fact_2h30")
         app.job_queue.run_repeating(turtle_season_maintenance_job, interval=3600, first=45, name="turtle_monthly_awards")
 
     # Group -4: capture genuinely new members BEFORE auto-registration. Sends nothing.
@@ -546,6 +546,7 @@ def main() -> None:
     app.add_handler(CommandHandler("cancelarblackjack", cancelar_blackjack), group=2)
     app.add_handler(CommandHandler("subasta", subasta), group=2)
     app.add_handler(CommandHandler("puja", puja), group=2)
+    app.add_handler(CommandHandler("versubasta", versubasta), group=2)
     app.add_handler(CommandHandler("cancelarsubasta", cancelarsubasta), group=2)
     app.add_handler(CommandHandler("asesino", asesino), group=2)
     app.add_handler(CommandHandler("pipesos", pipesos), group=2)
@@ -553,6 +554,7 @@ def main() -> None:
     app.add_handler(CommandHandler("canales", canales), group=2)
     app.add_handler(CommandHandler("caza", caza), group=2)
     app.add_handler(CommandHandler("vinculo", vinculo), group=2)
+    app.add_handler(CommandHandler("cancelarvinculo", cancelarvinculo), group=2)
     app.add_handler(CommandHandler("separarse", separarse), group=2)
     app.add_handler(CommandHandler("activarmusica", activarmusica), group=2)
     app.add_handler(CommandHandler("desactivarmusica", desactivarmusica), group=2)
