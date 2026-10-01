@@ -610,7 +610,7 @@ async def _build_profile_card(uid: int, viewer: int, context: ContextTypes.DEFAU
         y+=18; d.text((100,y),label,font=small,fill=c1); y+=34
         for line in _wrap(d,val,small,850)[:2]: d.text((115,y),line,font=small,fill=(225,225,238)); y+=32
     d.text((100,1270),"PiBot Social Profile",font=small,fill=(120,125,150)); d.text((790,1270),theme_name,font=small,fill=c1)
-    out=BytesIO(); im.save(out,format='JPEG',quality=88,optimize=False,subsampling=1); out.seek(0); out.name='perfil.jpg'
+    out=BytesIO(); im.save(out,format='JPEG',quality=80,optimize=False,subsampling=2); out.seek(0); out.name='perfil.jpg'
     return out, _render(uid,viewer)
 
 

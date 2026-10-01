@@ -72,11 +72,10 @@ async def dibujar(update:Update, context:ContextTypes.DEFAULT_TYPE):
     await _start_round(context,gid)
 
 async def _send_drawer(context, gid, uid, word, token):
-    text=f"🎨 Te toca dibujar.\n\n🤫 Tu palabra es: {word.upper()}\n⏱️ Tienes 2 minutos."
+    text=f"🎨 Te toca dibujar.\n\n🤫 Tu palabra es: {word.upper()}\n⏱️ Tienes 2 minutos.\n\n🖌️ Colores, grosor, borrador, deshacer, limpiar y Cambiar palabra están dentro del lienzo."
     rows=[]
     if WEBAPP_BASE_URL:
         rows.append([InlineKeyboardButton("🖌️ Abrir lienzo",web_app=WebAppInfo(url=f"{WEBAPP_BASE_URL}/draw?game={gid}&token={token}"))])
-    rows.append([InlineKeyboardButton("🔄 Cambiar palabra · 100",callback_data=f"draw:change:{gid}")])
     try: await context.bot.send_message(uid,text,reply_markup=InlineKeyboardMarkup(rows))
     except Exception: return False
     return True

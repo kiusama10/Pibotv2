@@ -1,7 +1,7 @@
 """Educational BDSM facts for PiBot.
 
 This module is intentionally informational and non-explicit. Facts rotate in the
-General topic every 2.5 hours. Presentation is seasonal; content and economy are
+General topic every 2 hours. Presentation is seasonal; content and economy are
 independent. The bank uses verified/established core facts plus many presentation
 variants so the bot does not repeat the same wording constantly.
 """
@@ -14,7 +14,7 @@ from src.utils.seasonal import current_season
 
 FACT_CHAT_ID = -1003290179217
 FACT_THREAD_ID = 435
-FACT_INTERVAL_SECONDS = 9000  # 2.5 hours
+FACT_INTERVAL_SECONDS = 7200  # 2 hours
 
 # Core educational facts. Keep these concise, non-graphic and useful for newcomers.
 CORE_FACTS = [
@@ -88,7 +88,25 @@ INTRO = [
     "Dato rápido, pero importante:", "Hoy aprendemos algo:", "Cultura BDSM en pocas palabras:",
     "Una cosa que a veces se confunde:", "Para nuevos y veteranos:", "Dato de comunidad:",
     "PiBot educativo apareció otra vez:", "Antes de seguir con el caos del grupo:", "Dato para conversar:",
-    "Algo interesante del BDSM:", "Cápsula de historia y cultura:", "Recordatorio útil:", "¿Lo conocías?"
+    "Algo interesante del BDSM:", "Cápsula de historia y cultura:", "Recordatorio útil:", "¿Lo conocías?",
+    "Archivo PiBot:", "Dato para el debate:", "Dos minutos de cultura:", "Concepto útil:",
+    "Apunte de comunidad:", "Para aprender algo nuevo:", "Una idea para conversar:", "Dato sin mitos:",
+    "Biblioteca BDSM:", "PiBot comparte:", "Punto importante:", "Cultura y consentimiento:",
+    "Nota de seguridad:", "Dato de roles y dinámicas:", "Aprendizaje del día:", "Pequeño recordatorio de comunidad:",
+    "Entre roles y acuerdos:", "Dato para tener presente:", "Un concepto que conviene conocer:", "Cápsula educativa PiBot:"
+]
+
+OUTRO = [
+    "💭 Puede servir para abrir conversación en el grupo.",
+    "🧠 Aprender también es revisar lo que creíamos saber.",
+    "🤝 Los acuerdos concretos siempre se hablan entre las personas involucradas.",
+    "📖 Una etiqueta orienta; la comunicación define la dinámica real.",
+    "🖤 Información primero, consentimiento siempre.",
+    "🔎 Si una definición importa en una dinámica, conviene aclarar qué significa para cada persona.",
+    "💬 Preguntar con respeto suele ser mejor que asumir.",
+    "🧩 No todas las dinámicas funcionan igual para todas las personas.",
+    "🛡️ Seguridad y consentimiento forman parte de la práctica, no son un añadido.",
+    "✨ Conocer términos ayuda; conocer los límites de la otra persona ayuda todavía más.",
 ]
 
 SEASON_OPEN = {
@@ -141,7 +159,7 @@ def _pick_fact():
 def fact_bank_size() -> int:
     # Each core fact has 20 intentionally different intros. This is presentation
     # variety, not a claim that they are 20 different historical facts.
-    return len(CORE_FACTS) * len(INTRO)
+    return len(CORE_FACTS) * len(INTRO) * len(OUTRO)
 
 
 def render_fact(fact) -> str:
@@ -149,7 +167,8 @@ def render_fact(fact) -> str:
     season = current_season()
     icon = random.choice(SEASON_OPEN.get(season, SEASON_OPEN["normal"]))
     intro = random.choice(INTRO)
-    return f"{icon} <b>{intro}</b>\n\n{body}\n\n📚 <i>Tema: {category.title()} · Información educativa; los acuerdos concretos siempre dependen de las personas involucradas.</i>"
+    outro = random.choice(OUTRO)
+    return f"{icon} <b>{intro}</b>\n\n{body}\n\n{outro}\n\n📚 <i>Tema: {category.title()} · Información educativa.</i>"
 
 
 async def bdsm_fact_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
