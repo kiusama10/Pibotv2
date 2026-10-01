@@ -26,6 +26,14 @@ COSMETICS = {
     "marco_celestial": ("Alas Celestiales", "marco", "legendario", 130000, None),
     "marco_realeza": ("Corona Imperial", "marco", "epico", 70000, None),
     "marco_kitsune": ("Santuario Kitsune", "marco", "epico", 75000, None),
+    "marco_eclipse": ("Eclipse Soberano", "marco", "legendario", 160000, None),
+    "marco_aurora": ("Aurora Astral", "marco", "legendario", 155000, None),
+    "marco_void": ("Vacío Absoluto", "marco", "mitico", 350000, None),
+    "marco_fenix": ("Fénix Eterno", "marco", "mitico", 375000, None),
+    "marco_sakura": ("Santuario Sakura", "marco", "epico", 85000, None),
+    "marco_cyberpunk": ("Cyberpunk 2099", "marco", "legendario", 175000, None),
+    "marco_angel_caido": ("Ángel Caído", "marco", "mitico", 400000, None),
+    "marco_rey_tortugas": ("Trono del Rey Tortuga", "marco", "mitico", 500000, None),
     "insignia_brattamer": ("Brat Tamer", "insignia", "raro", 22000, None),
     "insignia_pet": ("Pet de Élite", "insignia", "raro", 22000, None),
     "insignia_dom": ("Dominio Carmesí", "insignia", "epico", 50000, None),
@@ -152,10 +160,25 @@ async def cosmeticos(update:Update, context:ContextTypes.DEFAULT_TYPE):
     await send_cosmetics_home(update,context)
 
 
+
+def _claim_cos_action(uid:int,message_id:int,data:str):
+    key=f"cos:{uid}:{message_id}:{data}"[:240]
+    conn=_get_connection()
+    try:
+        cur=conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS ui_action_dedupe_tb(action_key text PRIMARY KEY, user_id bigint NOT NULL, created_at timestamptz NOT NULL DEFAULT now())")
+        cur.execute("INSERT INTO ui_action_dedupe_tb(action_key,user_id) VALUES(%s,%s) ON CONFLICT DO NOTHING",(key,uid))
+        ok=cur.rowcount==1; conn.commit(); return ok
+    except Exception as exc:
+        conn.rollback(); print('[COSMETICS DEDUPE]',exc); return False
+    finally:_put_connection(conn)
+
 async def cosmetics_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; await q.answer(); uid=q.from_user.id
     if q.message.chat.type != "private": return await q.answer("El vestidor solo funciona por privado.",show_alert=True)
     data=q.data
+    if data.startswith("cos_buy_") and not _claim_cos_action(uid,q.message.message_id,data):
+        return await q.answer("⏳ Esa compra ya fue procesada. Abre la tienda de nuevo.",show_alert=True)
     if data=="cos_home": return await send_cosmetics_home(update,context,edit=True)
     if data=="cos_shop":
         rows=[]

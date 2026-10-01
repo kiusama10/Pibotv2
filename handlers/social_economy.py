@@ -89,7 +89,21 @@ def buy_title(uid,code):
     except Exception as e: conn.rollback(); print('[SOCIAL] buy title',e); return "error",None
     finally:_put_connection(conn)
 
+def _claim_ui_action(uid:int, message_id:int, data:str):
+    """Claim an economic callback once. Returns True only for the first click."""
+    key=f"social:{uid}:{message_id}:{data}"[:240]
+    conn=_get_connection()
+    try:
+        c=conn.cursor()
+        c.execute("CREATE TABLE IF NOT EXISTS ui_action_dedupe_tb(action_key text PRIMARY KEY, user_id bigint NOT NULL, created_at timestamptz NOT NULL DEFAULT now())")
+        c.execute("INSERT INTO ui_action_dedupe_tb(action_key,user_id) VALUES(%s,%s) ON CONFLICT DO NOTHING",(key,uid))
+        ok=c.rowcount==1; conn.commit(); return ok
+    except Exception as e:
+        conn.rollback(); print('[UI DEDUPE]',e); return False
+    finally:_put_connection(conn)
+
 def buy_gift(sender,target,code,anonymous=False,private=False):
+    if int(sender) == int(target): return "self",None
     item=GIFTS.get(code)
     if not item:return "missing",None
     name,rarity,price,lines=item; conn=_get_connection()
@@ -258,6 +272,9 @@ async def mistitulos(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
 async def social_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; await q.answer(); uid=q.from_user.id; data=q.data
+    if data.startswith(('soc:title_buy:','soc:gift_buy:','soc:market_buy:','soc:pawn_pick:')):
+        if not _claim_ui_action(uid, q.message.message_id, data):
+            return await q.answer('⏳ Ese botón ya fue procesado. Abre la interfaz de nuevo.',show_alert=True)
     if data=='soc:title_home': return await q.edit_message_text("🏷️ COLECCIÓN DE TÍTULOS\n\nCompra, colecciona y equipa tu favorito.",reply_markup=_titles_home_markup())
     if data=='soc:title_shop':
         rows,end=_title_shop_rows(); left=max(timedelta(),end-datetime.now(timezone.utc));h=int(left.total_seconds()//3600);m=int(left.total_seconds()%3600//60)
@@ -305,7 +322,9 @@ async def social_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         hint='\n\n✅ Tienes un destinatario seleccionado.' if target and target!=uid else '\n\n💡 Para regalar con un botón, responde al mensaje de la persona con /regalos.'
         return await q.edit_message_text(f"{RARE_EMOJI.get(r,'⚪')} {name}\n✨ {r.title()}\n💰 {p:,} PiPesos\n\n{lines[0]}{hint}",reply_markup=InlineKeyboardMarkup(kb))
     if data.startswith('soc:gift_buy:'):
-        _,_,code,target=data.split(':',3); target=int(target); st,res=buy_gift(uid,target,code,False,False)
+        _,_,code,target=data.split(':',3); target=int(target)
+        if target == uid: return await q.answer('😂 No puedes autorregalarte.',show_alert=True)
+        st,res=buy_gift(uid,target,code,False,False)
         if st=='ok':
             aid,name,r,price,line=res
             try: await context.bot.send_message(target,f"🎁 {q.from_user.first_name} te regaló {name}.\n{line}\n💎 {r.title()} · Coleccionable #{aid}")
@@ -340,6 +359,36 @@ async def social_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if data=='soc:profile':
         from handlers.profile_social import _render
         return await q.edit_message_text(_render(uid,uid),reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏷️ Mis títulos",callback_data="soc:title_owned"),InlineKeyboardButton("🎁 Mis regalos",callback_data="soc:gift_owned")],[InlineKeyboardButton("✨ Mi vestidor",callback_data="cos_home")]]))
+
+async def rankingregalos(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    conn=_get_connection()
+    try:
+        c=conn.cursor()
+        c.execute("""
+            SELECT a.propietario_id,
+                   COALESCE(NULLIF(p.username,''), NULLIF(p.nombre,''), 'Usuario ' || a.propietario_id::text) AS nombre,
+                   COUNT(*) AS regalos,
+                   COALESCE(SUM(a.valor_base),0) AS valor,
+                   COUNT(DISTINCT a.code) AS distintos
+            FROM social_assets_tb a
+            LEFT JOIN perfiles_tb p ON p.id_user=a.propietario_id
+            WHERE a.asset_type='regalo'
+            GROUP BY a.propietario_id,p.username,p.nombre
+            ORDER BY regalos DESC, valor DESC, a.propietario_id ASC
+            LIMIT 10
+        """)
+        rows=c.fetchall()
+    except Exception as e:
+        print('[SOCIAL] gift ranking',e); rows=[]
+    finally:_put_connection(conn)
+    if not rows:return await update.message.reply_text('🎁 Todavía no hay suficientes regalos para formar el ranking.')
+    medals=['🥇','🥈','🥉']
+    lines=['🎁✨ RANKING DE REGALOS ✨🎁','', 'Los más consentidos del grupo 👀','']
+    for i,(_,name,total,value,distinct) in enumerate(rows,1):
+        icon=medals[i-1] if i<=3 else f'{i}.'
+        lines.append(f'{icon} {name} — 🎁 {total} · 💎 {value:,} PP · ✨ {distinct} tipos')
+    lines += ['', 'Los autorregalos no cuentan: PiBot no permite comprarte regalos a ti mismo. 😂']
+    await update.message.reply_text('\n'.join(lines))
 
 async def mercado(update:Update,context:ContextTypes.DEFAULT_TYPE):
     rows=list_market()

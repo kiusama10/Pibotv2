@@ -124,14 +124,14 @@ def pay_loan(uid: int, requested: int | None = None):
         _put_connection(conn)
 
 
-def _bank_keyboard(limit: int, has_loan: bool):
+def _bank_keyboard(limit: int, has_loan: bool, owner_id: int):
     rows = []
     if not has_loan:
         amounts = [x for x in CREDIT_TIERS if x <= limit]
-        rows.extend([[InlineKeyboardButton(f"💰 Pedir {_money(x)}", callback_data=f"bank_preview_{x}")] for x in amounts])
+        rows.extend([[InlineKeyboardButton(f"💰 Pedir {_money(x)}", callback_data=f"bank_preview_{owner_id}_{x}")] for x in amounts])
     else:
-        rows.append([InlineKeyboardButton("💸 Pagar deuda", callback_data="bank_pay_all")])
-    rows.append([InlineKeyboardButton("📜 Mi historial", callback_data="bank_history")])
+        rows.append([InlineKeyboardButton("💸 Pagar deuda", callback_data=f"bank_pay_all_{owner_id}")])
+    rows.append([InlineKeyboardButton("📜 Mi historial", callback_data=f"bank_history_{owner_id}")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -149,7 +149,7 @@ async def bankiu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (f"🏦 BANKIU\n\nTu límite actual es de {_money(limit)} PiPesos.\n"
                 f"Préstamos pagados: {completed}\nInterés actual: {BANKIU_INTEREST_PERCENT}% · plazo: {BANKIU_TERM_DAYS} días.\n\n"
                 "Pagar préstamos aumenta gradualmente tu límite hasta 100,000 PiPesos.")
-    kb = _bank_keyboard(limit, bool(loan))
+    kb = _bank_keyboard(limit, bool(loan), uid)
     if update.callback_query:
         await update.callback_query.edit_message_text(text, reply_markup=kb)
     else:
@@ -158,46 +158,55 @@ async def bankiu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def bankiu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; uid = q.from_user.id; data = q.data or ""
+    parts=data.split("_")
+    # Cada interfaz BANKIU pertenece al usuario que la abrió. Un tercero no puede moverla.
+    try:
+        if data.startswith("bank_preview_"):
+            owner=int(parts[-2]); amount=int(parts[-1])
+        elif data.startswith("bank_confirm_"):
+            owner=int(parts[-2]); amount=int(parts[-1])
+        elif data.startswith("bank_pay_all_") or data.startswith("bank_history_") or data.startswith("bank_home_"):
+            owner=int(parts[-1]); amount=None
+        else:
+            return await q.answer("Este botón ya no es válido. Abre /bankiu de nuevo.",show_alert=True)
+    except (ValueError,IndexError):
+        return await q.answer("Este botón ya no es válido. Abre /bankiu de nuevo.",show_alert=True)
+    if uid != owner:
+        return await q.answer("🏦 Esta interfaz de BANKIU no es tuya. Abre /bankiu para usar la tuya.",show_alert=True)
     if data.startswith("bank_preview_"):
-        try: amount = int(data.rsplit("_", 1)[1])
-        except ValueError: return await q.answer("Cantidad inválida.", show_alert=True)
         completed, _, limit = _credit_summary(uid)
         if _active_loan(uid): return await q.answer("Ya tienes un préstamo pendiente.", show_alert=True)
         if amount <= 0 or amount > limit: return await q.answer(f"Tu límite actual es {_money(limit)}.", show_alert=True)
         interest=(amount*BANKIU_INTEREST_PERCENT+99)//100; total=amount+interest
         due=datetime.now(timezone.utc)+timedelta(days=BANKIU_TERM_DAYS)
-        kb=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Aceptar préstamo",callback_data=f"bank_confirm_{amount}"),InlineKeyboardButton("❌ Cancelar",callback_data="bank_home")]])
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Aceptar préstamo",callback_data=f"bank_confirm_{uid}_{amount}"),InlineKeyboardButton("❌ Cancelar",callback_data=f"bank_home_{uid}")]])
         await q.answer()
         return await q.edit_message_text(f"🏦 BANKIU · CONFIRMACIÓN\n\n💰 Recibirás: {_money(amount)} PiPesos\n📈 Interés: {BANKIU_INTEREST_PERCENT}% ({_money(interest)} PP)\n💳 Total a pagar: {_money(total)} PiPesos\n📅 Plazo: {BANKIU_TERM_DAYS} días\n🗓️ Vencimiento aproximado: {due:%d/%m/%Y %H:%M} UTC\n\nEl dinero NO se deposita hasta que pulses Aceptar préstamo.",reply_markup=kb)
     if data.startswith("bank_confirm_"):
-        try: amount=int(data.rsplit("_",1)[1])
-        except ValueError: return await q.answer("Cantidad inválida.",show_alert=True)
         st, info=create_loan(uid,amount)
         if st=="ok": await q.answer(f"BANKIU depositó {_money(amount)} PiPesos",show_alert=True)
         elif st=="active": await q.answer("Ya tienes un préstamo pendiente.",show_alert=True)
         elif st=="limit": await q.answer(f"Tu límite actual es {_money(info)}.",show_alert=True)
         else: await q.answer("No pude crear el préstamo.",show_alert=True)
         return await bankiu(update,context)
-    if data == "bank_pay_all":
+    if data.startswith("bank_pay_all_"):
         st, info = pay_loan(uid)
         if st == "ok":
             paid, remaining = info; await q.answer(f"Pagaste {_money(paid)}. Pendiente: {_money(remaining)}", show_alert=True)
         elif st == "money": await q.answer("No tienes saldo disponible para pagar ahora.", show_alert=True)
         else: await q.answer("No encontré una deuda activa.", show_alert=True)
         return await bankiu(update, context)
-    if data == "bank_history":
-        await q.answer()
-        conn = _get_connection()
+    if data.startswith("bank_history_"):
+        await q.answer(); conn = _get_connection()
         try:
             c=conn.cursor(); c.execute("SELECT principal,saldo_pendiente,estado,creado_en,vence_en FROM bankiu_loans_tb WHERE user_id=%s ORDER BY loan_id DESC LIMIT 8",(uid,)); rows=c.fetchall()
         finally: _put_connection(conn)
         lines=["📜 BANKIU · Historial"]
         for p,rem,state,created,due in rows: lines.append(f"• {_money(p)} PP · {state} · pendiente {_money(rem)} · {created:%d/%m/%Y}")
         if not rows: lines.append("Todavía no tienes préstamos.")
-        return await q.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BANKIU",callback_data="bank_home")]]))
-    if data == "bank_home":
-        await q.answer()
-        return await bankiu(update, context)
+        return await q.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ BANKIU",callback_data=f"bank_home_{uid}")]]))
+    if data.startswith("bank_home_"):
+        await q.answer(); return await bankiu(update, context)
 
 
 async def pagarbanco(update: Update, context: ContextTypes.DEFAULT_TYPE):

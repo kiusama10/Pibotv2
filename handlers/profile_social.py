@@ -2,6 +2,8 @@ from __future__ import annotations
 from src.utils.seasonal import seasonalize
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from io import BytesIO
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from telegram.ext import ContextTypes
 
 from src.database.database import _get_connection, _put_connection
@@ -31,6 +33,14 @@ CUSTOM_FRAME_BORDERS = {
     "marco_mictlan": "💀🌼━━━━━━━━━━🌼💀",
     "marco_navidad": "🎄❄️━━━━━━━━━━❄️🎄",
     "marco_valentin": "💘🌹━━━━━━━━━━🌹💘",
+    "marco_eclipse": "🌘✦━━━━ ECLIPSE ━━━━✦🌒",
+    "marco_aurora": "🌌✧━━━━ AURORA ━━━━✧🌌",
+    "marco_void": "🕳️◆━━━━ VOID ━━━━◆🕳️",
+    "marco_fenix": "🔥🪽━━━━ FÉNIX ━━━━🪽🔥",
+    "marco_sakura": "🌸⛩️━━━━ SAKURA ━━━━⛩️🌸",
+    "marco_cyberpunk": "💠⚡━━━━ 2099 ━━━━⚡💠",
+    "marco_angel_caido": "🖤🪽━━━━ FALLEN ━━━━🪽🖤",
+    "marco_rey_tortugas": "👑🐢━━━━ REY ━━━━🐢👑",
 }
 
 
@@ -54,7 +64,7 @@ def _editor_markup():
         [InlineKeyboardButton("🪪 Sobre mí", callback_data="profile_text_bio"), InlineKeyboardButton("💬 Mi frase", callback_data="profile_text_frase")],
         [InlineKeyboardButton("🛡️ Límites", callback_data="profile_text_limites"), InlineKeyboardButton("🔐 Privacidad", callback_data="profile_privacy")],
         [InlineKeyboardButton("🏷️ Títulos", callback_data="profile_help_titles"), InlineKeyboardButton("✨ Vestidor", callback_data="profile_help_cosmetics")],
-        [InlineKeyboardButton("👁️ Ver mi perfil", callback_data="profile_preview")],
+        [InlineKeyboardButton("📸 Foto de mi tarjeta", callback_data="profile_photo"), InlineKeyboardButton("👁️ Ver mi perfil", callback_data="profile_preview")],
     ])
 
 
@@ -86,7 +96,7 @@ def _profile(uid: int):
             """
             SELECT p.nombre,p.username,p.rol,p.experiencia,p.gustos,p.relacion,p.bio,p.frase,p.limites,
                    p.perfil_publico,u.saldo,p.titulo_equipado_id,a.nombre,a.rareza,a.serial_no,a.serial_total,
-                   f.cosmetic_id,f.nombre,f.code,b.cosmetic_id,b.nombre,b.code
+                   f.cosmetic_id,f.nombre,f.code,b.cosmetic_id,b.nombre,b.code,p.profile_photo_file_id
             FROM usuarios_tb u
             JOIN perfiles_tb p ON p.id_user=u.id_user
             LEFT JOIN social_assets_tb a ON a.asset_id=p.titulo_equipado_id AND a.propietario_id=p.id_user
@@ -172,6 +182,43 @@ def _equip(uid: int, aid: int):
         _put_connection(conn)
 
 
+def _gift_summary(uid: int, viewer: int):
+    conn = _get_connection()
+    try:
+        c = conn.cursor()
+        # Los regalos marcados como privados solo aparecen al propietario.
+        if viewer == uid:
+            c.execute(
+                """SELECT nombre, COUNT(*) FROM social_assets_tb
+                   WHERE propietario_id=%s AND asset_type='regalo'
+                   GROUP BY nombre ORDER BY COUNT(*) DESC, nombre LIMIT 20""", (uid,)
+            )
+        else:
+            c.execute(
+                """SELECT nombre, COUNT(*) FROM social_assets_tb
+                   WHERE propietario_id=%s AND asset_type='regalo'
+                     AND COALESCE(regalo_privado,FALSE)=FALSE
+                   GROUP BY nombre ORDER BY COUNT(*) DESC, nombre LIMIT 20""", (uid,)
+            )
+        return c.fetchall()
+    finally:
+        _put_connection(conn)
+
+
+def _save_profile_photo(uid: int, file_id: str | None):
+    conn = _get_connection()
+    try:
+        c = conn.cursor()
+        c.execute("UPDATE perfiles_tb SET profile_photo_file_id=%s WHERE id_user=%s", (file_id, uid))
+        conn.commit()
+        return c.rowcount == 1
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        _put_connection(conn)
+
+
 def _render(uid: int, viewer: int):
     r = _profile(uid)
     if not r:
@@ -179,7 +226,7 @@ def _render(uid: int, viewer: int):
     (
         nombre, username, rol, exp, gustos, rel, bio, frase, limites, publico, saldo,
         tid, tname, trare, sn, st, frame_id, frame_name, frame_code,
-        badge_id, badge_name, badge_code,
+        badge_id, badge_name, badge_code, custom_photo_file_id,
     ) = r
     if viewer != uid and not publico:
         return "🔒 Este perfil es privado."
@@ -209,6 +256,12 @@ def _render(uid: int, viewer: int):
         f"📚 {counts.get('titulo',0)} títulos · 🎁 {counts.get('regalo',0)} regalos",
         f"✨ {counts.get('cos_marco',0)} marcos · 🎖️ {counts.get('cos_insignia',0)} insignias",
     ]
+    gifts = _gift_summary(uid, viewer)
+    if gifts:
+        gift_text = " · ".join(f"{n} ×{qty}" if qty > 1 else n for n, qty in gifts)
+        lines.append(f"🎁 Regalos: {gift_text}")
+    else:
+        lines.append("🎁 Regalos: ninguno visible")
     for label, val in [
         ("Rol", rol), ("Experiencia", exp), ("Gustos", gustos),
         ("Vínculo", formal_link or rel), ("Sobre mí", bio), ("Frase", frase), ("Límites", limites),
@@ -295,6 +348,12 @@ async def profile_editor_callback(update: Update, context: ContextTypes.DEFAULT_
     if data == "profile_private":
         _set_public(q.from_user.id, False)
         return await _editor_screen(q)
+    if data == "profile_photo":
+        context.user_data["profile_waiting_photo"] = True
+        return await q.edit_message_text(
+            "📸 FOTO DE TU TARJETA\n\nMándame la imagen que quieras usar. Puede ser tu foto de Telegram o cualquier imagen tuya que prefieras para tu perfil.\n\nSi después quieres volver a usar tu foto pública de Telegram, usa /fotoperfil telegram.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancelar",callback_data="profile_editor")]])
+        )
     if data == "profile_preview":
         return await q.edit_message_text(_render(q.from_user.id,q.from_user.id),reply_markup=_back_editor())
     if data == "profile_help_vinculo":
@@ -341,20 +400,179 @@ async def profile_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 
+async def _profile_photo_bytes(uid: int, context: ContextTypes.DEFAULT_TYPE, custom_file_id: str | None):
+    file_id = custom_file_id
+    if not file_id:
+        try:
+            photos = await context.bot.get_user_profile_photos(uid, limit=1)
+            if photos.total_count and photos.photos:
+                file_id = photos.photos[0][-1].file_id
+        except Exception:
+            file_id = None
+    if not file_id:
+        return None
+    try:
+        tg_file = await context.bot.get_file(file_id)
+        return bytes(await tg_file.download_as_bytearray())
+    except Exception:
+        return None
+
+
+def _font(size: int, bold: bool = False):
+    paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+    ]
+    for path in paths:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            pass
+    return ImageFont.load_default()
+
+
+FRAME_THEMES = {
+    "marco_halloween": ((255, 77, 0), (180, 0, 255), "HALLOWEEN"),
+    "marco_vampiro": ((210, 0, 40), (110, 0, 20), "VAMPIRE"),
+    "marco_anime_neon": ((255, 45, 220), (45, 220, 255), "NEON"),
+    "marco_celestial": ((90, 190, 255), (235, 245, 255), "CELESTIAL"),
+    "marco_infernal": ((255, 70, 0), (255, 180, 0), "INFERNAL"),
+    "marco_dragon": ((30, 220, 130), (220, 180, 40), "DRAGON"),
+    "marco_obsidiana": ((150, 80, 255), (35, 35, 55), "OBSIDIAN"),
+    "marco_kitsune": ((255, 100, 180), (255, 190, 80), "KITSUNE"),
+    "marco_realeza": ((245, 200, 50), (130, 70, 255), "ROYAL"),
+    "marco_mictlan": ((255, 150, 30), (120, 230, 120), "MICTLAN"),
+    "marco_navidad": ((40, 210, 100), (245, 245, 245), "WINTER"),
+    "marco_valentin": ((255, 70, 130), (255, 180, 210), "VALENTINE"),
+    "marco_eclipse": ((100, 70, 255), (255, 100, 20), "ECLIPSE"),
+    "marco_aurora": ((60, 255, 210), (180, 80, 255), "AURORA"),
+    "marco_void": ((100, 20, 180), (15, 15, 30), "VOID"),
+    "marco_fenix": ((255, 80, 20), (255, 220, 60), "PHOENIX"),
+    "marco_sakura": ((255, 120, 190), (255, 220, 240), "SAKURA"),
+    "marco_cyberpunk": ((0, 245, 255), (255, 20, 200), "CYBERPUNK"),
+    "marco_angel_caido": ((190, 190, 230), (80, 20, 130), "FALLEN ANGEL"),
+    "marco_rey_tortugas": ((255, 215, 50), (50, 210, 120), "TURTLE KING"),
+}
+
+
+def _wrap(draw, text, font, max_width):
+    words = str(text).split(); lines=[]; current=""
+    for word in words:
+        trial=(current+" "+word).strip()
+        if draw.textbbox((0,0),trial,font=font)[2] <= max_width:
+            current=trial
+        else:
+            if current: lines.append(current)
+            current=word
+    if current: lines.append(current)
+    return lines or [""]
+
+
+async def _build_profile_card(uid: int, viewer: int, context: ContextTypes.DEFAULT_TYPE):
+    r=_profile(uid)
+    if not r: return None, "No encontré ese perfil."
+    (nombre, username, rol, exp, gustos, rel, bio, frase, limites, publico, saldo,
+     tid, tname, trare, sn, st, frame_id, frame_name, frame_code,
+     badge_id, badge_name, badge_code, custom_photo_file_id)=r
+    if viewer != uid and not publico:
+        return None, "🔒 Este perfil es privado."
+    gifts=_gift_summary(uid,viewer); counts=_counts(uid)
+    theme=FRAME_THEMES.get(frame_code, ((180,80,255),(255,50,190), current_season().replace('_',' ').upper()))
+    c1,c2,theme_name=theme
+    W,H=1080,1350
+    im=Image.new('RGB',(W,H),(7,7,20)); d=ImageDraw.Draw(im)
+    # Glow + layered geometric frame inspired by the equipped cosmetic.
+    glow=Image.new('RGBA',(W,H),(0,0,0,0)); gd=ImageDraw.Draw(glow)
+    for i in range(7):
+        inset=34+i*7
+        color=(*c1, max(35,150-i*15)) if i%2==0 else (*c2,max(35,150-i*15))
+        gd.rounded_rectangle((inset, inset, W-inset, H-inset), radius=38, outline=color, width=4)
+    glow=glow.filter(ImageFilter.GaussianBlur(8)); im=Image.alpha_composite(im.convert('RGBA'),glow).convert('RGB'); d=ImageDraw.Draw(im)
+    for i in range(5):
+        inset=48+i*8; col=c1 if i%2==0 else c2
+        d.rounded_rectangle((inset,inset,W-inset,H-inset),radius=34,outline=col,width=3)
+    title_font=_font(46,True); small=_font(26); body=_font(30); body_b=_font(31,True)
+    d.text((90,82),"P I B O T   //   "+theme_name,font=small,fill=c2)
+    photo=await _profile_photo_bytes(uid,context,custom_photo_file_id)
+    if photo:
+        try:
+            av=Image.open(BytesIO(photo)).convert('RGB'); av.thumbnail((260,260))
+            side=min(av.size); left=(av.width-side)//2; top=(av.height-side)//2; av=av.crop((left,top,left+side,top+side)).resize((250,250))
+            mask=Image.new('L',(250,250),0); ImageDraw.Draw(mask).ellipse((0,0,249,249),fill=255)
+            im.paste(av,(95,155),mask); d.ellipse((89,149,351,411),outline=c1,width=7); d.ellipse((82,142,358,418),outline=c2,width=2)
+        except Exception: pass
+    x=390; y=175
+    d.text((x,y),str(nombre)[:28],font=title_font,fill=(245,245,255)); y+=65
+    if username: d.text((x,y),"@"+str(username).lstrip('@')[:30],font=small,fill=(180,185,210)); y+=45
+    title=(tname+(f" #{sn}/{st}" if sn else "")) if tname else "Sin título equipado"
+    for line in _wrap(d,title,body_b,560)[:2]: d.text((x,y),line,font=body_b,fill=c1); y+=40
+    d.text((x,y),f"{saldo:,} PiPesos",font=body_b,fill=(245,210,80)); y+=48
+    d.line((90,450,990,450),fill=c2,width=2)
+    y=485
+    info=[("ROL",rol), ("EXPERIENCIA",exp), ("INSIGNIA",badge_name), ("MARCO",frame_name)]
+    for label,val in info:
+        if val:
+            d.text((100,y),label,font=small,fill=c2); d.text((330,y),str(val)[:38],font=body,fill=(238,238,248)); y+=48
+    if frase:
+        y+=8; d.text((100,y),"F R A S E",font=small,fill=c2); y+=38
+        for line in _wrap(d,'“'+str(frase)+'”',body,850)[:3]: d.text((115,y),line,font=body,fill=(245,245,255)); y+=39
+    y+=12; d.line((90,y,990,y),fill=c1,width=2); y+=25
+    d.text((100,y),f"COLECCIÓN  •  {counts.get('titulo',0)} títulos  •  {counts.get('cos_marco',0)} marcos  •  {counts.get('cos_insignia',0)} insignias",font=small,fill=(200,205,225)); y+=48
+    d.text((100,y),"R E G A L O S",font=small,fill=c2); y+=38
+    if gifts:
+        gift_text="  •  ".join(f"{n} ×{q}" if q>1 else n for n,q in gifts)
+        for line in _wrap(d,gift_text,small,850)[:5]: d.text((115,y),line,font=small,fill=(240,240,248)); y+=34
+    else:
+        d.text((115,y),"Sin regalos visibles todavía.",font=small,fill=(165,170,190)); y+=34
+    # Optional bio/gustos, clipped so the card remains clean.
+    extras=[]
+    if bio: extras.append(("SOBRE MÍ",bio))
+    if gustos: extras.append(("GUSTOS",gustos))
+    for label,val in extras:
+        if y>1190: break
+        y+=18; d.text((100,y),label,font=small,fill=c1); y+=34
+        for line in _wrap(d,val,small,850)[:2]: d.text((115,y),line,font=small,fill=(225,225,238)); y+=32
+    d.text((100,1270),"PiBot Social Profile",font=small,fill=(120,125,150)); d.text((790,1270),theme_name,font=small,fill=c1)
+    out=BytesIO(); im.save(out,format='PNG',optimize=True); out.seek(0); out.name='perfil.png'
+    return out, _render(uid,viewer)
+
+
 async def perfil(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # /perfil SIEMPRE pertenece a quien ejecuta el comando. Responder a otra persona ya no cambia el objetivo.
     target = update.effective_user.id
-    if update.message and update.message.reply_to_message:
-        target = update.message.reply_to_message.from_user.id
-    text = _render(target, update.effective_user.id)
-    markup = None
-    if target == update.effective_user.id:
+    card, text = await _build_profile_card(target, target, context)
+    url = await _edit_profile_url(context)
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏷️ Mis títulos", callback_data="soc:title_owned"), InlineKeyboardButton("🎁 Mis regalos", callback_data="soc:gift_owned")],
+        [InlineKeyboardButton("✨ Mi vestidor", callback_data="cos_home"), InlineKeyboardButton("📸 Mi foto", url=url)],
+        [InlineKeyboardButton("✏️ Editar mi perfil", url=url)],
+    ])
+    if card:
+        caption = f"✨ Perfil de {update.effective_user.full_name}\n🎨 Marco: {_profile(target)[18] or 'Temporada'}\n🎁 Mira su colección completa en la tarjeta."
+        return await update.effective_message.reply_photo(photo=card, caption=caption, reply_markup=markup)
+    await update.effective_message.reply_text(text, reply_markup=markup)
+
+
+async def fotoperfil(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private":
         url = await _edit_profile_url(context)
-        markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🏷️ Mis títulos", callback_data="soc:title_owned"), InlineKeyboardButton("🎁 Mis regalos", callback_data="soc:gift_owned")],
-            [InlineKeyboardButton("✨ Mi vestidor", callback_data="cos_home")],
-            [InlineKeyboardButton("✏️ Editar mi perfil", url=url)],
-        ])
-    await update.message.reply_text(text, reply_markup=markup)
+        return await update.effective_message.reply_text("📸 La foto de tu tarjeta se cambia por privado.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📸 Abrir editor",url=url)]]))
+    if context.args and context.args[0].lower() == "telegram":
+        _save_profile_photo(update.effective_user.id,None)
+        return await update.effective_message.reply_text("✅ Volví a usar tu foto pública de Telegram para la tarjeta.")
+    context.user_data["profile_waiting_photo"] = True
+    await update.effective_message.reply_text("📸 Mándame ahora la imagen que quieras usar en tu tarjeta. No tiene que ser tu foto de Telegram.")
+
+
+async def profile_photo_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private" or not context.user_data.get("profile_waiting_photo"):
+        return
+    if not update.message or not update.message.photo:
+        return
+    context.user_data.pop("profile_waiting_photo",None)
+    file_id=update.message.photo[-1].file_id
+    ok=_save_profile_photo(update.effective_user.id,file_id)
+    await update.message.reply_text("✅ Foto guardada. Usa /perfil para ver tu nueva tarjeta." if ok else "⚠️ No pude guardar la foto.")
 
 
 async def editarperfil(update: Update, context: ContextTypes.DEFAULT_TYPE):

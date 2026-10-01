@@ -45,6 +45,12 @@ def ensure_casino_pvp_tables():
           hand_a text[] NOT NULL DEFAULT '{}', hand_b text[] NOT NULL DEFAULT '{}', stood_a bool NOT NULL DEFAULT false,
           stood_b bool NOT NULL DEFAULT false, action_started bool NOT NULL DEFAULT false, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())""")
         c.execute("ALTER TABLE blackjack_games_tb ADD COLUMN IF NOT EXISTS action_started bool NOT NULL DEFAULT false")
+        c.execute("""CREATE TABLE IF NOT EXISTS blackjack_players_tb(
+          game_id text REFERENCES blackjack_games_tb(game_id) ON DELETE CASCADE,
+          user_id bigint NOT NULL, display_name text NOT NULL, hand text[] NOT NULL DEFAULT '{}',
+          stood bool NOT NULL DEFAULT false, busted bool NOT NULL DEFAULT false,
+          join_order int NOT NULL, joined_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY(game_id,user_id))""")
         # Tortuga personal + temporadas mensuales. Aditivo: no modifica saldos ni carreras históricas.
         c.execute("""CREATE TABLE IF NOT EXISTS turtle_profiles_tb(
           user_id bigint PRIMARY KEY REFERENCES usuarios_tb(id_user) ON DELETE CASCADE,
@@ -316,98 +322,129 @@ def _score(hand):
     while total>21 and aces: total-=10; aces-=1
     return total
 
-def _bj_buttons(gid):
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🃏 Pedir",callback_data=f"bj:hit:{gid}"),InlineKeyboardButton("✋ Plantarme",callback_data=f"bj:stand:{gid}")]])
+def _bj_buttons(gid, creator=False):
+    rows=[[InlineKeyboardButton("🃏 Pedir",callback_data=f"bj:hit:{gid}"),InlineKeyboardButton("✋ Plantarme",callback_data=f"bj:stand:{gid}")]]
+    return InlineKeyboardMarkup(rows)
+
+def _bj_lobby_buttons(gid):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Unirme",callback_data=f"bj:join:{gid}"),InlineKeyboardButton("▶️ Empezar",callback_data=f"bj:start:{gid}")],
+        [InlineKeyboardButton("❌ Cancelar",callback_data=f"bj:cancel:{gid}")]
+    ])
 
 async def blackjack(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    if not _in_games(update): await update.effective_message.reply_text("🃏 Blackjack PvP solo está en Juegos."); return
-    try: stake=int(context.args[0]) if context.args else 1000
+    if not _in_games(update): await update.effective_message.reply_text("🃏 Blackjack multijugador solo está en Juegos."); return
+    if not context.args:
+        await update.effective_message.reply_text("🃏 BLACKJACK MULTIJUGADOR\n\nUsa /blackjack cantidad\nEjemplo: /blackjack 3477\n\n💰 Puedes poner la apuesta que quieras entre 100 y 1,000,000 PiPesos."); return
+    try: stake=int(str(context.args[0]).replace(',',''))
     except: stake=0
-    if stake<100 or stake>1_000_000: await update.effective_message.reply_text("Usa /blackjack <apuesta>. Mínimo 100 y máximo 1,000,000 PiPesos."); return
-    chat,thread=_loc(update); uid=update.effective_user.id; gid=uuid.uuid4().hex
+    if stake<100 or stake>1_000_000: await update.effective_message.reply_text("La apuesta debe estar entre 100 y 1,000,000 PiPesos."); return
+    chat,thread=_loc(update); uid=update.effective_user.id; gid=uuid.uuid4().hex; name=update.effective_user.username or update.effective_user.first_name or str(uid)
     conn=_get_connection()
     try:
         c=conn.cursor(); c.execute("SELECT 1 FROM blackjack_games_tb WHERE chat_id=%s AND thread_id=%s AND status IN ('waiting','active')",(chat,thread))
         if c.fetchone(): conn.rollback(); await update.effective_message.reply_text("🃏 Ya hay una mesa abierta en este tema."); return
         if not _reserve(uid,stake,c): conn.rollback(); await update.effective_message.reply_text("💸 No tienes saldo suficiente."); return
-        c.execute("INSERT INTO blackjack_games_tb(game_id,chat_id,thread_id,creator_id,stake) VALUES(%s,%s,%s,%s,%s)",(gid,chat,thread,uid,stake)); conn.commit()
-    except Exception: conn.rollback(); await update.effective_message.reply_text("⚠️ No pude abrir la mesa; no se confirmó ningún cobro."); return
+        c.execute("INSERT INTO blackjack_games_tb(game_id,chat_id,thread_id,creator_id,stake) VALUES(%s,%s,%s,%s,%s)",(gid,chat,thread,uid,stake))
+        c.execute("INSERT INTO blackjack_players_tb(game_id,user_id,display_name,join_order) VALUES(%s,%s,%s,0)",(gid,uid,name)); conn.commit()
+    except Exception as exc:
+        conn.rollback(); print('[BLACKJACK create]',exc); await update.effective_message.reply_text("⚠️ No pude abrir la mesa; no se confirmó ningún cobro."); return
     finally:_put_connection(conn)
-    await update.effective_message.reply_text(f"🃏 BLACKJACK PvP\n💰 Apuesta por jugador: {stake:,} PiPesos\nEl creador ya reservó su entrada. ¿Quién acepta?",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🤝 Aceptar mesa",callback_data=f"bj:join:{gid}"),InlineKeyboardButton("❌ Cancelar",callback_data=f"bj:cancel:{gid}")]]))
+    await update.effective_message.reply_text(f"🃏 BLACKJACK MULTIJUGADOR\n💰 Entrada: {stake:,} PiPesos por persona\n👤 {name} creó la mesa.\n\nPueden entrar hasta 6 jugadores. Cuando haya 2 o más, el creador pulsa ▶️ Empezar.",reply_markup=_bj_lobby_buttons(gid))
 
-async def _bj_finish(c,gid,creator,rival,stake,ha,hb):
-    sa,sb=_score(ha),_score(hb)
-    if sa>21 and sb>21 or sa==sb:
-        _pay(creator,stake,c); _pay(rival,stake,c); result="🤝 Empate. Se devolvieron ambas apuestas."
-    elif sa<=21 and (sb>21 or sa>sb):
-        _pay(creator,stake*2,c); result=f"🏆 Jugador 1 gana {stake*2:,} PiPesos."
+def _bj_players(c,gid):
+    c.execute("SELECT user_id,display_name,hand,stood,busted,join_order FROM blackjack_players_tb WHERE game_id=%s ORDER BY join_order",(gid,)); return c.fetchall()
+
+def _next_live(players, current_uid):
+    ids=[p[0] for p in players if not p[3] and not p[4]]
+    if not ids: return None
+    if current_uid not in [p[0] for p in players]: return ids[0]
+    allids=[p[0] for p in players]; i=allids.index(current_uid)
+    for step in range(1,len(allids)+1):
+        p=players[(i+step)%len(players)]
+        if not p[3] and not p[4]: return p[0]
+    return None
+
+def _finish_multi(c,gid,stake,players):
+    valid=[(p[0],p[1],_score(p[2])) for p in players if _score(p[2])<=21]
+    pot=stake*len(players)
+    if not valid:
+        for p in players: _pay(p[0],stake,c)
+        result="🤝 Todos se pasaron de 21. Se devolvieron las entradas."
     else:
-        _pay(rival,stake*2,c); result=f"🏆 Jugador 2 gana {stake*2:,} PiPesos."
+        best=max(x[2] for x in valid); winners=[x for x in valid if x[2]==best]
+        share=pot//len(winners); rem=pot-share*len(winners)
+        for i,(uid,name,score) in enumerate(winners): _pay(uid,share+(rem if i==0 else 0),c)
+        names=', '.join(x[1] for x in winners)
+        result=(f"🏆 Ganador: {names} · {best} puntos · {pot:,} PiPesos" if len(winners)==1 else f"🤝 Empate entre {names} · {best} puntos. Pozo {pot:,} PiPesos repartido.")
     c.execute("UPDATE blackjack_games_tb SET status='finished',updated_at=now() WHERE game_id=%s",(gid,))
-    return f"🃏 FINAL\nJugador 1: {' '.join(ha)} = {sa}\nJugador 2: {' '.join(hb)} = {sb}\n\n{result}"
+    lines=["🃏 FINAL"]+[f"👤 {p[1]}: {' '.join(p[2])} = {_score(p[2])}" for p in players]
+    return '\n'.join(lines)+"\n\n"+result
 
 async def _bj_cb(q,parts):
     action,gid=parts[1],parts[2]; uid=q.from_user.id; conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("SELECT chat_id,thread_id,creator_id,rival_id,stake,status,turn_user_id,deck,hand_a,hand_b,stood_a,stood_b,action_started FROM blackjack_games_tb WHERE game_id=%s FOR UPDATE",(gid,)); g=c.fetchone()
+        c=conn.cursor(); c.execute("SELECT chat_id,thread_id,creator_id,stake,status,turn_user_id,deck,action_started FROM blackjack_games_tb WHERE game_id=%s FOR UPDATE",(gid,)); g=c.fetchone()
         if not g: conn.rollback(); await q.answer("Mesa inexistente.",show_alert=True); return
-        chat,thread,creator,rival,stake,status,turn,deck,ha,hb,sta,stb,action_started=g
+        chat,thread,creator,stake,status,turn,deck,started=g
         if q.message.chat_id!=chat or q.message.message_thread_id!=thread: conn.rollback(); await q.answer("Esta mesa es de otro tema.",show_alert=True); return
-        if action=='cancel':
-            if uid!=creator or status not in ('waiting','active') or action_started:
-                conn.rollback(); await q.answer("La mesa ya tuvo una jugada y no puede cancelarse.",show_alert=True); return
-            _pay(creator,stake,c)
-            if status=='active' and rival: _pay(rival,stake,c)
-            c.execute("UPDATE blackjack_games_tb SET status='cancelled',updated_at=now() WHERE game_id=%s AND status IN ('waiting','active')",(gid,))
-            conn.commit(); await q.answer(); await q.edit_message_reply_markup(reply_markup=None); await q.message.reply_text("❌ Mesa cancelada. Todas las apuestas reservadas fueron devueltas."); return
+        players=_bj_players(c,gid); ids=[p[0] for p in players]
         if action=='join':
-            if status!='waiting' or uid==creator: conn.rollback(); await q.answer("No puedes aceptar esta mesa.",show_alert=True); return
+            if status!='waiting' or uid in ids: conn.rollback(); await q.answer("No puedes unirte a esta mesa.",show_alert=True); return
+            if len(players)>=6: conn.rollback(); await q.answer("La mesa ya tiene 6 jugadores.",show_alert=True); return
             if not _reserve(uid,stake,c): conn.rollback(); await q.answer("No tienes saldo suficiente.",show_alert=True); return
-            deck=_deck(); ha=[deck.pop(),deck.pop()]; hb=[deck.pop(),deck.pop()]
-            c.execute("UPDATE blackjack_games_tb SET rival_id=%s,status='active',turn_user_id=%s,deck=%s,hand_a=%s,hand_b=%s,updated_at=now() WHERE game_id=%s",(uid,creator,deck,ha,hb,gid)); conn.commit(); await q.answer(); await q.edit_message_reply_markup(reply_markup=None)
-            creator_name=_display_name(c,creator); rival_name=_display_name(c,uid)
-            await q.message.reply_text(f"🃏 ¡Mesa completa!\n👤 {creator_name}: {' '.join(ha)} = {_score(ha)}\n👤 {rival_name}: {' '.join(hb)} = {_score(hb)}\n\n➡️ Turno de {creator_name}.",reply_markup=_bj_buttons(gid)); return
-        if status!='active' or uid not in (creator,rival): conn.rollback(); await q.answer("No estás jugando esta mesa.",show_alert=True); return
+            name=q.from_user.username or q.from_user.first_name or str(uid)
+            c.execute("INSERT INTO blackjack_players_tb(game_id,user_id,display_name,join_order) VALUES(%s,%s,%s,%s)",(gid,uid,name,len(players))); conn.commit(); await q.answer("Entraste a la mesa 🃏")
+            await q.message.reply_text(f"➕ {name} entró al Blackjack. Ya son {len(players)+1} jugadores.",reply_markup=_bj_lobby_buttons(gid)); return
+        if action=='cancel':
+            if uid!=creator or status!='waiting': conn.rollback(); await q.answer("Solo el creador puede cancelar antes de empezar.",show_alert=True); return
+            for p in players: _pay(p[0],stake,c)
+            c.execute("UPDATE blackjack_games_tb SET status='cancelled',updated_at=now() WHERE game_id=%s",(gid,)); conn.commit(); await q.answer(); await q.message.reply_text("❌ Mesa cancelada. Se devolvieron todas las entradas."); return
+        if action=='start':
+            if uid!=creator or status!='waiting': conn.rollback(); await q.answer("Solo quien creó la mesa puede iniciarla.",show_alert=True); return
+            if len(players)<2: conn.rollback(); await q.answer("Se necesitan al menos 2 jugadores.",show_alert=True); return
+            deck=_deck()
+            for p in players:
+                hand=[deck.pop(),deck.pop()]; c.execute("UPDATE blackjack_players_tb SET hand=%s,stood=false,busted=false WHERE game_id=%s AND user_id=%s",(hand,gid,p[0]))
+            c.execute("UPDATE blackjack_games_tb SET status='active',turn_user_id=%s,deck=%s,action_started=false,updated_at=now() WHERE game_id=%s",(players[0][0],deck,gid)); conn.commit(); players=_bj_players(c,gid); await q.answer(); await q.edit_message_reply_markup(None)
+            lines=["🃏 ¡EMPIEZA EL BLACKJACK!"]+[f"👤 {p[1]}: {' '.join(p[2])} = {_score(p[2])}" for p in players]
+            await q.message.reply_text('\n'.join(lines)+f"\n\n➡️ Turno de {players[0][1]}",reply_markup=_bj_buttons(gid)); return
+        if status!='active' or uid not in ids: conn.rollback(); await q.answer("No estás jugando esta mesa.",show_alert=True); return
         if uid!=turn: conn.rollback(); await q.answer("No es tu turno.",show_alert=True); return
-        is_a=uid==creator; hand=list(ha if is_a else hb)
+        me=next(p for p in players if p[0]==uid); hand=list(me[2])
         if action=='hit':
-            hand.append(deck.pop()); score=_score(hand)
-            if is_a: ha=hand
-            else: hb=hand
-            if score>21:
-                # bust ends immediately; other player receives pot
-                winner=rival if is_a else creator; _pay(winner,stake*2,c)
-                c.execute("UPDATE blackjack_games_tb SET status='finished',deck=%s,hand_a=%s,hand_b=%s,action_started=true,updated_at=now() WHERE game_id=%s",(deck,ha,hb,gid)); conn.commit(); await q.answer(); await q.edit_message_reply_markup(reply_markup=None); await q.message.reply_text(f"💥 ¡BUST! {score}.\n{'Jugador 2' if is_a else 'Jugador 1'} gana {stake*2:,} PiPesos."); return
-            other_stood=stb if is_a else sta
-            nextu=uid if other_stood else (rival if is_a else creator)
-            c.execute("UPDATE blackjack_games_tb SET deck=%s,hand_a=%s,hand_b=%s,turn_user_id=%s,action_started=true,updated_at=now() WHERE game_id=%s",(deck,ha,hb,nextu,gid)); conn.commit(); await q.answer()
-            suffix="Sigue tu turno porque el otro jugador ya se plantó." if other_stood else "Turno del otro jugador."
-            await q.message.reply_text(f"🃏 Carta: {hand[-1]} · Total: {score}\n{suffix}",reply_markup=_bj_buttons(gid)); return
+            if not deck: deck=_deck()
+            hand.append(deck.pop()); score=_score(hand); busted=score>21
+            c.execute("UPDATE blackjack_players_tb SET hand=%s,busted=%s WHERE game_id=%s AND user_id=%s",(hand,busted,gid,uid)); players=_bj_players(c,gid)
+            nxt=_next_live(players,uid)
+            if nxt is None:
+                result=_finish_multi(c,gid,stake,players); conn.commit(); await q.answer(); await q.edit_message_reply_markup(None); await q.message.reply_text(result); return
+            c.execute("UPDATE blackjack_games_tb SET deck=%s,turn_user_id=%s,action_started=true,updated_at=now() WHERE game_id=%s",(deck,nxt,gid)); conn.commit(); await q.answer()
+            nname=next(p[1] for p in players if p[0]==nxt); prefix=f"💥 {me[1]} se pasó con {score}." if busted else f"🃏 {me[1]} pidió {hand[-1]} · Total {score}."
+            await q.message.reply_text(prefix+f"\n➡️ Turno de {nname}",reply_markup=_bj_buttons(gid)); return
         if action=='stand':
-            if is_a: sta=True
-            else: stb=True
-            other_stood=stb if is_a else sta
-            if other_stood:
-                result=await _bj_finish(c,gid,creator,rival,stake,ha,hb); conn.commit(); await q.answer(); await q.edit_message_reply_markup(reply_markup=None); await q.message.reply_text(result); return
-            nextu=rival if is_a else creator
-            c.execute("UPDATE blackjack_games_tb SET stood_a=%s,stood_b=%s,turn_user_id=%s,action_started=true,updated_at=now() WHERE game_id=%s",(sta,stb,nextu,gid)); conn.commit(); await q.answer(); await q.message.reply_text("✋ Te plantas. Turno del otro jugador.",reply_markup=_bj_buttons(gid)); return
-    except Exception:
-        conn.rollback(); await q.answer("Error de base de datos; no se liquidó dos veces.",show_alert=True)
+            c.execute("UPDATE blackjack_players_tb SET stood=true WHERE game_id=%s AND user_id=%s",(gid,uid)); players=_bj_players(c,gid); nxt=_next_live(players,uid)
+            if nxt is None:
+                result=_finish_multi(c,gid,stake,players); conn.commit(); await q.answer(); await q.edit_message_reply_markup(None); await q.message.reply_text(result); return
+            c.execute("UPDATE blackjack_games_tb SET turn_user_id=%s,action_started=true,updated_at=now() WHERE game_id=%s",(nxt,gid)); conn.commit(); await q.answer(); nname=next(p[1] for p in players if p[0]==nxt)
+            await q.message.reply_text(f"✋ {me[1]} se planta con {_score(hand)}.\n➡️ Turno de {nname}",reply_markup=_bj_buttons(gid)); return
+    except Exception as exc:
+        conn.rollback(); print('[BLACKJACK]',exc); await q.answer("Error de base de datos; no se liquidó dos veces.",show_alert=True)
     finally:_put_connection(conn)
 
 async def cancelar_blackjack(update:Update, context:ContextTypes.DEFAULT_TYPE):
     if not _in_games(update): return await update.effective_message.reply_text("🃏 Este comando solo funciona en Juegos.")
     chat,thread=_loc(update); uid=update.effective_user.id; conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("SELECT game_id,creator_id,rival_id,stake,status,action_started FROM blackjack_games_tb WHERE chat_id=%s AND thread_id=%s AND status IN ('waiting','active') ORDER BY created_at DESC LIMIT 1 FOR UPDATE",(chat,thread)); g=c.fetchone()
+        c=conn.cursor(); c.execute("SELECT game_id,creator_id,stake,status FROM blackjack_games_tb WHERE chat_id=%s AND thread_id=%s AND status IN ('waiting','active') ORDER BY created_at DESC LIMIT 1 FOR UPDATE",(chat,thread)); g=c.fetchone()
         if not g: conn.rollback(); return await update.effective_message.reply_text("🃏 No hay una mesa activa para cancelar.")
-        gid,creator,rival,stake,status,started=g
-        if uid!=creator: conn.rollback(); return await update.effective_message.reply_text("❌ Solo quien creó la mesa puede cancelarla antes de la primera jugada.")
-        if started: conn.rollback(); return await update.effective_message.reply_text("🃏 La partida ya tuvo una jugada. Ya no puede cancelarse.")
-        _pay(creator,stake,c)
-        if status=='active' and rival: _pay(rival,stake,c)
-        c.execute("UPDATE blackjack_games_tb SET status='cancelled',updated_at=now() WHERE game_id=%s AND status IN ('waiting','active')",(gid,)); conn.commit()
-        await update.effective_message.reply_text("❌ Blackjack cancelado. Se devolvieron todas las apuestas reservadas.")
+        gid,creator,stake,status=g
+        if uid!=creator: conn.rollback(); return await update.effective_message.reply_text("❌ Solo quien creó la mesa puede cancelarla.")
+        if status!='waiting': conn.rollback(); return await update.effective_message.reply_text("🃏 La partida ya comenzó. Ya no puede cancelarse.")
+        players=_bj_players(c,gid)
+        for p in players: _pay(p[0],stake,c)
+        c.execute("UPDATE blackjack_games_tb SET status='cancelled',updated_at=now() WHERE game_id=%s",(gid,)); conn.commit()
+        await update.effective_message.reply_text("❌ Blackjack cancelado. Se devolvieron todas las entradas.")
     except Exception as exc:
         conn.rollback(); print('[BLACKJACK cancel]',exc); await update.effective_message.reply_text("⚠️ No pude cancelar la mesa; no se confirmó ninguna devolución.")
     finally: _put_connection(conn)
