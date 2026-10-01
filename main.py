@@ -49,19 +49,21 @@ from handlers.theme_juegosYcasino import (
     apostar, aceptar, detectar_dado, cancelar_apuesta, jugar, robar, reiniciar_apuesta_callback, recuperar_apuestas_al_iniciar
 )
 from handlers.rewards import manejar_imagenes
-from handlers.social_economy import titulos, comprartitulo, regalos, regalo, misregalos, mistitulos, mercado, vender, comprarmercado, empenar, desempenar, social_callback
+from handlers.social_economy import titulos, comprartitulo, regalos, regalo, misregalos, mistitulos, mercado, vender, comprarmercado, empenar, desempenar, social_callback, process_social_input
 from handlers.profile_social import perfil, editarperfil, privacidadperfil, equipartitulo, profile_editor_callback, profile_text_input
 from handlers.profile_cosmetics import cosmeticos, comprarcosmetico, miscosmeticos, equiparmarco, equiparinsignia, cosmetics_callback
 from handlers.global_events import seasonal_event_tick
 from handlers.bankiu_rankings import bankiu, pagarbanco, ranking, ranking_pipesos, bankiu_callback, track_activity, activity_flush_job, ranking_maintenance_job, bankiu_collect_overdue_job
 from handlers.bdsm_quiz import quiz_tick, quiz_callback, quiz_manual, quiz_now, ensure_quiz_tables
-from handlers.casino_pvp import tortugas, blackjack, casino_pvp_callback, ensure_casino_pvp_tables
+from handlers.bdsm_facts import bdsm_fact_tick, ensure_fact_tables, FACT_INTERVAL_SECONDS
+from handlers.casino_pvp import tortugas, tortuga, ranking_tortugas, blackjack, cancelar_blackjack, casino_pvp_callback, ensure_casino_pvp_tables, turtle_season_maintenance_job, process_turtle_input
 from handlers.auctions import subasta, puja, cancelarsubasta, auction_maintenance_job
 from handlers.assassin_game import asesino, assassin_callback
 from handlers.help_center import pipesos, instrucciones, canales, help_callback, channel_callback
 from handlers.bounty import caza
+from handlers.vinculos import vinculo, separarse, vinculo_callback, ensure_vinculo_tables
 from handlers.drawing_game import dibujar, drawing_callback, drawing_guess, ensure_drawing_tables, drawing_maintenance_job
-from handlers.presentation_watchdog import silent_new_member_watch, presentation_watchdog_job, ensure_presentation_tables
+from handlers.presentation_watchdog import silent_new_member_watch, detect_presentation_message, presentation_watchdog_job, ensure_presentation_tables
 from handlers.music_fee import paid_music_post, ensure_music_tables, activarmusica, desactivarmusica
 
 # Handler imports - User onboarding
@@ -170,25 +172,47 @@ async def get_theme_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 async def saludar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Envia un mensaje de bienvenida con el alma de la comunidad."""
+    """Comando /bienvenida: presentación educativa y estacional de la comunidad."""
+    if not update.effective_message:
+        return
+    from src.utils.seasonal import current_season, TZ
+    from datetime import datetime
+    import random
+
+    now_local = datetime.now(TZ)
+    season = current_season(now_local)
+    fecha = now_local.strftime("%d/%m/%Y")
+    seasonal = {
+        "halloween": ("🎃🕸️", "Esta temporada las sombras, las cadenas decorativas y el ambiente de Halloween se apoderaron de PiBot. Aquí el único susto que no queremos es descubrir que alguien olvidó hablar de límites y consentimiento."),
+        "dia_muertos": ("💀🌼", "Entre flores, recuerdos y velas, celebramos también las historias que construyen una comunidad. Aprender de quienes estuvieron antes es parte de cuidar lo que hacemos hoy."),
+        "navidad": ("🎄⛓️", "Diciembre llegó con regalos, luces y caos navideño. Entre todo eso, hay algo que no cambia con la temporada: respeto, comunicación y consentimiento."),
+        "san_valentin": ("💘🌹", "San Valentín puede hablar de vínculos, pero aquí recordamos que ningún vínculo se sostiene solo con una etiqueta: se construye con comunicación, acuerdos y respeto."),
+        "anio_nuevo": ("🎆🖤", "Comienza otro año para aprender, conocer gente y descubrir nuevas partes de nosotros mismos. Los acuerdos también pueden revisarse: cambiar y aprender forma parte del camino."),
+        "independencia_mx": ("🇲🇽🖤", "Septiembre también llegó a PiBot. Celebramos la comunidad sin olvidar que libertad y autonomía son palabras importantes aquí: nadie tiene autoridad sobre otra persona sin un acuerdo real."),
+        "normal": ("🖤⛓️", "No hace falta una fecha especial para recordar qué queremos construir: una comunidad donde podamos aprender, conversar y ser nosotros mismos con respeto."),
+    }
+    icon, fest = seasonal.get(season, seasonal["normal"])
+    closings = [
+        "Aquí nadie necesita saberlo todo para participar. Preguntar, escuchar y aprender también forman parte de la experiencia.",
+        "Puedes tener años de experiencia o estar descubriendo todo esto hoy. Lo importante es mantener curiosidad, respeto y responsabilidad.",
+        "Las etiquetas ayudan a describirnos, pero nunca sustituyen una conversación. Cada persona y cada dinámica pueden vivirlas de manera diferente.",
+    ]
     mensaje_final = (
-        "🦅 **Bienvenidos a nuestra Comunidad BDSM** 🦅\n\n"
-        "El BDSM es mucho más que una práctica; es la valentía de entregar la voluntad y el honor de saber cuidarla. "
-        "Es una danza de **Bondage, Dominación, Sumisión, Sadismo y Masoquismo** donde la piel habla lo que el corazón siente, "
-        "siempre bajo el refugio del respeto y la confianza absoluta.\n\n"
-        "Queremos detenernos un momento para mirarlos a los ojos y darles las gracias. "
-        "A los que están desde el primer día, aguantando tormentas y celebrando victorias; a los que acaban de llegar con el alma abierta "
-        "buscando un lugar donde encajar, y también a los que ya se fueron... porque cada uno de ellos dejó un trozo de su historia "
-        "que nos ayudó a ser los que somos hoy.\n\n"
-        "**Ustedes no son solo usuarios, son la razón por la que este grupo respira.** Sin su lealtad, sin su tiempo y sin su esencia, "
-        "esto sería solo un rincón frío y vacío. Ustedes son quienes transforman este chat en un hogar, en una familia y en un refugio "
-        "donde podemos ser nosotros mismos sin miedo. Son fundamentales, son valiosos y son el motor de cada paso que damos.\n\n"
-        "📩 **Tu voz nos importa:** Este lugar se construye con tus manos, por eso tus sugerencias siempre serán nuestro norte. \n\n"
-        "📜 *No olvides leer las reglas; son el pacto que protege nuestra paz.* \n\n"
-        "**Todos somos mejores si trabajamos juntos.**\n\n"
-        "Con mucho cariño, **Kiu y PiBot**. 🦅💙"
+        f"{icon} <b>BIENVENIDOS A LA COMUNIDAD</b> {icon}\n<i>{fecha} · La bienvenida cambia con el calendario de PiBot.</i>\n\n"
+        "Este es un espacio para conversar, aprender, convivir y descubrir el BDSM sin convertirlo en una competencia por quién sabe más o quién tiene el título más impresionante. "
+        "BDSM reúne conceptos relacionados con Bondage y Disciplina, Dominación y Sumisión, y Sadismo y Masoquismo, pero detrás de las siglas existe algo todavía más importante: personas reales, acuerdos reales y responsabilidad.\n\n"
+        "⛓️ <b>¿Nuevo por aquí?</b>\n"
+        "No necesitas elegir un rol inmediatamente. Dom, sub, Switch, brat y muchas otras etiquetas pueden servir para explicar preferencias o formas de vivir una dinámica, pero ninguna etiqueta concede derechos sobre otra persona. "
+        "Una brat, por ejemplo, suele expresar una forma de sumisión mediante desafío o provocación juguetona dentro de límites negociados; no es simplemente ignorar acuerdos.\n\n"
+        "🛡️ <b>Lo que sí queremos cuidar</b>\n"
+        "Consentimiento, negociación, límites, comunicación, privacidad y aftercare son temas que vas a escuchar bastante. Un sí puede cambiar, un límite puede aparecer después y tener experiencia nunca convierte a alguien en dueño de las decisiones de otra persona.\n\n"
+        f"{fest}\n\n"
+        "📚 Además, PiBot irá dejando periódicamente cápsulas de <b>¿Sabías que...?</b> con historia, conceptos, roles, mitos y cultura BDSM para que siempre haya algo interesante que aprender o debatir.\n\n"
+        f"💬 {random.choice(closings)}\n\n"
+        "📜 Lee las reglas, participa a tu ritmo y recuerda que una buena comunidad no se construye porque todos pensemos igual, sino porque sabemos convivir y respetar los límites de los demás.\n\n"
+        "🦅 <b>Bienvenido. — Kiu y PiBot</b>"
     )
-    await update.message.reply_text(mensaje_final, parse_mode="Markdown")
+    await update.effective_message.reply_text(mensaje_final, parse_mode="HTML")
 
 async def castigar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -392,12 +416,21 @@ async def bloquear_comunidad(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Central unexpected-error logger."""
     import logging
-    logging.getLogger(__name__).exception("Unhandled PiBot error", exc_info=context.error)
+    log=logging.getLogger(__name__)
+    if isinstance(update, Update):
+        cq=update.callback_query
+        log.error("Unhandled PiBot error | user=%s chat=%s update_id=%s callback=%r message=%r",
+                  getattr(update.effective_user,"id",None),getattr(update.effective_chat,"id",None),update.update_id,
+                  (cq.data if cq else None),(update.effective_message.text if update.effective_message else None),exc_info=context.error)
+        if cq:
+            try: await cq.answer("⚠️ Esa acción falló. El error quedó registrado para revisión.",show_alert=True)
+            except Exception: pass
+            return
+    else:
+        log.exception("Unhandled PiBot error",exc_info=context.error)
     if isinstance(update, Update) and update.effective_message:
-        try:
-            await update.effective_message.reply_text("⚠️ PiBot encontró un error al procesar eso. Intenta nuevamente.")
-        except Exception:
-            pass
+        try: await update.effective_message.reply_text("⚠️ PiBot encontró un error al procesar eso. El detalle quedó registrado.")
+        except Exception: pass
 
 
 # ==================== BOT SETUP AND EXECUTION ====================
@@ -426,10 +459,12 @@ def main() -> None:
     print("[INIT] Initializing BotMaster roles...")
     init_botmaster_roles(BOTMASTER_IDS)
     ensure_quiz_tables()
+    ensure_fact_tables()
     ensure_casino_pvp_tables()
     ensure_drawing_tables()
     ensure_presentation_tables()
     ensure_music_tables()
+    ensure_vinculo_tables()
     
     print("[INIT] Restarting active combats...")
     restart_all_combats()
@@ -449,9 +484,14 @@ def main() -> None:
         from zoneinfo import ZoneInfo
         _qnow=datetime.now(ZoneInfo("America/Mexico_City")); _qnext=(_qnow+timedelta(hours=1)).replace(minute=0,second=0,microsecond=0)
         app.job_queue.run_repeating(quiz_tick, interval=3600, first=max(1,(_qnext-_qnow).total_seconds()), name="bdsm_quiz_hourly")
+        # Educational BDSM capsule every 2.5 hours. No economy side effects.
+        app.job_queue.run_repeating(bdsm_fact_tick, interval=FACT_INTERVAL_SECONDS, first=300, name="bdsm_fact_2h30")
+        app.job_queue.run_repeating(turtle_season_maintenance_job, interval=3600, first=45, name="turtle_monthly_awards")
 
     # Group -4: capture genuinely new members BEFORE auto-registration. Sends nothing.
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, silent_new_member_watch), group=-4)
+    # Any genuine text/media in Presentaciones cancels the 30-minute removal timer.
+    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.Document.ALL | filters.VOICE | filters.AUDIO) & ~filters.COMMAND, detect_presentation_message), group=-4)
 
     # Group -2: Auto-register users on any message (silent, never blocks)
     app.add_handler(MessageHandler(filters.ALL, auto_registrar), group=-2)
@@ -464,6 +504,7 @@ def main() -> None:
     # Group 0: Core commands (start, admin commands)
     app.add_handler(CommandHandler("start", start), group=0)
     app.add_handler(CommandHandler("comandos", comandos), group=0)
+    app.add_handler(CommandHandler(["bienvenida", "saludar"], saludar), group=0)
     app.add_handler(CommandHandler("castigar", castigar), group=0)
     app.add_handler(CommandHandler("perdonar", perdonar), group=0)
     
@@ -486,7 +527,6 @@ def main() -> None:
     app.add_handler(CommandHandler("quitar", quitar), group=2)
     app.add_handler(CommandHandler("NumAzar", numero_azar), group=2)
     app.add_handler(CommandHandler("id", get_theme_id), group=2)
-    app.add_handler(CommandHandler("saludar", saludar), group=2)
     app.add_handler(CommandHandler("AsignarRol", asignar_rol), group=2)
     app.add_handler(CommandHandler("MiRol", ver_rol), group=2)
     app.add_handler(CommandHandler("Suerte", suerte), group=2)
@@ -500,7 +540,10 @@ def main() -> None:
     app.add_handler(CommandHandler("quiz", quiz_manual), group=2)
     app.add_handler(CommandHandler("quizahora", quiz_now), group=2)
     app.add_handler(CommandHandler("tortugas", tortugas), group=2)
+    app.add_handler(CommandHandler("tortuga", tortuga), group=2)
+    app.add_handler(CommandHandler("rankingtortugas", ranking_tortugas), group=2)
     app.add_handler(CommandHandler("blackjack", blackjack), group=2)
+    app.add_handler(CommandHandler("cancelarblackjack", cancelar_blackjack), group=2)
     app.add_handler(CommandHandler("subasta", subasta), group=2)
     app.add_handler(CommandHandler("puja", puja), group=2)
     app.add_handler(CommandHandler("cancelarsubasta", cancelarsubasta), group=2)
@@ -509,6 +552,8 @@ def main() -> None:
     app.add_handler(CommandHandler("instrucciones", instrucciones), group=2)
     app.add_handler(CommandHandler("canales", canales), group=2)
     app.add_handler(CommandHandler("caza", caza), group=2)
+    app.add_handler(CommandHandler("vinculo", vinculo), group=2)
+    app.add_handler(CommandHandler("separarse", separarse), group=2)
     app.add_handler(CommandHandler("activarmusica", activarmusica), group=2)
     app.add_handler(CommandHandler("desactivarmusica", desactivarmusica), group=2)
     app.add_handler(CommandHandler("dibujar", dibujar), group=2)
@@ -556,8 +601,8 @@ def main() -> None:
         group=3
     )
 
-    # Group 4: Welcome and onboarding (currently disabled)
-    # Uncomment to enable welcome messages for new members
+    # Legacy welcome handlers remain intentionally disabled: Rose handles welcome.
+    # The silent 30-minute presentation watchdog is active in group -4 above.
     # app.add_handler(
     #     MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, nuevo_usuario),
     #     group=4
@@ -571,7 +616,7 @@ def main() -> None:
     app.add_handler(
         CallbackQueryHandler(
             menu_callback,
-            pattern="^(ver_comandos|abrir_tienda|ver_inventario|perfil|instrucciones)$"
+            pattern="^(ver_comandos|ver_inventario|perfil|instrucciones)$"
         ),
         group=5
     )
@@ -599,6 +644,7 @@ def main() -> None:
         group=5
     )
     app.add_handler(CallbackQueryHandler(social_callback, pattern="^soc:"), group=5)
+    app.add_handler(CallbackQueryHandler(vinculo_callback, pattern="^vin:"), group=5)
     app.add_handler(
         CallbackQueryHandler(bankiu_callback, pattern="^bank_"),
         group=5
@@ -613,6 +659,10 @@ def main() -> None:
         CallbackQueryHandler(reiniciar_apuesta_callback, pattern="^reiniciar_apuesta$"),
         group=5
     )
+
+    # Turtle UI text input (rename/custom stake). It ignores users without a pending turtle action.
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_turtle_input), group=8)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_social_input), group=9)
 
     # Group 6: Punishment filter (prevents messages outside punishment corner)
     app.add_handler(MessageHandler(filters.ALL, filtro_castigo), group=6)

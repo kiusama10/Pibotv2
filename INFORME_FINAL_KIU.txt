@@ -1,0 +1,32 @@
+PiBot - paquete acumulativo final de cambios (2026-10-01)
+
+Base comparada: Pibotv2-main(2).zip aportado en la conversación.
+No se incluyeron .env, bases locales, backups, .git ni __pycache__.
+
+Verificado en código:
+- Música no fue modificada respecto de la base.
+- handlers/battles.py no fue modificado respecto de la base.
+- Recuperación de apuestas reservadas ya no consulta usuarios_tb.username: usa perfiles_tb.
+- BANKIU muestra confirmación antes de crear/desembolsar un préstamo.
+- Rankings consultan nombre/username desde perfiles_tb.
+- ¿Sabías que...? BDSM: intervalo 9000 s (2.5 h), General thread 435, sin premio económico.
+- Watchdog de presentaciones y tablas persistentes incluidos.
+- Tortugas: perfil/nombre, botones, apuestas configurables, ranking mensual, historial y cierre de temporada incluidos.
+- Quiz: persistencia y descarte global de opciones incorrectas incluidos.
+- BotMaster: lectura de BOTMASTER_IDS endurecida para aceptar separadores variados.
+- Mercado/venta/empeño: añadida ruta por botones; comandos antiguos se conservan como compatibilidad.
+- Dibuja y Adivina: /dibujar arranca en el tema sin sala de ingreso; todo el grupo puede adivinar, pedir turno es opcional, palabra visible al dibujante dentro del WebApp, cambio de palabra dentro del WebApp por 100 PiPesos, controles de dibujo existentes conservados.
+- Perfil: marcos aplican bordes visuales distintos en el render del perfil.
+
+Pruebas locales realizadas:
+- AST + py_compile sobre 37 archivos Python: 0 errores.
+- Búsqueda de u1.username/u2.username en Python: 0 coincidencias.
+- main.py contiene una sola llamada explícita a app.run_polling y ninguna start_polling adicional.
+
+No probado contra servicios reales:
+- No se hizo conexión en vivo a Telegram ni Supabase desde este entorno.
+- El error Telegram Conflict no puede atribuirse a otra instancia solo por el código: este paquete tiene una sola llamada run_polling; si el Conflict continúa tras desplegar una sola instancia, hay que localizar otro proceso/host usando el mismo token.
+
+Regla de seguridad económica:
+- No se incluyó ninguna migración que resetee/recalcule usuarios_tb.saldo.
+- No se modificó música ni handlers/battles.py en esta tanda final.
