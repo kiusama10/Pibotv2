@@ -49,8 +49,8 @@ from handlers.theme_juegosYcasino import (
     apostar, aceptar, detectar_dado, cancelar_apuesta, jugar, robar, reiniciar_apuesta_callback, recuperar_apuestas_al_iniciar
 )
 from handlers.rewards import manejar_imagenes
-from handlers.social_economy import titulos, comprartitulo, regalos, regalo, misregalos, mistitulos, mercado, vender, comprarmercado, empenar, desempenar, social_callback, process_social_input
-from handlers.profile_social import perfil, editarperfil, privacidadperfil, equipartitulo, profile_editor_callback, profile_text_input
+from handlers.social_economy import titulos, comprartitulo, regalos, regalo, misregalos, mistitulos, rankingregalos, mercado, vender, comprarmercado, empenar, desempenar, social_callback, process_social_input
+from handlers.profile_social import perfil, editarperfil, privacidadperfil, equipartitulo, fotoperfil, profile_editor_callback, profile_text_input, profile_photo_input
 from handlers.profile_cosmetics import cosmeticos, comprarcosmetico, miscosmeticos, equiparmarco, equiparinsignia, cosmetics_callback
 from handlers.global_events import seasonal_event_tick
 from handlers.bankiu_rankings import bankiu, pagarbanco, ranking, ranking_pipesos, bankiu_callback, track_activity, activity_flush_job, ranking_maintenance_job, bankiu_collect_overdue_job
@@ -62,7 +62,7 @@ from handlers.assassin_game import asesino, assassin_callback
 from handlers.help_center import pipesos, instrucciones, canales, help_callback, channel_callback
 from handlers.bounty import caza
 from handlers.vinculos import vinculo, separarse, vinculo_callback, ensure_vinculo_tables
-from handlers.drawing_game import dibujar, drawing_callback, drawing_guess, ensure_drawing_tables, drawing_maintenance_job
+from handlers.drawing_game import dibujar, matar_dibujo, drawing_callback, drawing_guess, ensure_drawing_tables, drawing_maintenance_job
 from handlers.presentation_watchdog import silent_new_member_watch, detect_presentation_message, presentation_watchdog_job, ensure_presentation_tables
 from handlers.music_fee import paid_music_post, ensure_music_tables, activarmusica, desactivarmusica
 
@@ -557,11 +557,13 @@ def main() -> None:
     app.add_handler(CommandHandler("activarmusica", activarmusica), group=2)
     app.add_handler(CommandHandler("desactivarmusica", desactivarmusica), group=2)
     app.add_handler(CommandHandler("dibujar", dibujar), group=2)
+    app.add_handler(CommandHandler("matardibujo", matar_dibujo), group=2)
     app.add_handler(CommandHandler("titulos", titulos), group=2)
     app.add_handler(CommandHandler("comprartitulo", comprartitulo), group=2)
     app.add_handler(CommandHandler("regalos", regalos), group=2)
     app.add_handler(CommandHandler("regalo", regalo), group=2)
     app.add_handler(CommandHandler("misregalos", misregalos), group=2)
+    app.add_handler(CommandHandler("rankingregalos", rankingregalos), group=2)
     app.add_handler(CommandHandler("mistitulos", mistitulos), group=2)
     app.add_handler(CommandHandler("mercado", mercado), group=2)
     app.add_handler(CommandHandler("vender", vender), group=2)
@@ -569,6 +571,7 @@ def main() -> None:
     app.add_handler(CommandHandler("empenar", empenar), group=2)
     app.add_handler(CommandHandler("desempenar", desempenar), group=2)
     app.add_handler(CommandHandler("perfil", perfil), group=2)
+    app.add_handler(CommandHandler("fotoperfil", fotoperfil), group=2)
     app.add_handler(CommandHandler("editarperfil", editarperfil), group=2)
     app.add_handler(CommandHandler("privacidadperfil", privacidadperfil), group=2)
     app.add_handler(CommandHandler("equipartitulo", equipartitulo), group=2)
@@ -587,6 +590,7 @@ def main() -> None:
 
     # Guess detector: only reacts when an active drawing round exists in this exact chat/topic.
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, profile_text_input), group=2)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.PHOTO, profile_photo_input), group=2)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, drawing_guess), group=3)
 
     # Paid music posts. Disabled safely until MUSIC_THREAD_ID is configured.
@@ -636,7 +640,7 @@ def main() -> None:
     )
 
     app.add_handler(
-        CallbackQueryHandler(profile_editor_callback, pattern="^profile_(editor$|role$|experience$|privacy$|preview$|text_|set_|help_|public$|private$)"),
+        CallbackQueryHandler(profile_editor_callback, pattern="^profile_(editor$|role$|experience$|privacy$|preview$|photo$|text_|set_|help_|public$|private$)"),
         group=5
     )
     app.add_handler(
