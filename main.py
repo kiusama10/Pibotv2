@@ -485,7 +485,7 @@ def main() -> None:
         _qnow=datetime.now(ZoneInfo("America/Mexico_City")); _qnext=(_qnow+timedelta(hours=1)).replace(minute=0,second=0,microsecond=0)
         app.job_queue.run_repeating(quiz_tick, interval=3600, first=max(1,(_qnext-_qnow).total_seconds()), name="bdsm_quiz_hourly")
         # Educational BDSM capsule every 2.5 hours. No economy side effects.
-        app.job_queue.run_repeating(bdsm_fact_tick, interval=FACT_INTERVAL_SECONDS, first=300, name="bdsm_fact_2h30")
+        app.job_queue.run_repeating(bdsm_fact_tick, interval=FACT_INTERVAL_SECONDS, first=FACT_INTERVAL_SECONDS, name="bdsm_fact_2h")
         app.job_queue.run_repeating(turtle_season_maintenance_job, interval=3600, first=45, name="turtle_monthly_awards")
 
     # Group -4: capture genuinely new members BEFORE auto-registration. Sends nothing.
