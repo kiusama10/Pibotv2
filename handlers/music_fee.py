@@ -50,22 +50,31 @@ def _save(chat_id,thread_id,user_id,enabled,price):
         conn.rollback(); print("[MUSICA] save error",exc); return False
     finally:_put_connection(conn)
 
-def _charge_once(chat_id,message_id,user_id,amount):
+def _reward_once(chat_id,message_id,user_id,amount):
+    """Award a music post exactly once. No debit and no insufficient-balance path."""
     conn=_get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM music_post_charges_tb WHERE chat_id=%s AND message_id=%s",(chat_id,message_id))
-            if cur.fetchone(): conn.commit(); return "already"
-            cur.execute("SELECT saldo FROM usuarios_tb WHERE id_user=%s FOR UPDATE",(user_id,))
-            row=cur.fetchone()
-            if not row or row[0]<amount: conn.rollback(); return "insufficient"
-            cur.execute("UPDATE usuarios_tb SET saldo=saldo-%s WHERE id_user=%s",(amount,user_id))
+            # The existing table is kept for compatibility; amount now records the reward granted.
+            cur.execute("SELECT 1 FROM music_post_charges_tb WHERE chat_id=%s AND message_id=%s FOR UPDATE",(chat_id,message_id))
+            if cur.fetchone():
+                conn.commit()
+                return "already"
+            cur.execute("SELECT 1 FROM usuarios_tb WHERE id_user=%s FOR UPDATE",(user_id,))
+            if not cur.fetchone():
+                conn.rollback()
+                return "unknown_user"
+            cur.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(amount,user_id))
             cur.execute("INSERT INTO music_post_charges_tb(chat_id,message_id,user_id,amount) VALUES(%s,%s,%s,%s)",
                         (chat_id,message_id,user_id,amount))
-        conn.commit(); return "charged"
+        conn.commit()
+        return "rewarded"
     except Exception as exc:
-        conn.rollback(); print("[MUSICA] charge error",exc); return "error"
-    finally:_put_connection(conn)
+        conn.rollback()
+        print("[MUSICA] reward error",exc)
+        return "error"
+    finally:
+        _put_connection(conn)
 
 def _is_music(msg):
     if msg.audio or msg.video:return True
@@ -87,7 +96,7 @@ async def activarmusica(update:Update,context:ContextTypes.DEFAULT_TYPE):
         except ValueError:
             return await msg.reply_text("Uso: /activarmusica 500")
     if _save(update.effective_chat.id,msg.message_thread_id,update.effective_user.id,True,price):
-        await msg.reply_text(f"🎵 MÚSICA ACTIVADA\n\n💰 Precio: {price:,} PiPesos por publicación.\n🔗 YouTube · YouTube Music · Spotify\n🎧 Audio o video directo\n\n✅ Este tema quedó guardado incluso después de reiniciar PiBot.")
+        await msg.reply_text(f"🎵 MÚSICA ACTIVADA\n\n💰 Premio: +{price:,} PiPesos por publicación musical válida.\n🔗 YouTube · YouTube Music · Spotify\n🎧 Audio o video directo\n\n✅ Este tema quedó guardado incluso después de reiniciar PiBot.")
     else: await msg.reply_text("⚠️ No pude guardar la configuración.")
 
 async def desactivarmusica(update:Update,context:ContextTypes.DEFAULT_TYPE):
@@ -107,12 +116,7 @@ async def paid_music_post(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if not cfg:return
     thread_id,enabled,price=cfg
     if not enabled or msg.message_thread_id!=thread_id:return
-    result=_charge_once(update.effective_chat.id,msg.message_id,update.effective_user.id,price)
-    if result=="insufficient":
-        try:await msg.delete()
-        except Exception:pass
-        try:await context.bot.send_message(update.effective_user.id,f"🎵 Esa publicación cuesta {price:,} PiPesos y no tienes saldo suficiente.")
-        except Exception:pass
-    elif result=="charged":
-        try:await msg.reply_text(f"🎵 Publicación musical · −{price:,} PiPesos")
+    result=_reward_once(update.effective_chat.id,msg.message_id,update.effective_user.id,price)
+    if result=="rewarded":
+        try:await msg.reply_text(f"🎵 Publicación musical · +{price:,} PiPesos")
         except Exception:pass
