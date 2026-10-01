@@ -423,6 +423,7 @@ def create_tables():
         cursor.execute("ALTER TABLE perfiles_tb ADD COLUMN IF NOT EXISTS frase TEXT;")
         cursor.execute("ALTER TABLE perfiles_tb ADD COLUMN IF NOT EXISTS limites TEXT;")
         cursor.execute("ALTER TABLE perfiles_tb ADD COLUMN IF NOT EXISTS perfil_publico BOOLEAN NOT NULL DEFAULT TRUE;")
+        cursor.execute("ALTER TABLE perfiles_tb ADD COLUMN IF NOT EXISTS profile_photo_file_id TEXT;")
         cursor.execute("ALTER TABLE social_assets_tb ADD COLUMN IF NOT EXISTS regalo_anonimo BOOLEAN NOT NULL DEFAULT FALSE;")
         cursor.execute("ALTER TABLE social_assets_tb ADD COLUMN IF NOT EXISTS regalo_privado BOOLEAN NOT NULL DEFAULT FALSE;")
         cursor.execute("ALTER TABLE social_assets_tb ADD COLUMN IF NOT EXISTS regalado_por BIGINT;")
