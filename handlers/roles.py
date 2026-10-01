@@ -113,7 +113,7 @@ async def ver_rol(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     role_name = ROLE_NAMES.get(role, "Desconocido")
     await update.message.reply_text(
-        f"👤 Tu rol actual: **{role_name}** ({role})",
+        f"👑 **MODO DIOS · BotMaster Principal**\nAcceso absoluto a PiBot." if user.id in BOTMASTER_IDS else f"👤 Tu rol actual: **{role_name}**",
         parse_mode="Markdown",
     )
 

@@ -87,6 +87,29 @@ async def silent_new_member_watch(update: Update, context: ContextTypes.DEFAULT_
     # Deliberately sends no welcome/message. Rose handles that.
 
 
+
+async def detect_presentation_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mark a pending newcomer as presented from a real user message in Presentaciones.
+
+    In the main community Presentaciones is Telegram's original General topic, so
+    message_thread_id is None. Commands and service messages do not count.
+    The existing image reward remains separate: presenting does not itself award money.
+    """
+    msg = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if not msg or not chat or not user or user.is_bot or chat.id != MAIN_CHAT_ID:
+        return
+    if getattr(msg, "message_thread_id", None) is not None:
+        return
+    # A presentation can be text or media, but not a command/service-only update.
+    has_content = bool(msg.text or msg.caption or msg.photo or msg.video or msg.animation or msg.document or msg.voice or msg.audio)
+    if not has_content:
+        return
+    if msg.text and msg.text.startswith("/"):
+        return
+    mark_presented(chat.id, user.id)
+
 def _claim_overdue():
     conn = _get_connection()
     try:

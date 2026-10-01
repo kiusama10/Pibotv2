@@ -69,7 +69,7 @@ async def help_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     elif d=='ph:bank': text='🏦 *BANKIU*\n\nPréstamos, pagos y empeños. Abre /bankiu para usar su interfaz.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:home')]])
     elif d=='ph:mercado': text='🏷️ *Mercado*\n\nCompra y venta de coleccionables transferibles. Abre /mercado.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:home')]])
     elif d=='ph:perfil': text='👤 *Perfil*\n\n/perfil para verlo. La edición de datos personales y cosméticos se realiza por PV.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
-    elif d=='ph:juegos': text='🎮 *Juegos*\n\n/jugar · /apostar · /caza · /lucha · /tortugas · /blackjack · /asesino'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
+    elif d=='ph:juegos': text='🎮 *Juegos*\n\n/jugar · /apostar · /caza · /lucha · /tortugas · /tortuga · /rankingtortugas · /blackjack · /cancelarblackjack · /asesino'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
     elif d=='ph:regalos': text='🎁 *Regalos*\n\n/regalos abre el catálogo y /regalo permite enviar regalos normales, privados o anónimos.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
     elif d=='ph:vestidor': text='🎨 *Vestidor*\n\n/cosmeticos abre el acceso al vestidor privado con marcos e insignias.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
     elif d=='ph:canales': return await _show_channels(update,context,edit=True)

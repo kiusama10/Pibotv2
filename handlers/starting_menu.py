@@ -54,12 +54,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def _commands_text():
     return (
         commands_intro() +
-        "\n\n🎮 *Juegos y casino*\n/jugar · /robar · /caza · /apostar · /aceptar · /cancelar · /tortugas · /blackjack · /asesino · /dibujar\n"
+        "\n\n🎮 *Juegos y casino*\n/jugar · /robar · /caza · /apostar · /aceptar · /cancelar · /tortugas · /tortuga · /rankingtortugas · /blackjack · /cancelarblackjack · /asesino · /dibujar\n"
         "\n⚔️ *Combates*\n/lucha · /aceptarlucha · /ataque\n"
         "\n💰 *Economía*\n/pipesos · /tienda · /inventario · /usar · /dar · /ver · /bankiu · /pagarbanco\n"
         "\n👤 *Perfil y personalización*\n/perfil · /editarperfil · /privacidadperfil · /titulos · /mistitulos · /equipartitulo · /cosmeticos · /miscosmeticos\n"
         "\n🎁 *Social y mercado*\n/regalos · /regalo · /misregalos · /mercado · /vender · /comprarmercado · /empenar · /desempenar\n"
-        "\n🏆 *Rankings y actividades*\n/ranking · /ricospipesos · /quiz · /subasta · /puja · /cancelarsubasta\n"
+        "\n🏆 *Rankings y actividades*\n/ranking · /ricospipesos · /quiz · /subasta · /puja · /cancelarsubasta\n💞 /vinculo · /separarse\n"
         "\n📺 *Servicios*\n/canales · /instrucciones · /comandos\n"
         "\n🧩 *Otros*\n/MiRol · /Suerte · /userid\n"
     )

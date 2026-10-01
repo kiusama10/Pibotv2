@@ -65,8 +65,8 @@ async def dibujar(update:Update, context:ContextTypes.DEFAULT_TYPE):
     except Exception:
         conn.rollback(); await update.effective_message.reply_text("⚠️ No pude crear la partida."); return
     finally:_put_connection(conn)
-    kb=InlineKeyboardMarkup([[InlineKeyboardButton("🎨 Unirme",callback_data=f"draw:join:{gid}"),InlineKeyboardButton("▶️ Iniciar",callback_data=f"draw:start:{gid}")],[InlineKeyboardButton("❌ Cancelar",callback_data=f"draw:cancel:{gid}")]])
-    await update.effective_message.reply_text("🎨 DIBUJA Y ADIVINA\n\n⏱️ 2 minutos por dibujo\n🏆 Primer acierto: 1,500 PiPesos\n🔄 Cambiar palabra: 100 PiPesos\n\nLa partida se queda en ESTE tema.",reply_markup=kb)
+    await update.effective_message.reply_text("🎨 DIBUJA Y ADIVINA\n\nLa ronda empieza aquí mismo. Todo el grupo puede adivinar escribiendo en Telegram; no hay salas ni hace falta unirse para jugar.\n\n⏱️ 2 minutos por dibujo\n🏆 Primer acierto: 1,500 PiPesos\n🔄 Cambiar palabra: 100 PiPesos")
+    await _start_round(context,gid)
 
 async def _send_drawer(context, gid, uid, word, token):
     text=f"🎨 Te toca dibujar.\n\n🤫 Tu palabra es: {word.upper()}\n⏱️ Tienes 2 minutos."
@@ -85,7 +85,7 @@ async def _start_round(context,gid):
         if not g or g[3] not in ('waiting','active'): conn.rollback(); return False
         chat,thread,rno,_=g
         c.execute("SELECT user_id,display_name FROM drawing_players_tb WHERE game_id=%s ORDER BY turn_order",(gid,)); ps=c.fetchall()
-        if len(ps)<2: conn.rollback(); return False
+        if len(ps)<1: conn.rollback(); return False
         nr=rno+1; drawer=ps[(nr-1)%len(ps)]; word=_new_word(); token=secrets.token_urlsafe(24); viewer_token=secrets.token_urlsafe(24)
         c.execute("UPDATE drawing_games_tb SET status='active',drawer_id=%s,word=%s,drawer_token=%s,viewer_token=%s,round_no=%s,round_ends_at=now()+(%s||' seconds')::interval,updated_at=now() WHERE game_id=%s",(drawer[0],word,token,viewer_token,nr,ROUND_SECONDS,gid)); conn.commit()
     except Exception: conn.rollback(); return False
@@ -95,9 +95,10 @@ async def _start_round(context,gid):
     if not ok:
         await context.bot.send_message(chat,"⚠️ El dibujante debe abrir PiBot por privado primero. La ronda no puede mostrarle la palabra.",message_thread_id=thread)
         return False
-    viewer_kb=None
+    rows=[[InlineKeyboardButton('🎨 Pedir turno',callback_data=f'draw:join:{gid}')]]
     if WEBAPP_BASE_URL:
-        viewer_kb=InlineKeyboardMarkup([[InlineKeyboardButton('👀 Ver lienzo en vivo',url=f"{WEBAPP_BASE_URL}/draw?game={gid}&token={viewer_token}&view=1")]])
+        rows.insert(0,[InlineKeyboardButton('👀 Ver lienzo en vivo',url=f"{WEBAPP_BASE_URL}/draw?game={gid}&token={viewer_token}&view=1")])
+    viewer_kb=InlineKeyboardMarkup(rows)
     await context.bot.send_message(chat,f"🎨 RONDA {nr}\n🖌️ Dibuja: {drawer[1]}\n⏱️ 2:00\n\nEscriban sus respuestas aquí. ¡Primer acierto gana 1,500 PiPesos!",message_thread_id=thread,reply_markup=viewer_kb)
     context.job_queue.run_once(_round_timeout,ROUND_SECONDS+1,data={"gid":gid,"round":nr},name=f"draw:{gid}:{nr}")
     return True
@@ -111,11 +112,11 @@ async def drawing_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         chat,thread,creator,status,drawer,word,rno=g
         if action in ('join','start','cancel') and (q.message.chat_id!=chat or q.message.message_thread_id!=thread): conn.rollback(); await q.answer("Esta partida pertenece a otro tema.",show_alert=True); return
         if action=='join':
-            if status!='waiting': conn.rollback(); await q.answer("Ya comenzó.",show_alert=True); return
+            if status not in ('waiting','active','between'): conn.rollback(); await q.answer("Esta partida ya terminó.",show_alert=True); return
             c.execute("SELECT 1 FROM drawing_players_tb WHERE game_id=%s AND user_id=%s",(gid,uid))
             if c.fetchone(): conn.rollback(); await q.answer("Ya estás dentro 😹"); return
             c.execute("SELECT COALESCE(max(turn_order),-1)+1 FROM drawing_players_tb WHERE game_id=%s",(gid,)); order=c.fetchone()[0]
-            c.execute("INSERT INTO drawing_players_tb(game_id,user_id,display_name,turn_order) VALUES(%s,%s,%s,%s)",(gid,uid,_name(q.from_user),order)); conn.commit(); await q.answer('Entraste 🎨'); await q.message.reply_text(f"🎨 {_name(q.from_user)} se unió."); return
+            c.execute("INSERT INTO drawing_players_tb(game_id,user_id,display_name,turn_order) VALUES(%s,%s,%s,%s)",(gid,uid,_name(q.from_user),order)); conn.commit(); await q.answer('Turno solicitado 🎨'); await q.message.reply_text(f"🎨 {_name(q.from_user)} pidió turno para dibujar. Todo el grupo sigue participando con sus respuestas."); return
         if action=='cancel':
             if uid!=creator or status!='waiting': conn.rollback(); await q.answer("No puedes cancelarla ahora.",show_alert=True); return
             c.execute("UPDATE drawing_games_tb SET status='cancelled',updated_at=now() WHERE game_id=%s",(gid,)); conn.commit(); await q.answer('Partida cancelada.'); await q.edit_message_reply_markup(None); await q.message.reply_text("❌ Partida cancelada."); return
@@ -191,6 +192,27 @@ def canvas_get(gid,token):
     finally:_put_connection(conn)
     if not ok:return None
     with _stroke_lock:return list(_strokes.get(gid,[]))
+
+def canvas_meta(gid,token):
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT word FROM drawing_games_tb WHERE game_id=%s AND drawer_token=%s AND status='active' AND round_ends_at>now()",(gid,token)); r=c.fetchone()
+    finally:_put_connection(conn)
+    return {"word":r[0]} if r else None
+
+def canvas_change_word(gid,token):
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT drawer_id,word FROM drawing_games_tb WHERE game_id=%s AND drawer_token=%s AND status='active' AND round_ends_at>now() FOR UPDATE",(gid,token)); r=c.fetchone()
+        if not r: conn.rollback(); return None
+        uid,old=r
+        if not _reserve(uid,CHANGE_COST,c): conn.rollback(); return {"error":"money"}
+        nw=_new_word(old); c.execute("UPDATE drawing_games_tb SET word=%s,updated_at=now() WHERE game_id=%s",(nw,gid)); conn.commit()
+        with _stroke_lock:_strokes[gid]=[]
+        return {"word":nw}
+    except Exception:
+        conn.rollback(); return None
+    finally:_put_connection(conn)
 
 def canvas_append(gid,token,items):
     if not isinstance(items,list) or len(items)>200:return False

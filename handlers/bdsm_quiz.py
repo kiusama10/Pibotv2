@@ -1,4 +1,6 @@
 import random
+import json
+from datetime import datetime, timezone
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from src.database.database import _get_connection, _put_connection
@@ -41,6 +43,8 @@ def ensure_quiz_tables():
     try:
         c=conn.cursor()
         c.execute("CREATE TABLE IF NOT EXISTS bdsm_quiz_rounds_tb (round_id BIGSERIAL PRIMARY KEY, question_key TEXT NOT NULL, question_text TEXT NOT NULL, answer_text TEXT, status TEXT NOT NULL DEFAULT 'open', winner_id BIGINT, chat_id BIGINT NOT NULL, thread_id BIGINT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), closed_at TIMESTAMPTZ)")
+        c.execute("ALTER TABLE bdsm_quiz_rounds_tb ADD COLUMN IF NOT EXISTS options_json JSONB")
+        c.execute("ALTER TABLE bdsm_quiz_rounds_tb ADD COLUMN IF NOT EXISTS eliminated_json JSONB NOT NULL DEFAULT '[]'::jsonb")
         c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_bdsm_quiz_one_open ON bdsm_quiz_rounds_tb(chat_id,thread_id) WHERE status='open'")
         c.execute("CREATE TABLE IF NOT EXISTS bdsm_quiz_attempts_tb (round_id BIGINT NOT NULL REFERENCES bdsm_quiz_rounds_tb(round_id) ON DELETE CASCADE,user_id BIGINT NOT NULL,answer_text TEXT NOT NULL,correct BOOLEAN NOT NULL DEFAULT FALSE,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(round_id,user_id))")
         c.execute("CREATE TABLE IF NOT EXISTS bdsm_quiz_history_tb (question_key TEXT PRIMARY KEY,last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),uses INTEGER NOT NULL DEFAULT 1)")
@@ -56,6 +60,19 @@ def _pick():
     pool=[q for q in QUIZ_BANK if q['id'] not in recent] or QUIZ_BANK
     typ='open' if random.random()<.12 else 'choice'; candidates=[q for q in pool if q['type']==typ]
     return random.choice(candidates or pool)
+
+def _strike(text):
+    # Telegram inline buttons do not render Markdown. Combining strike keeps the
+    # discarded answer visibly crossed out without changing its stored value.
+    return ''.join(ch + '\u0336' if not ch.isspace() else ch for ch in str(text))
+
+def _quiz_keyboard(rid, opts, eliminated=None):
+    eliminated=set(eliminated or [])
+    rows=[]
+    for i,opt in enumerate(opts):
+        label=("❌ "+_strike(opt)) if i in eliminated else opt
+        rows.append([InlineKeyboardButton(label, callback_data=f'bq:{rid}:{i}')])
+    return InlineKeyboardMarkup(rows)
 
 def _create(q):
     conn=_get_connection()
@@ -73,7 +90,11 @@ async def quiz_tick(context: ContextTypes.DEFAULT_TYPE):
         if q['type']=='open':
             await context.bot.send_message(QUIZ_CHAT_ID,f"🖤 QUIZ BDSM · Ronda abierta\n\n{q['q']}\n\n💬 Sin respuesta única ni premio.",message_thread_id=QUIZ_THREAD_ID); return
         opts=list(dict.fromkeys(q['options'])); random.shuffle(opts); context.application.bot_data.setdefault('bq_options',{})[rid]=opts
-        kb=InlineKeyboardMarkup([[InlineKeyboardButton(o,callback_data=f'bq:{rid}:{i}')] for i,o in enumerate(opts)])
+        conn=_get_connection()
+        try:
+            c=conn.cursor(); c.execute('UPDATE bdsm_quiz_rounds_tb SET options_json=%s::jsonb WHERE round_id=%s',(json.dumps(opts,ensure_ascii=False),rid)); conn.commit()
+        finally:_put_connection(conn)
+        kb=_quiz_keyboard(rid,opts)
         await context.bot.send_message(QUIZ_CHAT_ID,f"🖤 QUIZ BDSM · 1 intento por persona\n\n{q['q']}\n\n🏆 Primera correcta: {QUIZ_REWARD:,} PiPesos",message_thread_id=QUIZ_THREAD_ID,reply_markup=kb)
     except Exception as e: print('[QUIZ]',e)
 
@@ -83,14 +104,32 @@ async def quiz_callback(update: Update,context: ContextTypes.DEFAULT_TYPE):
     except Exception: await cq.answer('Ronda inválida.',show_alert=True); return
     if cq.message.chat_id!=QUIZ_CHAT_ID or cq.message.message_thread_id!=QUIZ_THREAD_ID: await cq.answer('Esta ronda pertenece a General.',show_alert=True); return
     opts=context.application.bot_data.get('bq_options',{}).get(rid)
-    if not opts or idx>=len(opts): await cq.answer('Ronda vencida.',show_alert=True); return
-    chosen=opts[idx]; uid=cq.from_user.id; conn=_get_connection()
+    uid=cq.from_user.id; conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute('SELECT status,answer_text FROM bdsm_quiz_rounds_tb WHERE round_id=%s FOR UPDATE',(rid,)); row=c.fetchone()
+        c=conn.cursor(); c.execute("SELECT status,answer_text,options_json,created_at,eliminated_json FROM bdsm_quiz_rounds_tb WHERE round_id=%s FOR UPDATE",(rid,)); row=c.fetchone()
         if not row or row[0]!='open': conn.rollback(); await cq.answer('La ronda ya terminó.',show_alert=True); return
+        if (datetime.now(timezone.utc)-row[3]).total_seconds()>900:
+            c.execute("UPDATE bdsm_quiz_rounds_tb SET status='expired',closed_at=NOW() WHERE round_id=%s AND status='open'",(rid,)); conn.commit(); await cq.answer('Esta ronda cerró después de 15 minutos.',show_alert=True); return
+        if not opts: opts=row[2] if isinstance(row[2],list) else (json.loads(row[2]) if row[2] else None)
+        if not opts or idx>=len(opts): conn.rollback(); await cq.answer('No pude recuperar las opciones de esta ronda.',show_alert=True); return
+        context.application.bot_data.setdefault('bq_options',{})[rid]=opts
+        eliminated=row[4] if isinstance(row[4],list) else (json.loads(row[4]) if row[4] else [])
+        eliminated={int(x) for x in eliminated}
+        if idx in eliminated:
+            conn.rollback(); await cq.answer('❌ Esa respuesta ya fue descartada. Elige otra.',show_alert=False); return
+        chosen=opts[idx]
         ok=chosen==row[1]; c.execute('INSERT INTO bdsm_quiz_attempts_tb(round_id,user_id,answer_text,correct) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING',(rid,uid,chosen,ok))
         if c.rowcount!=1: conn.rollback(); await cq.answer('Ya usaste tu intento.',show_alert=True); return
-        if not ok: conn.commit(); await cq.answer('❌ Incorrecto. Ya usaste tu intento.',show_alert=True); return
+        if not ok:
+            eliminated.add(idx)
+            c.execute('UPDATE bdsm_quiz_rounds_tb SET eliminated_json=%s::jsonb WHERE round_id=%s AND status=\'open\'',(json.dumps(sorted(eliminated)),rid))
+            conn.commit()
+            await cq.answer('❌ Incorrecto. Esa opción quedó descartada.',show_alert=True)
+            try:
+                await cq.edit_message_reply_markup(reply_markup=_quiz_keyboard(rid,opts,eliminated))
+            except Exception as e:
+                print('[QUIZ keyboard]',e)
+            return
         c.execute("UPDATE bdsm_quiz_rounds_tb SET status='won',winner_id=%s,closed_at=NOW() WHERE round_id=%s AND status='open'",(uid,rid)); c.execute('UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s',(QUIZ_REWARD,uid))
         if c.rowcount!=1: conn.rollback(); await cq.answer('No pude acreditar el premio.',show_alert=True); return
         conn.commit()

@@ -128,7 +128,7 @@ def _bank_keyboard(limit: int, has_loan: bool):
     rows = []
     if not has_loan:
         amounts = [x for x in CREDIT_TIERS if x <= limit]
-        rows.extend([[InlineKeyboardButton(f"💰 Pedir {_money(x)}", callback_data=f"bank_loan_{x}")] for x in amounts])
+        rows.extend([[InlineKeyboardButton(f"💰 Pedir {_money(x)}", callback_data=f"bank_preview_{x}")] for x in amounts])
     else:
         rows.append([InlineKeyboardButton("💸 Pagar deuda", callback_data="bank_pay_all")])
     rows.append([InlineKeyboardButton("📜 Mi historial", callback_data="bank_history")])
@@ -158,17 +158,26 @@ async def bankiu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def bankiu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; uid = q.from_user.id; data = q.data or ""
-    if data.startswith("bank_loan_"):
+    if data.startswith("bank_preview_"):
         try: amount = int(data.rsplit("_", 1)[1])
-        except ValueError: return
-        st, info = create_loan(uid, amount)
-        if st == "ok":
-            _, principal, total, _ = info
-            await q.answer(f"BANKIU depositó {_money(principal)} PiPesos", show_alert=True)
-        elif st == "active": await q.answer("Ya tienes un préstamo pendiente.", show_alert=True)
-        elif st == "limit": await q.answer(f"Tu límite actual es {_money(info)}.", show_alert=True)
-        else: await q.answer("No pude crear el préstamo.", show_alert=True)
-        return await bankiu(update, context)
+        except ValueError: return await q.answer("Cantidad inválida.", show_alert=True)
+        completed, _, limit = _credit_summary(uid)
+        if _active_loan(uid): return await q.answer("Ya tienes un préstamo pendiente.", show_alert=True)
+        if amount <= 0 or amount > limit: return await q.answer(f"Tu límite actual es {_money(limit)}.", show_alert=True)
+        interest=(amount*BANKIU_INTEREST_PERCENT+99)//100; total=amount+interest
+        due=datetime.now(timezone.utc)+timedelta(days=BANKIU_TERM_DAYS)
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Aceptar préstamo",callback_data=f"bank_confirm_{amount}"),InlineKeyboardButton("❌ Cancelar",callback_data="bank_home")]])
+        await q.answer()
+        return await q.edit_message_text(f"🏦 BANKIU · CONFIRMACIÓN\n\n💰 Recibirás: {_money(amount)} PiPesos\n📈 Interés: {BANKIU_INTEREST_PERCENT}% ({_money(interest)} PP)\n💳 Total a pagar: {_money(total)} PiPesos\n📅 Plazo: {BANKIU_TERM_DAYS} días\n🗓️ Vencimiento aproximado: {due:%d/%m/%Y %H:%M} UTC\n\nEl dinero NO se deposita hasta que pulses Aceptar préstamo.",reply_markup=kb)
+    if data.startswith("bank_confirm_"):
+        try: amount=int(data.rsplit("_",1)[1])
+        except ValueError: return await q.answer("Cantidad inválida.",show_alert=True)
+        st, info=create_loan(uid,amount)
+        if st=="ok": await q.answer(f"BANKIU depositó {_money(amount)} PiPesos",show_alert=True)
+        elif st=="active": await q.answer("Ya tienes un préstamo pendiente.",show_alert=True)
+        elif st=="limit": await q.answer(f"Tu límite actual es {_money(info)}.",show_alert=True)
+        else: await q.answer("No pude crear el préstamo.",show_alert=True)
+        return await bankiu(update,context)
     if data == "bank_pay_all":
         st, info = pay_loan(uid)
         if st == "ok":
@@ -290,8 +299,8 @@ async def ranking(update:Update, context:ContextTypes.DEFAULT_TYPE):
     conn=_get_connection()
     try:
         c=conn.cursor(); cycle=_ensure_cycle(c); conn.commit(); cid,_,end,_=cycle
-        c.execute("""SELECT s.user_id,s.puntos,COALESCE(u.username,'Usuario '||s.user_id::text)
-                     FROM participation_scores_tb s LEFT JOIN usuarios_tb u ON u.id_user=s.user_id
+        c.execute("""SELECT s.user_id,s.puntos,COALESCE(NULLIF(p.username,''),p.nombre,'Usuario '||s.user_id::text)
+                     FROM participation_scores_tb s LEFT JOIN perfiles_tb p ON p.id_user=s.user_id
                      WHERE s.cycle_id=%s ORDER BY s.puntos DESC,s.user_id ASC LIMIT 10""",(cid,)); rows=c.fetchall()
     finally:_put_connection(conn)
     left=max(timedelta(),end-datetime.now(timezone.utc)); d=left.days; h=left.seconds//3600; m=(left.seconds%3600)//60
@@ -300,17 +309,17 @@ async def ranking(update:Update, context:ContextTypes.DEFAULT_TYPE):
     for i,(uid,pts,name) in enumerate(rows,1): lines.append(f"{medals[i-1] if i<=3 else str(i)+'.'} {name} — {pts} pts")
     if not rows: lines.append("Todavía no hay actividad registrada en esta quincena.")
     lines.append("\n🎁 Top 3 recibe un título exclusivo y transferible de esta edición.")
-    await update.message.reply_text("\n".join(lines))
+    await update.effective_message.reply_text("\n".join(lines))
 
 
 async def ranking_pipesos(update:Update, context:ContextTypes.DEFAULT_TYPE):
     conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("SELECT id_user,COALESCE(username,'Usuario '||id_user::text),saldo FROM usuarios_tb ORDER BY saldo DESC,id_user ASC LIMIT 10"); rows=c.fetchall()
+        c=conn.cursor(); c.execute("SELECT u.id_user,COALESCE(NULLIF(p.username,''),p.nombre,'Usuario '||u.id_user::text),u.saldo FROM usuarios_tb u LEFT JOIN perfiles_tb p ON p.id_user=u.id_user ORDER BY u.saldo DESC,u.id_user ASC LIMIT 10"); rows=c.fetchall()
     finally:_put_connection(conn)
     lines=["💰 RANKING DE PIPESOS"]
     for i,(_,name,saldo) in enumerate(rows,1): lines.append(f"{i}. {name} — {_money(saldo)} PP")
-    await update.message.reply_text("\n".join(lines))
+    await update.effective_message.reply_text("\n".join(lines))
 
 
 async def bankiu_collect_overdue_job(context: ContextTypes.DEFAULT_TYPE):

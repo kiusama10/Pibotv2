@@ -323,6 +323,20 @@ async def social_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         if not row:return await q.answer('Ese regalo ya no está en tu colección.',show_alert=True)
         a,n,r,sn,st,v,e=row
         return await q.edit_message_text(f"🎁 {n}\n{RARE_EMOJI.get(r,'⚪')} {r.title()}\n💎 Valor base: {v:,} PP\n📦 Estado: {e}\n🆔 Colección #{a}",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Mis regalos",callback_data="soc:gift_owned")]]))
+    if data.startswith('soc:market_buy:'):
+        lid=int(data.rsplit(':',1)[1]); st,res=buy_market(uid,lid)
+        if st=='ok': return await q.edit_message_text(f"🤝 Compra cerrada: {res[0]} por {res[1]:,} PiPesos. El objeto ya está en tu colección.")
+        return await q.answer('No tienes saldo suficiente.' if st=='money' else 'Esa venta ya no está disponible.',show_alert=True)
+    if data.startswith('soc:sell_pick:'):
+        aid=int(data.rsplit(':',1)[1]); row=next((x for x in list_assets(uid) if x[0]==aid and x[6]=='disponible'),None)
+        if not row:return await q.answer('Ese objeto ya no está disponible.',show_alert=True)
+        context.user_data['social_sell_asset']=aid
+        context.user_data['social_input']='sell_price'
+        return await q.edit_message_text(f"🏪 Vas a vender: {row[1]}\n\nEscribe ahora el precio en PiPesos. Para cancelar escribe cancelar.")
+    if data.startswith('soc:pawn_pick:'):
+        aid=int(data.rsplit(':',1)[1]); st,res=pawn_asset(uid,aid)
+        if st=='ok':return await q.edit_message_text(f"🏦 BANKIU aceptó {res[0]}.\n💰 Recibes {res[1]:,} PiPesos\n🧾 Recuperarlo cuesta {res[2]:,} PiPesos antes de 7 días.")
+        return await q.answer('BANKIU no puede aceptar ese objeto.',show_alert=True)
     if data=='soc:profile':
         from handlers.profile_social import _render
         return await q.edit_message_text(_render(uid,uid),reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏷️ Mis títulos",callback_data="soc:title_owned"),InlineKeyboardButton("🎁 Mis regalos",callback_data="soc:gift_owned")],[InlineKeyboardButton("✨ Mi vestidor",callback_data="cos_home")]]))
@@ -330,31 +344,46 @@ async def social_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
 async def mercado(update:Update,context:ContextTypes.DEFAULT_TYPE):
     rows=list_market()
     if not rows:return await update.message.reply_text('🏪 El mercado está vacío.')
-    await update.message.reply_text('🏪 MERCADO ENTRE USUARIOS\n'+'\n'.join(f"Venta #{lid} · {n}"+(f" #{sn}/{st}" if sn else '')+f" · {RARE_EMOJI.get(r,'')} · {p:,} PP\n/comprarmercado {lid}" for lid,n,r,sn,st,p,_ in rows))
+    kb=[]
+    for lid,n,r,sn,st,p,seller in rows[:30]:
+        label=f"{RARE_EMOJI.get(r,'')} {n}"+(f" #{sn}/{st}" if sn else '')+f" · {p:,} PP"
+        kb.append([InlineKeyboardButton(label,callback_data=f"soc:market_buy:{lid}")])
+    await update.message.reply_text('🏪 MERCADO ENTRE USUARIOS\n\nToca una publicación para comprarla. No necesitas copiar IDs.',reply_markup=InlineKeyboardMarkup(kb))
 
 async def vender(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    if len(context.args)<2:return await update.message.reply_text('Uso: /vender ID_OBJETO PRECIO')
-    try:aid=int(context.args[0]);price=int(context.args[1])
-    except:return await update.message.reply_text('ID y precio deben ser números.')
-    if price<=0:return await update.message.reply_text('El precio debe ser mayor a cero.')
-    await update.message.reply_text('🏪 Publicado en el mercado.' if sell_asset(update.effective_user.id,aid,price) else 'No pude publicarlo: revisa propiedad/estado del objeto.')
+    uid=update.effective_user.id
+    # Compatibilidad: el formato antiguo sigue disponible, pero la ruta normal es por botones.
+    if len(context.args)>=2:
+        try: aid=int(context.args[0]); price=int(context.args[1])
+        except: return await update.message.reply_text('ID y precio deben ser números.')
+        if price<=0:return await update.message.reply_text('El precio debe ser mayor a cero.')
+        return await update.message.reply_text('🏪 Publicado en el mercado.' if sell_asset(uid,aid,price) else 'No pude publicarlo: revisa propiedad/estado del objeto.')
+    rows=[x for x in list_assets(uid) if x[6]=='disponible']
+    if not rows:return await update.message.reply_text('🎒 No tienes objetos disponibles para vender.')
+    kb=[[InlineKeyboardButton(f"{RARE_EMOJI.get(r,'⚪')} {n}"+(f" #{sn}/{st}" if sn else ''),callback_data=f"soc:sell_pick:{a}")] for a,n,r,sn,st,v,e in rows[:30]]
+    await update.message.reply_text('🏪 ¿Qué quieres vender?\n\nElige el objeto; después solo escribe el precio.',reply_markup=InlineKeyboardMarkup(kb))
 
 async def comprarmercado(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    if not context.args:return await update.message.reply_text('Uso: /comprarmercado ID_VENTA')
+    if not context.args:return await mercado(update,context)
     try:lid=int(context.args[0])
-    except:return await update.message.reply_text('ID inválido.')
+    except:return await update.message.reply_text('Venta inválida.')
     st,data=buy_market(update.effective_user.id,lid)
-    if st=='ok':await update.message.reply_text(f"🤝 Compra cerrada: {data[0]} por {data[1]:,} PiPesos. El objeto cambió de propietario sin duplicarse.")
+    if st=='ok':await update.message.reply_text(f"🤝 Compra cerrada: {data[0]} por {data[1]:,} PiPesos.")
     elif st=='money':await update.message.reply_text('💸 No tienes saldo suficiente.')
     else:await update.message.reply_text('Esa venta ya no está disponible.')
 
 async def empenar(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    if not context.args:return await update.message.reply_text('Uso: /empenar ID_OBJETO')
-    try:aid=int(context.args[0])
-    except:return await update.message.reply_text('ID inválido.')
-    st,data=pawn_asset(update.effective_user.id,aid)
-    if st=='ok':await update.message.reply_text(f"🏦 BANKIU aceptó {data[0]}.\n💰 Recibes {data[1]:,} PiPesos\n🧾 Para recuperarlo: {data[2]:,} PiPesos antes de 7 días.\nEl objeto queda bloqueado mientras esté empeñado.")
-    else:await update.message.reply_text('BANKIU no puede aceptar ese objeto en su estado actual.')
+    uid=update.effective_user.id
+    if context.args:
+        try:aid=int(context.args[0])
+        except:return await update.message.reply_text('Objeto inválido.')
+        st,data=pawn_asset(uid,aid)
+        if st=='ok':return await update.message.reply_text(f"🏦 BANKIU aceptó {data[0]}.\n💰 Recibes {data[1]:,} PiPesos\n🧾 Para recuperarlo: {data[2]:,} PiPesos antes de 7 días.")
+        return await update.message.reply_text('BANKIU no puede aceptar ese objeto en su estado actual.')
+    rows=[x for x in list_assets(uid) if x[6]=='disponible']
+    if not rows:return await update.message.reply_text('🎒 No tienes objetos disponibles para empeñar.')
+    kb=[[InlineKeyboardButton(f"{RARE_EMOJI.get(r,'⚪')} {n}"+(f" #{sn}/{st}" if sn else ''),callback_data=f"soc:pawn_pick:{a}")] for a,n,r,sn,st,v,e in rows[:30]]
+    await update.message.reply_text('🏦 BANKIU · EMPEÑO\n\nElige el objeto que quieres empeñar. PiBot te mostrará el resultado sin pedirte IDs.',reply_markup=InlineKeyboardMarkup(kb))
 
 async def desempenar(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if not context.args:return await update.message.reply_text('Uso: /desempenar ID_OBJETO')
@@ -364,3 +393,19 @@ async def desempenar(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if st=='ok':await update.message.reply_text(f"🏦 Recuperaste {data[0]} pagando {data[1]:,} PiPesos.")
     elif st=='money':await update.message.reply_text('💸 No tienes suficiente saldo para recuperarlo.')
     else:await update.message.reply_text('No hay un empeño activo de ese objeto a tu nombre.')
+
+
+async def process_social_input(update:Update, context:ContextTypes.DEFAULT_TYPE):
+    mode=context.user_data.get('social_input')
+    if mode!='sell_price' or not update.effective_message or not update.effective_message.text:return
+    raw=update.effective_message.text.strip()
+    if raw.lower()=='cancelar':
+        context.user_data.pop('social_input',None);context.user_data.pop('social_sell_asset',None)
+        await update.effective_message.reply_text('❌ Venta cancelada.');return
+    try:price=int(raw.replace(',','').replace('_',''))
+    except ValueError:return
+    if price<=0:return await update.effective_message.reply_text('El precio debe ser mayor a cero.')
+    aid=context.user_data.pop('social_sell_asset',None);context.user_data.pop('social_input',None)
+    if not aid:return
+    ok=sell_asset(update.effective_user.id,aid,price)
+    await update.effective_message.reply_text(f'🏪 Publicado por {price:,} PiPesos.' if ok else '⚠️ Ese objeto ya no puede ponerse a la venta.')

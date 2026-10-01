@@ -11,7 +11,6 @@ EDITABLE = {
     "rol": "Rol BDSM",
     "experiencia": "Experiencia",
     "gustos": "Gustos",
-    "relacion": "Vínculo / relación",
     "bio": "Sobre mí",
     "frase": "Mi frase",
     "limites": "Límites",
@@ -51,7 +50,7 @@ def _ensure_profile_phrase():
 def _editor_markup():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎭 Rol", callback_data="profile_role"), InlineKeyboardButton("⭐ Experiencia", callback_data="profile_experience")],
-        [InlineKeyboardButton("💜 Gustos", callback_data="profile_text_gustos"), InlineKeyboardButton("🔗 Vínculo", callback_data="profile_text_relacion")],
+        [InlineKeyboardButton("💜 Gustos", callback_data="profile_text_gustos"), InlineKeyboardButton("💞 Vínculo", callback_data="profile_help_vinculo")],
         [InlineKeyboardButton("🪪 Sobre mí", callback_data="profile_text_bio"), InlineKeyboardButton("💬 Mi frase", callback_data="profile_text_frase")],
         [InlineKeyboardButton("🛡️ Límites", callback_data="profile_text_limites"), InlineKeyboardButton("🔐 Privacidad", callback_data="profile_privacy")],
         [InlineKeyboardButton("🏷️ Títulos", callback_data="profile_help_titles"), InlineKeyboardButton("✨ Vestidor", callback_data="profile_help_cosmetics")],
@@ -186,6 +185,15 @@ def _render(uid: int, viewer: int):
         return "🔒 Este perfil es privado."
 
     counts = _counts(uid)
+    formal_link=None
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT CASE WHEN v.user_a=%s THEN v.user_b ELSE v.user_a END FROM vinculos_tb v WHERE v.status='active' AND (v.user_a=%s OR v.user_b=%s) ORDER BY v.vinculo_id DESC LIMIT 1",(uid,uid,uid)); vr=c.fetchone()
+        if vr:
+            c.execute("SELECT COALESCE(NULLIF(username,''),nombre,%s) FROM perfiles_tb WHERE id_user=%s",(f"Usuario {vr[0]}",vr[0])); nr=c.fetchone(); formal_link=nr[0] if nr else f"Usuario {vr[0]}"
+    except Exception:
+        formal_link=None
+    finally: _put_connection(conn)
     title = (tname + (f" #{sn}/{st}" if sn else "")) if tname else "Sin equipar"
     season_icon, seasonal_border = profile_style()
     border = CUSTOM_FRAME_BORDERS.get(frame_code, seasonal_border)
@@ -203,7 +211,7 @@ def _render(uid: int, viewer: int):
     ]
     for label, val in [
         ("Rol", rol), ("Experiencia", exp), ("Gustos", gustos),
-        ("Vínculo", rel), ("Sobre mí", bio), ("Frase", frase), ("Límites", limites),
+        ("Vínculo", formal_link or rel), ("Sobre mí", bio), ("Frase", frase), ("Límites", limites),
     ]:
         if val:
             lines.append(f"• {label}: {val}")
@@ -289,6 +297,8 @@ async def profile_editor_callback(update: Update, context: ContextTypes.DEFAULT_
         return await _editor_screen(q)
     if data == "profile_preview":
         return await q.edit_message_text(_render(q.from_user.id,q.from_user.id),reply_markup=_back_editor())
+    if data == "profile_help_vinculo":
+        return await q.edit_message_text("💞 VÍNCULOS\n\nLos vínculos ahora son consensuados y aparecen automáticamente en ambos perfiles. Usa /vinculo respondiendo a la persona o /vinculo @usuario. Formarlo cuesta 20,000 PiPesos solo si acepta. Para terminarlo usa /separarse; también cuesta 20,000 PiPesos y requiere confirmación.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Volver",callback_data="profile_editor")]]))
     if data == "profile_help_titles":
         return await q.edit_message_text("🏷️ TUS TÍTULOS\n\nAbre tu colección, toca el que quieras y equípalo.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏷️ Abrir mis títulos", callback_data="soc:title_owned")],[InlineKeyboardButton("⬅️ Volver",callback_data="profile_editor")]]))
     if data == "profile_help_cosmetics":
