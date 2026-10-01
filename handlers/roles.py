@@ -17,6 +17,7 @@ Commands:
 from telegram import Update
 from telegram.ext import ContextTypes
 from src.database.database import get_id_user, get_user_role, set_user_role, check_permission, set_suerte
+from src.config import BOTMASTER_IDS
 
 ROLE_NAMES = {1: "Usuario", 2: "Admin", 3: "BotMaster"}
 
@@ -163,3 +164,43 @@ async def suerte(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text("❌ Error al actualizar la suerte.")
+
+
+def _botmaster_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message and update.message.reply_to_message:
+        u=update.message.reply_to_message.from_user
+        return u.id, (u.username or u.full_name)
+    if context.args and context.args[0].startswith("@"):
+        name=context.args[0][1:]
+        return get_id_user(name), name
+    return None, None
+
+
+async def hacer_botmaster(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in BOTMASTER_IDS:
+        return await update.message.reply_text("❌ Solo el BotMaster principal puede otorgar este permiso.")
+    uid,name=_botmaster_target(update,context)
+    if not uid:
+        return await update.message.reply_text("Uso: /hacerbotmaster @usuario\nTambién puedes responder a su mensaje con /hacerbotmaster.")
+    if uid == update.effective_user.id:
+        return await update.message.reply_text("👑 Ya eres BotMaster principal.")
+    if set_user_role(uid,3):
+        await update.message.reply_text(f"👑 {name} ahora es BotMaster.")
+    else:
+        await update.message.reply_text("⚠️ No pude cambiar el permiso.")
+
+
+async def quitar_botmaster(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in BOTMASTER_IDS:
+        return await update.message.reply_text("❌ Solo el BotMaster principal puede retirar este permiso.")
+    uid,name=_botmaster_target(update,context)
+    if not uid:
+        return await update.message.reply_text("Uso: /quitarbotmaster @usuario\nTambién puedes responder a su mensaje con /quitarbotmaster.")
+    if uid in BOTMASTER_IDS:
+        return await update.message.reply_text("🛡️ Ese BotMaster está protegido por BOTMASTER_IDS de Render.")
+    if get_user_role(uid) != 3:
+        return await update.message.reply_text(f"ℹ️ {name} no es BotMaster.")
+    if set_user_role(uid,1):
+        await update.message.reply_text(f"🔒 {name} dejó de ser BotMaster y volvió a Usuario.")
+    else:
+        await update.message.reply_text("⚠️ No pude retirar el permiso.")

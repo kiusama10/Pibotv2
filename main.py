@@ -42,7 +42,7 @@ from handlers.starting_menu import start, comandos, menu_callback
 from handlers.tienda import tienda, tienda_callback
 from handlers.inventario import inventario, inventario_callback, usar
 from handlers.battles import lucha, ataque, aceptar_lucha
-from handlers.roles import asignar_rol, ver_rol, suerte
+from handlers.roles import asignar_rol, ver_rol, suerte, hacer_botmaster, quitar_botmaster
 
 # Handler imports - Games and rewards
 from handlers.theme_juegosYcasino import (
@@ -62,7 +62,7 @@ from handlers.help_center import pipesos, instrucciones, canales, help_callback,
 from handlers.bounty import caza
 from handlers.drawing_game import dibujar, drawing_callback, drawing_guess, ensure_drawing_tables, drawing_maintenance_job
 from handlers.presentation_watchdog import silent_new_member_watch, presentation_watchdog_job, ensure_presentation_tables
-from handlers.music_fee import paid_music_post, ensure_music_tables
+from handlers.music_fee import paid_music_post, ensure_music_tables, activarmusica, desactivarmusica
 
 # Handler imports - User onboarding
 from handlers.welcoming import nuevo_usuario, mensaje_de_presentaciones
@@ -389,6 +389,17 @@ async def bloquear_comunidad(update: Update, context: ContextTypes.DEFAULT_TYPE)
         raise ApplicationHandlerStop()
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Central unexpected-error logger."""
+    import logging
+    logging.getLogger(__name__).exception("Unhandled PiBot error", exc_info=context.error)
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text("⚠️ PiBot encontró un error al procesar eso. Intenta nuevamente.")
+        except Exception:
+            pass
+
+
 # ==================== BOT SETUP AND EXECUTION ====================
 
 def main() -> None:
@@ -424,6 +435,7 @@ def main() -> None:
     restart_all_combats()
     
     app = Application.builder().token(BOT_TOKEN).post_init(recuperar_apuestas_al_iniciar).build()
+    app.add_error_handler(error_handler)
     # Lightweight seasonal event check. DB idempotency prevents duplicate Christmas grants.
     if app.job_queue:
         app.job_queue.run_repeating(seasonal_event_tick, interval=3600, first=5, name="seasonal_events")
@@ -478,6 +490,8 @@ def main() -> None:
     app.add_handler(CommandHandler("AsignarRol", asignar_rol), group=2)
     app.add_handler(CommandHandler("MiRol", ver_rol), group=2)
     app.add_handler(CommandHandler("Suerte", suerte), group=2)
+    app.add_handler(CommandHandler("hacerbotmaster", hacer_botmaster), group=2)
+    app.add_handler(CommandHandler("quitarbotmaster", quitar_botmaster), group=2)
     app.add_handler(CommandHandler("userid", userid), group=2)
     app.add_handler(CommandHandler("bankiu", bankiu), group=2)
     app.add_handler(CommandHandler("pagarbanco", pagarbanco), group=2)
@@ -495,6 +509,8 @@ def main() -> None:
     app.add_handler(CommandHandler("instrucciones", instrucciones), group=2)
     app.add_handler(CommandHandler("canales", canales), group=2)
     app.add_handler(CommandHandler("caza", caza), group=2)
+    app.add_handler(CommandHandler("activarmusica", activarmusica), group=2)
+    app.add_handler(CommandHandler("desactivarmusica", desactivarmusica), group=2)
     app.add_handler(CommandHandler("dibujar", dibujar), group=2)
     app.add_handler(CommandHandler("titulos", titulos), group=2)
     app.add_handler(CommandHandler("comprartitulo", comprartitulo), group=2)

@@ -7,23 +7,16 @@ from src.config import BOTMASTER_IDS
 from src.database.database import (
     get_campo_usuario, normalizar_nombre, update_perfil,
     insert_user, get_id_user, quitar_puntos, dar_puntos,
-    reemplazar_acentos, check_permission, get_usuario_resumen, transferir_puntos_atomico,
+    reemplazar_acentos, check_permission, get_usuario_resumen, transferir_puntos_atomico, get_user_role,
 )
 
 #region FUNCIONES AUXILIARES
 
 async def verificar_admin(user_id: int, update: Update) -> bool:
-    """Check if user is admin via internal role system (role >= 2)."""
-    # 1. SI ERES TÚ, PASAS SIEMPRE (Pase VIP)
+    """Admin if protected root BotMaster or persistent roles_tb role >= 2."""
     if int(user_id) in BOTMASTER_IDS:
         return True
-    
-    # 2. REVISAR ROL EN LA DB (Para otros admins)
-    rol = get_campo_usuario(user_id, "role")
-    if rol is not None and int(rol) >= 2:
-        return True
-        
-    return False
+    return get_user_role(user_id) >= 2
 
 def obtener_gif_aleatorio(nombre_producto):
     nombre_carpeta = nombre_producto.lower()
