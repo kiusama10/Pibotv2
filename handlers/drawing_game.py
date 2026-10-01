@@ -72,12 +72,8 @@ async def dibujar(update:Update, context:ContextTypes.DEFAULT_TYPE):
     await _start_round(context,gid)
 
 async def _send_drawer(context, gid, uid, word, token):
-    text=f"🎨 Te toca dibujar.\n\n🤫 Tu palabra es: {word.upper()}\n⏱️ Tienes 2 minutos.\n\n🖌️ Colores, grosor, borrador, deshacer, limpiar y Cambiar palabra están dentro del lienzo."
-    rows=[]
-    if WEBAPP_BASE_URL:
-        rows.append([InlineKeyboardButton("🖌️ Abrir lienzo",web_app=WebAppInfo(url=f"{WEBAPP_BASE_URL}/draw?game={gid}&token={token}"))])
-    try: await context.bot.send_message(uid,text,reply_markup=InlineKeyboardMarkup(rows))
-    except Exception: return False
+    # Ya no enviamos mensajes privados. La palabra queda en la WebApp del dibujante.
+    # El enlace de edición se publica en la ronda; solo debe usarlo el dibujante.
     return True
 
 async def _start_round(context,gid):
@@ -93,15 +89,14 @@ async def _start_round(context,gid):
     except Exception: conn.rollback(); return False
     finally:_put_connection(conn)
     with _stroke_lock:_strokes[gid]=[]
-    ok=await _send_drawer(context,gid,drawer[0],word,token)
-    if not ok:
-        await context.bot.send_message(chat,"⚠️ El dibujante debe abrir PiBot por privado primero. La ronda no puede mostrarle la palabra.",message_thread_id=thread)
-        return False
-    rows=[[InlineKeyboardButton('🎨 Tomar siguiente turno',callback_data=f'draw:take:{gid}')]]
+    rows=[]
     if WEBAPP_BASE_URL:
-        rows.insert(0,[InlineKeyboardButton('👀 Ver lienzo en vivo',url=f"{WEBAPP_BASE_URL}/draw?game={gid}&token={viewer_token}&view=1")])
+        # Ruta nueva para evitar caché del lienzo anterior. El botón de edición contiene el token del dibujante.
+        rows.append([InlineKeyboardButton('🖌️ LIENZO DEL DIBUJANTE',url=f"{WEBAPP_BASE_URL}/pibot-canvas-v3?game={gid}&token={token}&mode=draw")])
+        rows.append([InlineKeyboardButton('👀 Ver lienzo en vivo',url=f"{WEBAPP_BASE_URL}/pibot-canvas-v3?game={gid}&token={viewer_token}&mode=view")])
+    rows.append([InlineKeyboardButton('🎨 Tomar siguiente turno',callback_data=f'draw:take:{gid}')])
     viewer_kb=InlineKeyboardMarkup(rows)
-    await context.bot.send_message(chat,f"🎨 RONDA {nr}\n🖌️ Dibuja: {drawer[1]}\n⏱️ 2:00\n\nEscriban sus respuestas aquí. ¡Primer acierto gana 1,500 PiPesos!",message_thread_id=thread,reply_markup=viewer_kb)
+    await context.bot.send_message(chat,f"🎨 RONDA {nr}\n🖌️ Dibuja: {drawer[1]}\n⏱️ 2:00\n\n🖌️ {drawer[1]}: abre LIENZO DEL DIBUJANTE. La palabra y todas las herramientas están dentro.\n👀 Los demás pueden usar Ver lienzo en vivo.\n\nEscriban sus respuestas aquí. ¡Primer acierto gana 1,500 PiPesos!",message_thread_id=thread,reply_markup=viewer_kb)
     context.job_queue.run_once(_round_timeout,ROUND_SECONDS+1,data={"gid":gid,"round":nr},name=f"draw:{gid}:{nr}")
     return True
 
@@ -160,7 +155,7 @@ async def drawing_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             if not _reserve(uid,CHANGE_COST,c): conn.rollback(); await q.answer("No tienes 100 PiPesos.",show_alert=True); return
             nw=_new_word(word); token=secrets.token_urlsafe(24); c.execute("UPDATE drawing_games_tb SET word=%s,drawer_token=%s,updated_at=now() WHERE game_id=%s",(nw,token,gid)); conn.commit()
             with _stroke_lock:_strokes[gid]=[]
-            await _send_drawer(context,gid,uid,nw,token); await q.answer("Palabra cambiada. -100 PiPesos",show_alert=True); return
+            await q.answer("Palabra cambiada. -100 PiPesos",show_alert=True); return
     except Exception:
         conn.rollback(); await q.answer("Error de base de datos.",show_alert=True); return
     finally:_put_connection(conn)

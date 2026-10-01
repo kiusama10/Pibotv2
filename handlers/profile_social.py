@@ -478,32 +478,32 @@ def _draw_frame_details(d, code, c1, c2, W, H):
         d.ellipse((820,105,940,225),fill=(245,220,130)); d.ellipse((855,90,955,205),fill=(7,7,20))
         for bx,by in ((145,110),(210,145),(760,170)):
             d.arc((bx-28,by-10,bx,by+20),180,350,fill=c2,width=4); d.arc((bx,by-10,bx+28,by+20),190,360,fill=c2,width=4)
-        for cx,cy in ((95,1110),(885,1110)):
+        for cx,cy in ((95,H-150),(885,H-150)):
             d.ellipse((cx,cy,cx+95,cy+72),fill=(235,92,20),outline=(255,165,30),width=4); d.rectangle((cx+42,cy-14,cx+53,cy+3),fill=(90,150,60))
             d.polygon([(cx+23,cy+32),(cx+37,cy+22),(cx+42,cy+38)],fill=(20,15,20)); d.polygon([(cx+58,cy+38),(cx+64,cy+22),(cx+78,cy+32)],fill=(20,15,20))
         for base in (105,975):
             for r in range(24,110,22): d.arc((base-r,70-r,base+r,70+r),0,90,fill=(150,150,180),width=2)
     elif code in {"marco_vampiro","marco_angel_caido","marco_void"}:
-        for yy in range(150,1180,105): d.polygon([(65,yy),(95,yy-24),(125,yy),(95,yy+24)],outline=c1)
+        for yy in range(150,H-140,105): d.polygon([(65,yy),(95,yy-24),(125,yy),(95,yy+24)],outline=c1)
         d.polygon([(540,85),(575,130),(540,118),(505,130)],fill=c2)
     elif code in {"marco_celestial","marco_aurora"}:
         for x in range(120,980,110): d.ellipse((x,105,x+8,113),fill=(245,245,255))
-        d.arc((120,900,450,1240),190,330,fill=c1,width=9); d.arc((630,900,960,1240),210,350,fill=c2,width=9)
+        d.arc((120,H-350,450,H-10),190,330,fill=c1,width=9); d.arc((630,H-350,960,H-10),210,350,fill=c2,width=9)
     elif code in {"marco_infernal","marco_fenix"}:
         for x in range(90,1000,75):
-            d.polygon([(x,1240),(x+28,1160),(x+50,1240)],fill=c1 if (x//75)%2 else c2)
+            d.polygon([(x,H-50),(x+28,H-130),(x+50,H-50)],fill=c1 if (x//75)%2 else c2)
     elif code in {"marco_kitsune","marco_sakura"}:
-        for x,y in ((130,130),(870,160),(160,1110),(850,1080),(700,115)):
+        for x,y in ((130,130),(870,160),(160,H-150),(850,H-180),(700,115)):
             d.ellipse((x,y,x+18,y+11),fill=c2); d.ellipse((x+14,y+5,x+30,y+16),fill=c1)
     elif code in {"marco_cyberpunk","marco_anime_neon"}:
-        for yy in range(160,1180,90): d.line((65,yy,115,yy),fill=c1,width=3); d.line((965,yy+25,1015,yy+25),fill=c2,width=3)
+        for yy in range(160,H-140,90): d.line((65,yy,115,yy),fill=c1,width=3); d.line((965,yy+25,1015,yy+25),fill=c2,width=3)
         d.text((760,92),"// ONLINE",font=_font(22,True),fill=c1)
     elif code in {"marco_dragon","marco_rey_tortugas","marco_realeza"}:
         d.polygon([(470,105),(505,70),(540,110),(575,70),(610,105),(600,135),(480,135)],fill=c1,outline=c2)
         for yy in (260,560,860): d.polygon([(62,yy),(95,yy-35),(128,yy),(95,yy+35)],outline=c2)
     elif code=="marco_mictlan":
         for x in (110,880):
-            d.ellipse((x,1080,x+90,1170),outline=c1,width=5); d.ellipse((x+20,1105,x+35,1120),fill=c2); d.ellipse((x+55,1105,x+70,1120),fill=c2)
+            d.ellipse((x,H-170,x+90,H-80),outline=c1,width=5); d.ellipse((x+20,H-145,x+35,H-130),fill=c2); d.ellipse((x+55,H-145,x+70,H-130),fill=c2)
 
 def _gift_icon(d, x, y, name, c1, c2):
     n=str(name).lower(); box=(x,y,x+64,y+64)
@@ -547,8 +547,14 @@ async def _build_profile_card(uid: int, viewer: int, context: ContextTypes.DEFAU
     gifts=_gift_summary(uid,viewer); counts=_counts(uid)
     theme=FRAME_THEMES.get(frame_code, ((180,80,255),(255,50,190), current_season().replace('_',' ').upper()))
     c1,c2,theme_name=theme
-    W,H=1080,1350
+    # Tarjeta más compacta: menos espacio muerto y más presencia visual del marco.
+    W,H=1080,1120
     im=Image.new('RGB',(W,H),(7,7,20)); d=ImageDraw.Draw(im)
+    # Fondo temático sutil para que el marco no parezca solo líneas sobre negro.
+    for yy in range(H):
+        t=yy/max(1,H-1)
+        base=(int(7+(c1[0]*0.055)*(1-t)), int(7+(c1[1]*0.045)*(1-t)), int(20+(c2[2]*0.05)*t))
+        d.line((0,yy,W,yy),fill=base)
     # Glow + layered geometric frame inspired by the equipped cosmetic.
     glow=Image.new('RGBA',(W,H),(0,0,0,0)); gd=ImageDraw.Draw(glow)
     for i in range(7):
@@ -560,6 +566,15 @@ async def _build_profile_card(uid: int, viewer: int, context: ContextTypes.DEFAU
         inset=48+i*8; col=c1 if i%2==0 else c2
         d.rounded_rectangle((inset,inset,W-inset,H-inset),radius=34,outline=col,width=3)
     _draw_frame_details(d,frame_code,c1,c2,W,H)
+    # Marca de agua temática de bajo contraste.
+    if frame_code == "marco_halloween":
+        d.ellipse((720,560,1010,850),outline=(70,35,95),width=4)
+        for bx,by in ((760,650),(835,590),(930,700)):
+            d.arc((bx-35,by-15,bx,by+20),180,355,fill=(70,35,95),width=3); d.arc((bx,by-15,bx+35,by+20),185,360,fill=(70,35,95),width=3)
+    elif frame_code in {"marco_vampiro","marco_angel_caido"}:
+        d.polygon([(810,560),(900,690),(850,660),(910,810),(760,675),(815,700)],outline=(65,25,65))
+    elif frame_code in {"marco_celestial","marco_aurora"}:
+        for rr in (70,115,160): d.arc((760-rr,690-rr,760+rr,690+rr),200,340,fill=(45,70,100),width=3)
     title_font=_font(46,True); small=_font(26); body=_font(30); body_b=_font(31,True)
     d.text((90,82),"P I B O T   //   "+theme_name,font=small,fill=c2)
     photo=await _profile_photo_bytes(uid,context,custom_photo_file_id)
@@ -606,10 +621,14 @@ async def _build_profile_card(uid: int, viewer: int, context: ContextTypes.DEFAU
     if bio: extras.append(("SOBRE MÍ",bio))
     if gustos: extras.append(("GUSTOS",gustos))
     for label,val in extras:
-        if y>1190: break
+        if y>H-175: break
         y+=18; d.text((100,y),label,font=small,fill=c1); y+=34
         for line in _wrap(d,val,small,850)[:2]: d.text((115,y),line,font=small,fill=(225,225,238)); y+=32
-    d.text((100,1270),"PiBot Social Profile",font=small,fill=(120,125,150)); d.text((790,1270),theme_name,font=small,fill=c1)
+    # Remate inferior integrado al marco.
+    d.line((90,H-74,990,H-74),fill=c2,width=2)
+    d.text((100,H-58),"PiBot • Social Profile",font=_font(20,True),fill=(150,155,180))
+    tw=d.textbbox((0,0),theme_name,font=_font(20,True))[2]
+    d.text((970-tw,H-58),theme_name,font=_font(20,True),fill=c1)
     out=BytesIO(); im.save(out,format='JPEG',quality=80,optimize=False,subsampling=2); out.seek(0); out.name='perfil.jpg'
     return out, _render(uid,viewer)
 
