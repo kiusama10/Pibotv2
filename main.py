@@ -34,7 +34,7 @@ from telegram.ext import (
 
 # Local imports
 from src.config import BOT_TOKEN, DOMS, obtener_temas_por_comunidad, PUNISHMENT_FILE, BOTMASTER_IDS
-from src.database.database import create_database, create_tables, restart_all_combats, seed_items, init_botmaster_roles, get_campo_usuario, get_usuario_resumen, insert_user, normalizar_nombre, update_perfil, is_botmaster, _get_connection, _put_connection
+from src.database.database import create_database, create_tables, restart_all_combats, seed_items, init_botmaster_roles, get_campo_usuario, get_usuario_resumen, insert_user, normalizar_nombre, update_perfil, is_botmaster
 
 # Handler imports - General commands
 from handlers.general import dar, ver, regalar, numero_azar, quitar, userid
@@ -675,42 +675,8 @@ def main() -> None:
     print("🤖 PiBot iniciado e listo para recibir mensajes...")
     import threading
     threading.Thread(target=run_server, daemon=True).start()
-
-    # Single-poller guard shared through PostgreSQL.
-    # Prevents two Render processes/deploys of PiBot from calling getUpdates at once.
-    # The advisory lock is session-scoped and changes no tables, balances or game data.
-    _poll_lock_conn = None
-    _POLL_LOCK_ID = 5049424  # stable PiBot-only advisory lock key
-    try:
-        import time
-        while True:
-            candidate = _get_connection()
-            try:
-                cur = candidate.cursor()
-                cur.execute("SELECT pg_try_advisory_lock(%s)", (_POLL_LOCK_ID,))
-                locked = bool(cur.fetchone()[0])
-                cur.close()
-            except Exception:
-                _put_connection(candidate)
-                raise
-            if locked:
-                _poll_lock_conn = candidate
-                print("[INIT] Polling lock acquired. This is the active Telegram instance.")
-                break
-            _put_connection(candidate)
-            print("[INIT] Another PiBot instance owns polling; waiting 10s...")
-            time.sleep(10)
-
-        app.run_polling(drop_pending_updates=True)
-    finally:
-        if _poll_lock_conn is not None:
-            try:
-                cur = _poll_lock_conn.cursor()
-                cur.execute("SELECT pg_advisory_unlock(%s)", (_POLL_LOCK_ID,))
-                cur.close()
-            except Exception:
-                pass
-            _put_connection(_poll_lock_conn)
+    
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
