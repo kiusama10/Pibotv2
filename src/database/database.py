@@ -975,11 +975,11 @@ def obtener_apuestas_reservadas() -> List[Dict[str, Any]]:
         cursor.execute("""
             SELECT a.apuesta_id, a.chat_id, a.thread_id, a.apostador_id, a.rival_id,
                    a.cantidad, a.dado_apostador, a.dado_rival, a.fecha_creacion,
-                   COALESCE(NULLIF(u1.username,''), u1.nombre, a.apostador_id::text),
-                   COALESCE(NULLIF(u2.username,''), u2.nombre, a.rival_id::text)
+                   COALESCE(NULLIF(p1.username,''), p1.nombre, a.apostador_id::text),
+                   COALESCE(NULLIF(p2.username,''), p2.nombre, a.rival_id::text)
             FROM apuestas_casino_tb a
-            LEFT JOIN usuarios_tb u1 ON u1.id_user=a.apostador_id
-            LEFT JOIN usuarios_tb u2 ON u2.id_user=a.rival_id
+            LEFT JOIN perfiles_tb p1 ON p1.id_user=a.apostador_id
+            LEFT JOIN perfiles_tb p2 ON p2.id_user=a.rival_id
             WHERE a.estado='reservada'
             ORDER BY a.fecha_creacion
         """)
