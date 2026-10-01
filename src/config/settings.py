@@ -12,6 +12,7 @@ All sensitive data should be loaded from environment variables.
 """
 
 import os
+import re
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -40,7 +41,7 @@ BOT_USERNAME = os.getenv("BOT_USERNAME", "")
 
 # BotMaster IDs (comma-separated) — these users get role=3 at startup
 _botmaster_raw = os.getenv("BOTMASTER_IDS", "")
-BOTMASTER_IDS = [int(x.strip()) for x in _botmaster_raw.split(",") if x.strip()]
+BOTMASTER_IDS = [int(x) for x in re.findall(r"\d+", _botmaster_raw)]
 
 # Community configurations with their topic IDs
 COMUNIDADES = [
