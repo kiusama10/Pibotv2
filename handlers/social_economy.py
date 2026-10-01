@@ -246,6 +246,49 @@ async def misregalos(update:Update,context:ContextTypes.DEFAULT_TYPE):
     kb.append([InlineKeyboardButton("🎁 Catálogo",callback_data="soc:gift_shop")])
     await update.message.reply_text(f"🎁✨ TU COLECCIÓN DE REGALOS ✨🎁\n\nTienes {len(rows)} pieza(s). Toca una para verla.",reply_markup=InlineKeyboardMarkup(kb))
 
+async def rankingregalos(update:Update, context:ContextTypes.DEFAULT_TYPE):
+    """Ranking de regalos recibidos. Compatibilidad con /rankingregalos del main existente."""
+    conn = _get_connection()
+    try:
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT propietario_id, COUNT(*) AS total
+            FROM social_assets_tb
+            WHERE asset_type='regalo'
+            GROUP BY propietario_id
+            ORDER BY total DESC, propietario_id ASC
+            LIMIT 10
+            """
+        )
+        rows = c.fetchall()
+    except Exception as e:
+        print('[SOCIAL] ranking regalos', e)
+        rows = []
+    finally:
+        _put_connection(conn)
+
+    if not rows:
+        return await update.effective_message.reply_text('🎁 Aún no hay regalos para mostrar en el ranking.')
+
+    lines = ['🏆🎁 RANKING DE REGALOS 🎁🏆', '']
+    medals = ['🥇', '🥈', '🥉']
+    for i, (uid, total) in enumerate(rows, 1):
+        name = None
+        try:
+            member = await context.bot.get_chat_member(update.effective_chat.id, int(uid))
+            user = member.user
+            name = user.full_name or (('@' + user.username) if user.username else None)
+        except Exception:
+            pass
+        if not name:
+            name = f'Usuario {uid}'
+        prefix = medals[i-1] if i <= 3 else f'{i}.'
+        lines.append(f'{prefix} {name} — {int(total):,} regalo' + ('' if int(total) == 1 else 's'))
+
+    await update.effective_message.reply_text('\n'.join(lines))
+
+
 async def mistitulos(update:Update,context:ContextTypes.DEFAULT_TYPE):
     rows=list_assets(update.effective_user.id,'titulo')
     if not rows:return await update.message.reply_text('🏷️ Aún no tienes títulos.',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍️ Ir a la tienda",callback_data="soc:title_shop")]]))
