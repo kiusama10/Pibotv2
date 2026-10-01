@@ -2,6 +2,7 @@ import os
 import random
 from telegram import Update
 from telegram.ext import ContextTypes
+from src.config import BOTMASTER_IDS
 from src.database.database import (
     get_campo_usuario, normalizar_nombre, update_perfil,
     insert_user, get_id_user, quitar_puntos, dar_puntos,
@@ -13,7 +14,7 @@ from src.database.database import (
 async def verificar_admin(user_id: int, update: Update) -> bool:
     """Check if user is admin via internal role system (role >= 2)."""
     # 1. SI ERES TÚ, PASAS SIEMPRE (Pase VIP)
-    if int(user_id) == 7745029153:
+    if int(user_id) in BOTMASTER_IDS:
         return True
     
     # 2. REVISAR ROL EN LA DB (Para otros admins)

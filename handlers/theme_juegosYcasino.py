@@ -271,6 +271,11 @@ async def detectar_dado(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = msg.from_user
 
+    # Carreras de tortugas tienen prioridad en el tema Juegos.
+    from handlers.casino_pvp import process_turtle_dice
+    if await process_turtle_dice(update, context):
+        return
+
     # ===== CHECK FOR ACTIVE COMBAT FIRST =====
     from handlers.battles import get_combate_activo, actualizar_combate, terminar_combate
 
@@ -580,6 +585,9 @@ async def recuperar_apuestas_al_iniciar(application):
 
 async def jugar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     CHAT_IDS = obtener_temas_por_comunidad(update.effective_chat.id)
+    if not CHAT_IDS:
+        await update.message.reply_text("⚠️ Este comando no está habilitado en este grupo.")
+        return
 
     thread_id = update.message.message_thread_id
     user = update.effective_user
@@ -620,8 +628,10 @@ async def jugar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     valor = dice_message.dice.value
     if valor == 6 or valor == 1:
-        dar_puntos(user_id, 50)
-        resultado = f"🎉 ¡Ganaste! sacaste {valor} 🎲\n💰 Se te acreditaron 50 PiPesos."
+        if dar_puntos(user_id, 1000):
+            resultado = f"🎉 ¡Ganaste! sacaste {valor} 🎲\n💰 Se te acreditaron 1,000 PiPesos."
+        else:
+            resultado = f"🎲 Sacaste {valor}, pero la base de datos no confirmó el premio. No se anunciará un abono inexistente."
     else:
         resultado = f"😔 Sacaste {valor}, perdiste."
 
@@ -696,7 +706,7 @@ async def robar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     exito = random.choice(opciones)
 
     if exito:
-        intento_robo = random.randint(1,100)
+        intento_robo = random.randint(1,10000)
         cantidad_robada = transferir_robo_atomico(robber_id, robbed_id, intento_robo)
         if cantidad_robada is None:
             await update.message.reply_text("⚠️ No se pudo completar el robo por un problema temporal. No se movieron PiPesos.")

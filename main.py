@@ -11,23 +11,13 @@ This module handles:
 - Community blocking/filtering
 """
 import socket
-import threading
-import http.server
-import socketserver
 
 orig_getaddrinfo = socket.getaddrinfo
-
 def getaddrinfo_ipv4(*args, **kwargs):
     return [x for x in orig_getaddrinfo(*args, **kwargs) if x[0] == socket.AF_INET]
-def run_server():
-    PORT = 8080
-    Handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", PORT), Handler) as httpd:
-        httpd.serve_forever()
-        
-
-
 socket.getaddrinfo = getaddrinfo_ipv4
+
+from drawing_web import run_server
 
 import json
 import os
@@ -48,7 +38,7 @@ from src.database.database import create_database, create_tables, restart_all_co
 
 # Handler imports - General commands
 from handlers.general import dar, ver, regalar, numero_azar, quitar, userid
-from handlers.starting_menu import start, menu_callback
+from handlers.starting_menu import start, comandos, menu_callback
 from handlers.tienda import tienda, tienda_callback
 from handlers.inventario import inventario, inventario_callback, usar
 from handlers.battles import lucha, ataque, aceptar_lucha
@@ -59,6 +49,19 @@ from handlers.theme_juegosYcasino import (
     apostar, aceptar, detectar_dado, cancelar_apuesta, jugar, robar, reiniciar_apuesta_callback, recuperar_apuestas_al_iniciar
 )
 from handlers.rewards import manejar_imagenes
+from handlers.social_economy import titulos, comprartitulo, regalos, regalo, misregalos, mistitulos, mercado, vender, comprarmercado, empenar, desempenar
+from handlers.profile_social import perfil, editarperfil, privacidadperfil, equipartitulo, profile_editor_callback
+from handlers.profile_cosmetics import cosmeticos, comprarcosmetico, miscosmeticos, equiparmarco, equiparinsignia, cosmetics_callback
+from handlers.global_events import seasonal_event_tick
+from handlers.bankiu_rankings import bankiu, pagarbanco, ranking, ranking_pipesos, bankiu_callback, track_activity, activity_flush_job, ranking_maintenance_job, bankiu_collect_overdue_job
+from handlers.bdsm_quiz import quiz_tick, quiz_callback, quiz_manual, quiz_now, ensure_quiz_tables
+from handlers.casino_pvp import tortugas, blackjack, casino_pvp_callback, ensure_casino_pvp_tables
+from handlers.auctions import subasta, puja, cancelarsubasta, auction_maintenance_job
+from handlers.assassin_game import asesino, assassin_callback
+from handlers.help_center import pipesos, instrucciones, canales, help_callback, channel_callback
+from handlers.drawing_game import dibujar, drawing_callback, drawing_guess, ensure_drawing_tables, drawing_maintenance_job
+from handlers.presentation_watchdog import silent_new_member_watch, presentation_watchdog_job, ensure_presentation_tables
+from handlers.music_fee import paid_music_post, ensure_music_tables
 
 # Handler imports - User onboarding
 from handlers.welcoming import nuevo_usuario, mensaje_de_presentaciones
@@ -204,7 +207,7 @@ async def castigar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     
      # Check if user is a DOM or the BotMaster
-    if actor_id != 7745029153 and actor_id not in DOMS:
+    if actor_id not in BOTMASTER_IDS and actor_id not in DOMS:
         
         await update.message.reply_text(
             "❌ No tienes permisos para usar este comando."
@@ -226,7 +229,7 @@ async def castigar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     target_username = usuario_objetivo.username or usuario_objetivo.first_name
 
     # Verify ownership relationship (DOM can only punish their submissives)
-    if actor_id != 7745029153 and target_id not in DOMS.get(actor_id, []):
+    if actor_id not in BOTMASTER_IDS and target_id not in DOMS.get(actor_id, []):
         await update.message.reply_text(
             f"❌ No puedes castigar a {target_username}. "
             "No tienes control sobre él/ella."
@@ -311,7 +314,7 @@ async def perdonar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     # Check permission for BotMaster or DOM
-    if actor_id != 7745029153 and actor_id not in DOMS:
+    if actor_id not in BOTMASTER_IDS and actor_id not in DOMS:
         
         await update.message.reply_text(
             "❌ No tienes permiso para usar este comando."
@@ -333,7 +336,7 @@ async def perdonar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Verify ownership
     # El BotMaster puede perdonar a cualquiera
-    if actor_id != 7745029153 and target_id not in DOMS.get(actor_id, []):
+    if actor_id not in BOTMASTER_IDS and target_id not in DOMS.get(actor_id, []):
         
         await update.message.reply_text(
             f"❌ No puedes perdonar a @{target_username}."
@@ -410,20 +413,44 @@ def main() -> None:
     
     print("[INIT] Initializing BotMaster roles...")
     init_botmaster_roles(BOTMASTER_IDS)
+    ensure_quiz_tables()
+    ensure_casino_pvp_tables()
+    ensure_drawing_tables()
+    ensure_presentation_tables()
+    ensure_music_tables()
     
     print("[INIT] Restarting active combats...")
     restart_all_combats()
     
     app = Application.builder().token(BOT_TOKEN).post_init(recuperar_apuestas_al_iniciar).build()
+    # Lightweight seasonal event check. DB idempotency prevents duplicate Christmas grants.
+    if app.job_queue:
+        app.job_queue.run_repeating(seasonal_event_tick, interval=3600, first=5, name="seasonal_events")
+        app.job_queue.run_repeating(activity_flush_job, interval=60, first=60, name="participation_flush")
+        app.job_queue.run_repeating(ranking_maintenance_job, interval=900, first=20, name="ranking_maintenance")
+        app.job_queue.run_repeating(bankiu_collect_overdue_job, interval=3600, first=30, name="bankiu_overdue")
+        app.job_queue.run_repeating(auction_maintenance_job, interval=60, first=15, name="auction_maintenance")
+        app.job_queue.run_repeating(presentation_watchdog_job, interval=60, first=10, name="presentation_watchdog")
+        app.job_queue.run_repeating(drawing_maintenance_job, interval=30, first=12, name="drawing_maintenance")
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        _qnow=datetime.now(ZoneInfo("America/Mexico_City")); _qnext=(_qnow+timedelta(hours=1)).replace(minute=0,second=0,microsecond=0)
+        app.job_queue.run_repeating(quiz_tick, interval=3600, first=max(1,(_qnext-_qnow).total_seconds()), name="bdsm_quiz_hourly")
+
+    # Group -4: capture genuinely new members BEFORE auto-registration. Sends nothing.
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, silent_new_member_watch), group=-4)
 
     # Group -2: Auto-register users on any message (silent, never blocks)
     app.add_handler(MessageHandler(filters.ALL, auto_registrar), group=-2)
+    # Participation is throttled to one point/minute/user and flushed in batches.
+    app.add_handler(MessageHandler(filters.ALL, track_activity), group=-3)
 
     # Group -1: Community blocking filter (runs first, can stop others)
     app.add_handler(MessageHandler(filters.ALL, bloquear_comunidad), group=-1)
 
     # Group 0: Core commands (start, admin commands)
     app.add_handler(CommandHandler("start", start), group=0)
+    app.add_handler(CommandHandler("comandos", comandos), group=0)
     app.add_handler(CommandHandler("castigar", castigar), group=0)
     app.add_handler(CommandHandler("perdonar", perdonar), group=0)
     
@@ -451,12 +478,54 @@ def main() -> None:
     app.add_handler(CommandHandler("MiRol", ver_rol), group=2)
     app.add_handler(CommandHandler("Suerte", suerte), group=2)
     app.add_handler(CommandHandler("userid", userid), group=2)
+    app.add_handler(CommandHandler("bankiu", bankiu), group=2)
+    app.add_handler(CommandHandler("pagarbanco", pagarbanco), group=2)
+    app.add_handler(CommandHandler("ranking", ranking), group=2)
+    app.add_handler(CommandHandler("ricospipesos", ranking_pipesos), group=2)
+    app.add_handler(CommandHandler("quiz", quiz_manual), group=2)
+    app.add_handler(CommandHandler("quizahora", quiz_now), group=2)
+    app.add_handler(CommandHandler("tortugas", tortugas), group=2)
+    app.add_handler(CommandHandler("blackjack", blackjack), group=2)
+    app.add_handler(CommandHandler("subasta", subasta), group=2)
+    app.add_handler(CommandHandler("puja", puja), group=2)
+    app.add_handler(CommandHandler("cancelarsubasta", cancelarsubasta), group=2)
+    app.add_handler(CommandHandler("asesino", asesino), group=2)
+    app.add_handler(CommandHandler("pipesos", pipesos), group=2)
+    app.add_handler(CommandHandler("instrucciones", instrucciones), group=2)
+    app.add_handler(CommandHandler("canales", canales), group=2)
+    app.add_handler(CommandHandler("dibujar", dibujar), group=2)
+    app.add_handler(CommandHandler("titulos", titulos), group=2)
+    app.add_handler(CommandHandler("comprartitulo", comprartitulo), group=2)
+    app.add_handler(CommandHandler("regalos", regalos), group=2)
+    app.add_handler(CommandHandler("regalo", regalo), group=2)
+    app.add_handler(CommandHandler("misregalos", misregalos), group=2)
+    app.add_handler(CommandHandler("mistitulos", mistitulos), group=2)
+    app.add_handler(CommandHandler("mercado", mercado), group=2)
+    app.add_handler(CommandHandler("vender", vender), group=2)
+    app.add_handler(CommandHandler("comprarmercado", comprarmercado), group=2)
+    app.add_handler(CommandHandler("empenar", empenar), group=2)
+    app.add_handler(CommandHandler("desempenar", desempenar), group=2)
+    app.add_handler(CommandHandler("perfil", perfil), group=2)
+    app.add_handler(CommandHandler("editarperfil", editarperfil), group=2)
+    app.add_handler(CommandHandler("privacidadperfil", privacidadperfil), group=2)
+    app.add_handler(CommandHandler("equipartitulo", equipartitulo), group=2)
+    app.add_handler(CommandHandler("cosmeticos", cosmeticos), group=2)
+    app.add_handler(CommandHandler("comprarcosmetico", comprarcosmetico), group=2)
+    app.add_handler(CommandHandler("miscosmeticos", miscosmeticos), group=2)
+    app.add_handler(CommandHandler("equiparmarco", equiparmarco), group=2)
+    app.add_handler(CommandHandler("equiparinsignia", equiparinsignia), group=2)
 
     # Group 2.5: Battle/Combat system (refactored)
     app.add_handler(CommandHandler("lucha", lucha), group=2)
     app.add_handler(CommandHandler("aceptarlucha", aceptar_lucha), group=2)
     # Dice handler for combat is in group=1 with detectar_dado
     app.add_handler(CommandHandler("ataque", ataque), group=2)  # Backward compatibility
+
+    # Guess detector: only reacts when an active drawing round exists in this exact chat/topic.
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, drawing_guess), group=3)
+
+    # Paid music posts. Disabled safely until MUSIC_THREAD_ID is configured.
+    app.add_handler(MessageHandler((filters.AUDIO | filters.VIDEO | filters.TEXT) & ~filters.COMMAND, paid_music_post), group=2)
 
     # Group 3: Reward handler (automatic rewards for images)
     app.add_handler(
@@ -482,14 +551,14 @@ def main() -> None:
     app.add_handler(
         CallbackQueryHandler(
             menu_callback,
-            pattern="^(ver_comandos|abrir_tienda|ver_inventario|perfil)$"
+            pattern="^(ver_comandos|abrir_tienda|ver_inventario|perfil|instrucciones)$"
         ),
         group=5
     )
     app.add_handler(
         CallbackQueryHandler(
             inventario_callback,
-            pattern="^(inv_prev_|inv_next_|ver_item_)"
+            pattern="^(inv_prev_|inv_next_|ver_item_|inv_noop$)"
         ),
         group=5
     )
@@ -501,6 +570,24 @@ def main() -> None:
         group=5
     )
 
+    app.add_handler(
+        CallbackQueryHandler(profile_editor_callback, pattern="^profile_(help_|public$|private$)"),
+        group=5
+    )
+    app.add_handler(
+        CallbackQueryHandler(cosmetics_callback, pattern="^cos_"),
+        group=5
+    )
+    app.add_handler(
+        CallbackQueryHandler(bankiu_callback, pattern="^bank_"),
+        group=5
+    )
+    app.add_handler(CallbackQueryHandler(quiz_callback, pattern="^bq:"), group=5)
+    app.add_handler(CallbackQueryHandler(casino_pvp_callback, pattern="^(turtle|bj):"), group=5)
+    app.add_handler(CallbackQueryHandler(assassin_callback, pattern="^as:"), group=5)
+    app.add_handler(CallbackQueryHandler(drawing_callback, pattern="^draw:"), group=5)
+    app.add_handler(CallbackQueryHandler(help_callback, pattern="^ph:"), group=5)
+    app.add_handler(CallbackQueryHandler(channel_callback, pattern="^ch:"), group=5)
     app.add_handler(
         CallbackQueryHandler(reiniciar_apuesta_callback, pattern="^reiniciar_apuesta$"),
         group=5

@@ -15,7 +15,9 @@ from src.database.database import (
     normalizar_nombre,
     get_cantidad_item_inventario,
     update_cantidad,
-    delete_item_user
+    delete_item_user,
+    reservar_item_usuario,
+    devolver_item_usuario
     )
 from src.config import BOT_USERNAME
 from handlers.general import get_receptor
@@ -131,8 +133,8 @@ async def inventario(update: Update, context: ContextTypes.DEFAULT_TYPE, page: i
     botones = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔍 Ver", callback_data=f"ver_item_{id_item}")],
         [
-            InlineKeyboardButton("⬅️", callback_data=f"inv_prev_{page}") if page > 1 else InlineKeyboardButton("❌", callback_data="none"),
-            InlineKeyboardButton("➡️", callback_data=f"inv_next_{page}") if page < total_paginas else InlineKeyboardButton("❌", callback_data="none")
+            InlineKeyboardButton("⬅️", callback_data=f"inv_prev_{page}") if page > 1 else InlineKeyboardButton("·", callback_data="inv_noop"),
+            InlineKeyboardButton("➡️", callback_data=f"inv_next_{page}") if page < total_paginas else InlineKeyboardButton("·", callback_data="inv_noop")
         ],
         [InlineKeyboardButton("⬅️ Volver al menú", callback_data="volver_menu")]
     ])
@@ -170,6 +172,10 @@ async def inventario(update: Update, context: ContextTypes.DEFAULT_TYPE, page: i
 async def inventario_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
+
+    if data == "inv_noop":
+        await query.answer()
+        return
 
     if data.startswith("inv_prev_"):
         actual = int(data.replace("inv_prev_", ""))
@@ -262,14 +268,8 @@ async def usar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # -------------------------------------
-    # 6. Restar item
-    # -------------------------------------
-    nueva_cantidad = cantidad - 1
-    if nueva_cantidad > 0:
-        update_cantidad(user.id, item_id, nueva_cantidad)
-    else:
-        delete_item_user(user.id, item_id)
+    # El ítem se reservará atómicamente justo antes del envío.
+    # Así dos /usar concurrentes no pueden consumir la misma unidad.
 
     # -------------------------------------
     # 7. Obtener mensaje y gif random
@@ -312,18 +312,21 @@ async def usar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     # -------------------------------------
-    # 8. Enviar animación
+    # 8. Reservar una unidad y enviar animación
     # -------------------------------------
-    await context.bot.send_animation(
-        chat_id=update.effective_chat.id,
-        message_thread_id=update.message.message_thread_id,
-        animation=open(gif_path, "rb"),
-        caption=caption_final
-    )
+    if not reservar_item_usuario(user.id, item_id):
+        await update.message.reply_text("❌ Ese ítem ya no está disponible en tu inventario.")
+        return
 
-    # Consumir solo después de que el efecto se haya enviado correctamente.
-    nueva_cantidad = cantidad - 1
-    if nueva_cantidad > 0:
-        update_cantidad(user.id, item_id, nueva_cantidad)
-    else:
-        delete_item_user(user.id, item_id)
+    try:
+        with open(gif_path, "rb") as animation:
+            await context.bot.send_animation(
+                chat_id=update.effective_chat.id,
+                message_thread_id=update.message.message_thread_id,
+                animation=animation,
+                caption=caption_final
+            )
+    except Exception as exc:
+        devolver_item_usuario(user.id, item_id)
+        print(f"[INVENTARIO] No pude enviar el efecto; item devuelto: {exc}")
+        await update.message.reply_text("⚠️ No pude enviar el efecto. El ítem fue devuelto a tu inventario.")

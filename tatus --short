@@ -1,0 +1,23 @@
+warning: in the working copy of '.env.example', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'handlers/battles.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'handlers/general.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'handlers/inventario.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'handlers/rewards.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'handlers/starting_menu.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'handlers/theme_juegosYcasino.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'main.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'procfile', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/config/settings.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/database/database.py', LF will be replaced by CRLF the next time Git touches it
+ .env.example                    |  39 [32m++++[m[31m--[m
+ handlers/battles.py             |  14 [32m+[m[31m-[m
+ handlers/general.py             |   3 [32m+[m[31m-[m
+ handlers/inventario.py          |  51 [32m+++[m[31m----[m
+ handlers/rewards.py             |   4 [32m+[m
+ handlers/starting_menu.py       |  60 [32m++++++[m[31m---[m
+ handlers/theme_juegosYcasino.py |  16 [32m++[m[31m-[m
+ main.py                         | 125 [32m++++++++++++++[m[31m---[m
+ procfile                        |   2 [32m+[m[31m-[m
+ src/config/settings.py          |   8 [32m++[m
+ src/database/database.py        | 291 [32m++++++++++++++++++++++++++++++++++++++[m[31m--[m
+ 11 files changed, 519 insertions(+), 94 deletions(-)

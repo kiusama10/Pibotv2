@@ -52,6 +52,9 @@ COMUNIDADES = [
             "theme_questions": 902,
             "theme_escuela": 438,
             "theme_juegosYcasino": 528,
+            "theme_general": 435,
+            "theme_eventos": 335263,
+            "theme_presentaciones": None,
             "theme_relatos": 683,
             "theme_NSFW": 2,
             "theme_Exhibicionismo": 324185,
@@ -111,3 +114,8 @@ def obtener_temas_por_comunidad(community_id: int) -> dict:
         if comunidad["id_comunidad"] == community_id:
             return comunidad["temas"]
     return None
+
+# Optional paid music topic. Keep unset/empty until the real Telegram topic ID is known.
+_raw_music_thread = os.getenv("MUSIC_THREAD_ID", "").strip()
+MUSIC_THREAD_ID = int(_raw_music_thread) if _raw_music_thread.lstrip("-").isdigit() else None
+MUSIC_POST_PRICE = int(os.getenv("MUSIC_POST_PRICE", "500"))

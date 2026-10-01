@@ -330,14 +330,10 @@ async def lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     await context.bot.send_message(
-        chat_id=opponent_id,
+        chat_id=update.effective_chat.id,
+        message_thread_id=update.message.message_thread_id,
         text=challenge_msg,
         parse_mode='Markdown'
-    )
-    
-    await update.message.reply_text(
-        f"✅ Desafío enviado a @{opponent_username}\n"
-        f"Esperando su respuesta... ⏳"
     )
     
     # Setup 60-second timeout
@@ -383,6 +379,12 @@ async def aceptar_lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ No tienes ningún desafío pendiente\n"
             "Alguien debe retarte primero con /lucha"
         )
+        return
+
+    # A challenge can only be accepted in the exact chat/topic where it was created.
+    if (update.effective_chat.id != challenge.get("chat_id") or
+            update.message.message_thread_id != challenge.get("message_thread_id")):
+        await update.message.reply_text("⚠️ Debes aceptar la lucha en el mismo tema donde te retaron.")
         return
     
     # Check timeout (60 seconds)

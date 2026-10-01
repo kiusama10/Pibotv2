@@ -5,6 +5,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from src.config import obtener_temas_por_comunidad
 from src.database.database import normalizar_nombre,get_campo_usuario,insert_user,dar_puntos
+from handlers.presentation_watchdog import mark_presented
 
 contador_imagenes_multimedia = {}
 contador_imagenes_nsfw = {}
@@ -63,6 +64,9 @@ async def detectar_imagen_presentacion(update: Update, context: ContextTypes.DEF
     user = msg.from_user
     user_id = user.id
     username = user.username
+
+    # Existing presentation flow doubles as the persistent 30-minute watchdog proof.
+    mark_presented(update.effective_chat.id, user_id)
     nombre = normalizar_nombre(user.first_name,user.last_name)
 
     # comprobar campo personalizado 'primera_imagen_presentacion'

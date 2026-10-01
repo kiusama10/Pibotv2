@@ -85,10 +85,24 @@ def _get_connection():
 
 
 def _put_connection(conn):
-    """Return a healthy connection to the pool; discard broken connections."""
+    """Return a clean connection to the pool; discard broken connections.
+
+    psycopg2 starts a transaction even for plain SELECTs. Several read helpers in
+    PiBot intentionally do not call commit/rollback, so returning those sessions
+    as-is can leave an old transaction (and potentially row locks/snapshots) in
+    the pool. Always reset an open transaction before reusing the connection.
+    Explicit writes already commit before reaching this function.
+    """
     if conn is None or _connection_pool is None:
         return
     try:
+        if not conn.closed:
+            try:
+                if conn.status != psycopg2.extensions.STATUS_READY:
+                    conn.rollback()
+            except (psycopg2.InterfaceError, psycopg2.OperationalError):
+                _connection_pool.putconn(conn, close=True)
+                return
         _connection_pool.putconn(conn, close=bool(conn.closed))
     except (psycopg2.InterfaceError, psycopg2.OperationalError):
         try:
@@ -245,6 +259,213 @@ def create_tables():
         cursor.execute("ALTER TABLE apuestas_casino_tb ADD COLUMN IF NOT EXISTS dado_rival INTEGER")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_apuestas_casino_contexto ON apuestas_casino_tb(chat_id, thread_id, estado);")
 
+        # Social economy: collectible titles, gifts, market and BANKIU pawn collateral.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS social_assets_tb (
+                asset_id BIGSERIAL PRIMARY KEY,
+                asset_type TEXT NOT NULL CHECK (asset_type IN ('titulo','regalo')),
+                code TEXT NOT NULL,
+                nombre TEXT NOT NULL,
+                rareza TEXT NOT NULL DEFAULT 'comun',
+                serial_no INTEGER,
+                serial_total INTEGER,
+                valor_base INTEGER NOT NULL CHECK (valor_base >= 0),
+                propietario_id BIGINT REFERENCES usuarios_tb(id_user) ON DELETE SET NULL,
+                origen TEXT NOT NULL DEFAULT 'tienda',
+                transferible BOOLEAN NOT NULL DEFAULT TRUE,
+                estado TEXT NOT NULL DEFAULT 'disponible',
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(code, serial_no, origen)
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_social_assets_owner ON social_assets_tb(propietario_id, asset_type, estado);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_social_assets_code ON social_assets_tb(code, estado);")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS social_asset_history_tb (
+                id BIGSERIAL PRIMARY KEY, asset_id BIGINT NOT NULL REFERENCES social_assets_tb(asset_id) ON DELETE CASCADE,
+                de_user BIGINT, a_user BIGINT, accion TEXT NOT NULL, precio INTEGER, creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS social_market_tb (
+                listing_id BIGSERIAL PRIMARY KEY, asset_id BIGINT NOT NULL UNIQUE REFERENCES social_assets_tb(asset_id) ON DELETE CASCADE,
+                vendedor_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user), precio INTEGER NOT NULL CHECK(precio > 0),
+                estado TEXT NOT NULL DEFAULT 'activo', creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(), vendido_en TIMESTAMPTZ
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_social_market_active ON social_market_tb(estado, creado_en DESC);")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS bankiu_pawns_tb (
+                pawn_id BIGSERIAL PRIMARY KEY, asset_id BIGINT NOT NULL UNIQUE REFERENCES social_assets_tb(asset_id),
+                user_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user), principal INTEGER NOT NULL CHECK(principal > 0),
+                payoff INTEGER NOT NULL CHECK(payoff >= principal), estado TEXT NOT NULL DEFAULT 'activo',
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(), vence_en TIMESTAMPTZ NOT NULL
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_bankiu_pawns_user ON bankiu_pawns_tb(user_id, estado);")
+        # User auctions: one active auction in Eventos, with bids reserved atomically.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_auctions_tb (
+                auction_id BIGSERIAL PRIMARY KEY, chat_id BIGINT NOT NULL, thread_id BIGINT,
+                subastado_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user), subastado_nombre TEXT NOT NULL,
+                puja_actual INTEGER NOT NULL DEFAULT 0 CHECK (puja_actual >= 0), postor_id BIGINT REFERENCES usuarios_tb(id_user),
+                estado TEXT NOT NULL DEFAULT 'activa', creado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+                actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now(), termina_en TIMESTAMPTZ NOT NULL,
+                recordatorio_5m BOOLEAN NOT NULL DEFAULT FALSE, cerrada_en TIMESTAMPTZ, cerrada_por BIGINT,
+                pago_subastado INTEGER NOT NULL DEFAULT 0, comision_kiu INTEGER NOT NULL DEFAULT 0
+            );
+        """)
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_user_auction_active_location ON user_auctions_tb(chat_id, COALESCE(thread_id,0)) WHERE estado='activa';")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_auctions_due ON user_auctions_tb(estado, termina_en);")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS auction_bids_tb (
+                bid_id BIGSERIAL PRIMARY KEY, auction_id BIGINT NOT NULL REFERENCES user_auctions_tb(auction_id) ON DELETE CASCADE,
+                postor_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user), monto INTEGER NOT NULL CHECK (monto > 0),
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_auction_bids_auction ON auction_bids_tb(auction_id, creado_en DESC);")
+
+        # BANKIU loans. Existing balances are never recalculated; money moves only in explicit transactions.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS bankiu_loans_tb (
+                loan_id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user) ON DELETE CASCADE,
+                principal INTEGER NOT NULL CHECK(principal > 0),
+                interes_pct INTEGER NOT NULL CHECK(interes_pct >= 0),
+                saldo_pendiente INTEGER NOT NULL CHECK(saldo_pendiente >= 0),
+                estado TEXT NOT NULL DEFAULT 'activo' CHECK(estado IN ('activo','vencido','pagado','cancelado')),
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                vence_en TIMESTAMPTZ NOT NULL,
+                pagado_en TIMESTAMPTZ
+            );
+        """)
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_bankiu_one_open_loan ON bankiu_loans_tb(user_id) WHERE estado IN ('activo','vencido');")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_bankiu_due ON bankiu_loans_tb(estado,vence_en);")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS bankiu_payments_tb (
+                payment_id BIGSERIAL PRIMARY KEY,
+                loan_id BIGINT NOT NULL REFERENCES bankiu_loans_tb(loan_id) ON DELETE CASCADE,
+                user_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user) ON DELETE CASCADE,
+                monto INTEGER NOT NULL CHECK(monto > 0),
+                tipo TEXT NOT NULL,
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_bankiu_payments_user ON bankiu_payments_tb(user_id,creado_en DESC);")
+        # Quincenal participation ranking. Scores are batched in memory and flushed periodically.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS participation_cycles_tb (
+                cycle_id BIGSERIAL PRIMARY KEY,
+                starts_at TIMESTAMPTZ NOT NULL,
+                ends_at TIMESTAMPTZ NOT NULL,
+                estado TEXT NOT NULL DEFAULT 'activo' CHECK(estado IN ('activo','cerrado'))
+            );
+        """)
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_participation_active_cycle ON participation_cycles_tb(estado) WHERE estado='activo';")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS participation_scores_tb (
+                cycle_id BIGINT NOT NULL REFERENCES participation_cycles_tb(cycle_id) ON DELETE CASCADE,
+                user_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user) ON DELETE CASCADE,
+                puntos INTEGER NOT NULL DEFAULT 0 CHECK(puntos >= 0),
+                PRIMARY KEY(cycle_id,user_id)
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_participation_leaderboard ON participation_scores_tb(cycle_id,puntos DESC);")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS participation_awards_tb (
+                cycle_id BIGINT NOT NULL REFERENCES participation_cycles_tb(cycle_id) ON DELETE CASCADE,
+                position INTEGER NOT NULL CHECK(position BETWEEN 1 AND 3),
+                user_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user) ON DELETE CASCADE,
+                asset_id BIGINT NOT NULL REFERENCES social_assets_tb(asset_id),
+                puntos INTEGER NOT NULL,
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY(cycle_id,position), UNIQUE(asset_id)
+            );
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS title_rotations_tb (
+                rotation_key TEXT PRIMARY KEY, starts_at TIMESTAMPTZ NOT NULL, ends_at TIMESTAMPTZ NOT NULL,
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS title_rotation_stock_tb (
+                rotation_key TEXT NOT NULL REFERENCES title_rotations_tb(rotation_key) ON DELETE CASCADE,
+                code TEXT NOT NULL, nombre TEXT NOT NULL, rareza TEXT NOT NULL, precio INTEGER NOT NULL,
+                stock_total INTEGER, stock_vendido INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(rotation_key, code)
+            );
+        """)
+        cursor.execute("ALTER TABLE perfiles_tb ADD COLUMN IF NOT EXISTS titulo_equipado_id BIGINT;")
+        cursor.execute("ALTER TABLE perfiles_tb ADD COLUMN IF NOT EXISTS marco_equipado_id BIGINT;")
+        cursor.execute("ALTER TABLE perfiles_tb ADD COLUMN IF NOT EXISTS insignia_equipada_id BIGINT;")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS profile_cosmetics_tb (
+                cosmetic_id BIGSERIAL PRIMARY KEY,
+                code TEXT NOT NULL,
+                nombre TEXT NOT NULL,
+                cosmetic_type TEXT NOT NULL CHECK (cosmetic_type IN ('marco','insignia')),
+                rareza TEXT NOT NULL DEFAULT 'comun',
+                precio_compra INTEGER NOT NULL CHECK (precio_compra >= 0),
+                owner_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user) ON DELETE CASCADE,
+                season_key TEXT,
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(owner_id, code)
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_profile_cosmetics_owner ON profile_cosmetics_tb(owner_id, cosmetic_type);")
+        # Perfil social/BDSM: all fields are voluntary and edited only by the owner in private chat.
+        cursor.execute("ALTER TABLE perfiles_tb ADD COLUMN IF NOT EXISTS experiencia TEXT;")
+        cursor.execute("ALTER TABLE perfiles_tb ADD COLUMN IF NOT EXISTS gustos TEXT;")
+        cursor.execute("ALTER TABLE perfiles_tb ADD COLUMN IF NOT EXISTS relacion TEXT;")
+        cursor.execute("ALTER TABLE perfiles_tb ADD COLUMN IF NOT EXISTS bio TEXT;")
+        cursor.execute("ALTER TABLE perfiles_tb ADD COLUMN IF NOT EXISTS limites TEXT;")
+        cursor.execute("ALTER TABLE perfiles_tb ADD COLUMN IF NOT EXISTS perfil_publico BOOLEAN NOT NULL DEFAULT TRUE;")
+        cursor.execute("ALTER TABLE social_assets_tb ADD COLUMN IF NOT EXISTS regalo_anonimo BOOLEAN NOT NULL DEFAULT FALSE;")
+        cursor.execute("ALTER TABLE social_assets_tb ADD COLUMN IF NOT EXISTS regalo_privado BOOLEAN NOT NULL DEFAULT FALSE;")
+        cursor.execute("ALTER TABLE social_assets_tb ADD COLUMN IF NOT EXISTS regalado_por BIGINT;")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_social_assets_equipped ON social_assets_tb(asset_id, propietario_id, estado);")
+        # Social game: Asesino. State is durable and scoped to chat + topic.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS assassin_games_tb (
+                game_id BIGSERIAL PRIMARY KEY, chat_id BIGINT NOT NULL, thread_id BIGINT, host_id BIGINT NOT NULL,
+                estado TEXT NOT NULL DEFAULT 'lobby', asesino_id BIGINT, ronda INTEGER NOT NULL DEFAULT 1,
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(), iniciado_en TIMESTAMPTZ, cerrado_en TIMESTAMPTZ
+            );
+        """)
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_assassin_active_location ON assassin_games_tb(chat_id,COALESCE(thread_id,0)) WHERE estado IN ('lobby','jugando','votacion');")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS assassin_players_tb (
+                game_id BIGINT NOT NULL REFERENCES assassin_games_tb(game_id) ON DELETE CASCADE,
+                user_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user) ON DELETE CASCADE, nombre TEXT NOT NULL,
+                vivo BOOLEAN NOT NULL DEFAULT TRUE, joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(game_id,user_id)
+            );
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS assassin_votes_tb (
+                game_id BIGINT NOT NULL REFERENCES assassin_games_tb(game_id) ON DELETE CASCADE, ronda INTEGER NOT NULL,
+                voter_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user), target_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user),
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(game_id,ronda,voter_id)
+            );
+        """)
+        # Channel purchases are recorded atomically; delivery is provider/admin-configurable.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS channel_purchases_tb (
+                purchase_id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES usuarios_tb(id_user) ON DELETE CASCADE,
+                channel_code TEXT NOT NULL, channel_name TEXT NOT NULL, precio INTEGER NOT NULL CHECK(precio>0),
+                estado TEXT NOT NULL DEFAULT 'pagado', creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(), entregado_en TIMESTAMPTZ
+            );
+        """)
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_channel_purchase_paid ON channel_purchases_tb(user_id,channel_code) WHERE estado IN ('pagado','entregado');")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS global_events_tb (
+                event_key TEXT PRIMARY KEY, ejecutado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                afectados INTEGER NOT NULL DEFAULT 0, total_pipesos BIGINT NOT NULL DEFAULT 0
+            );
+        """)
+
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -261,42 +482,42 @@ def seed_items():
     items = [
         {
             "nombre": "Collar",
-            "precio": 100,
+            "precio": 2000,
             "imagen": "img_items/collar.png",
             "descripcion": "Un bonito collar para poner a alguien especial",
             "mensaje": "😈 {sender_username} le ha puesto un collar muy bonito a {receptor_username} 😍\n ¡Qué envidiaaa!",
         },
         {
             "nombre": "Latigo",
-            "precio": 150,
+            "precio": 2000,
             "imagen": "img_items/latigo.png",
             "descripcion": "Un látigo para los que se portan mal",
             "mensaje": "😱 {sender_username} ha azotado con un látigo a {receptor_username} \n ... Eso va a dejar marca 🫦",
         },
         {
             "nombre": "Fusta",
-            "precio": 120,
+            "precio": 2000,
             "imagen": "img_items/fusta.png",
             "descripcion": "Fusta de adiestramiento profesional",
             "mensaje": "🤩 {sender_username} está adiestrando a {receptor_username} con su fusta favorita 😈\n ¿Porqué parece que {receptor_username} lo disfruta?... 🫦",
         },
         {
             "nombre": "Galleta",
-            "precio": 50,
+            "precio": 2000,
             "imagen": "img_items/galleta.png",
             "descripcion": "Una galleta para premiar el buen comportamiento",
             "mensaje": "❤ {sender_username} le ha regalado a {receptor_username} una galleta 🍪\n Parece que se ha portado muy bien 🤤",
         },
         {
             "nombre": "Bola mordaza",
-            "precio": 200,
+            "precio": 2000,
             "imagen": "img_items/bola_mordaza.png",
             "descripcion": "Para cuando alguien habla demasiado",
             "mensaje": "🤏 {sender_username} Le ha puesto una bola mordaza a {receptor_username}\n Que bien te ves sin poder hablar 😖",
         },
         {
             "nombre": "Sorpresa",
-            "precio": 300,
+            "precio": 2000,
             "imagen": "img_items/sorpresa.jpg",
             "descripcion": "Un artículo misterioso... ¿te atreves?",
             "mensaje": "😈 {sender_username} ha decidido modelarle algo de su lencería sexy a {receptor_username}\n Le queda muy bien, aunque no esperaba que {sender_username} hiciera eso frente a todos 👁👄👁",
@@ -317,8 +538,8 @@ def seed_items():
             else:
                 # Update existing items to fix any corrupted text
                 cursor.execute(
-                    "UPDATE items_tb SET descripcion = %s, mensaje = %s WHERE nombre = %s",
-                    (item["descripcion"], item["mensaje"], item["nombre"]),
+                    "UPDATE items_tb SET precio = %s, descripcion = %s, mensaje = %s WHERE nombre = %s",
+                    (item["precio"], item["descripcion"], item["mensaje"], item["nombre"]),
                 )
         conn.commit()
     except Exception as e:
@@ -458,7 +679,8 @@ def update_perfil(id_user: int, **datos) -> bool:
     """Update user profile fields."""
     columnas_validas = {
         "nombre", "username", "rol", "orientacion_sexual",
-        "genero", "ubicacion", "edad",
+        "genero", "ubicacion", "edad", "experiencia", "gustos", "relacion",
+        "bio", "limites", "perfil_publico", "titulo_equipado_id",
     }
 
     if not datos:
@@ -1133,6 +1355,55 @@ def get_cantidad_item_inventario(id_user: int, id_item: int) -> int:
     except Exception as e:
         print(f"[ERROR DB] Error getting item quantity: {e}")
         return 0
+    finally:
+        _put_connection(conn)
+
+
+def reservar_item_usuario(id_user: int, id_item: int) -> bool:
+    """Atomically reserve one inventory item. Safe against double-click/concurrent /usar calls."""
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE items_usuarios_tb SET cantidad = cantidad - 1 "
+            "WHERE id_user = %s AND id_item = %s AND cantidad > 0 RETURNING cantidad",
+            (id_user, id_item),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            conn.rollback()
+            return False
+        if int(row[0]) == 0:
+            cursor.execute(
+                "DELETE FROM items_usuarios_tb WHERE id_user = %s AND id_item = %s AND cantidad = 0",
+                (id_user, id_item),
+            )
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR DB] Error reserving inventory item: {e}")
+        return False
+    finally:
+        _put_connection(conn)
+
+
+def devolver_item_usuario(id_user: int, id_item: int) -> bool:
+    """Return one previously reserved item, used when Telegram delivery fails."""
+    conn = _get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO items_usuarios_tb (id_user, id_item, cantidad) VALUES (%s, %s, 1) "
+            "ON CONFLICT (id_user, id_item) DO UPDATE SET cantidad = items_usuarios_tb.cantidad + 1",
+            (id_user, id_item),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR DB] Error returning inventory item: {e}")
+        return False
     finally:
         _put_connection(conn)
 

@@ -1,0 +1,136 @@
+"""Silent 30-minute presentation watchdog for the main community.
+
+Rose owns welcome messages. PiBot only records genuinely new users before the
+legacy auto-registration handler runs, marks a presentation when the existing
+presentation flow sees it, and removes overdue newcomers.
+"""
+from datetime import datetime, timezone
+from telegram import Update
+from telegram.ext import ContextTypes
+
+from src.database.database import _get_connection, _put_connection, get_usuario_resumen
+
+MAIN_CHAT_ID = -1003290179217
+TIMEOUT_MINUTES = 30
+
+
+def ensure_presentation_tables():
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS presentation_watchdog_tb (
+                    chat_id BIGINT NOT NULL,
+                    user_id BIGINT NOT NULL,
+                    joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    deadline_at TIMESTAMPTZ NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending','presented','removed','cancelled')),
+                    presented_at TIMESTAMPTZ,
+                    removed_at TIMESTAMPTZ,
+                    PRIMARY KEY (chat_id, user_id)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_presentation_pending_deadline ON presentation_watchdog_tb(status, deadline_at)")
+        conn.commit()
+    except Exception:
+        conn.rollback(); raise
+    finally:
+        _put_connection(conn)
+
+
+def _create_pending_if_new(chat_id: int, user_id: int) -> bool:
+    # IMPORTANT: this runs before auto_registrar. Existing DB users are grandfathered.
+    if get_usuario_resumen(user_id) is not None:
+        return False
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO presentation_watchdog_tb(chat_id,user_id,deadline_at,status)
+                VALUES (%s,%s,NOW() + (%s || ' minutes')::interval,'pending')
+                ON CONFLICT (chat_id,user_id) DO UPDATE SET
+                    joined_at=NOW(), deadline_at=EXCLUDED.deadline_at, status='pending',
+                    presented_at=NULL, removed_at=NULL
+            """, (chat_id, user_id, TIMEOUT_MINUTES))
+        conn.commit(); return True
+    except Exception:
+        conn.rollback(); return False
+    finally:
+        _put_connection(conn)
+
+
+def mark_presented(chat_id: int, user_id: int) -> bool:
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE presentation_watchdog_tb
+                   SET status='presented', presented_at=NOW()
+                 WHERE chat_id=%s AND user_id=%s AND status='pending'
+            """, (chat_id, user_id))
+            changed = cur.rowcount == 1
+        conn.commit(); return changed
+    except Exception:
+        conn.rollback(); return False
+    finally:
+        _put_connection(conn)
+
+
+async def silent_new_member_watch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    if not msg or update.effective_chat.id != MAIN_CHAT_ID:
+        return
+    for member in (msg.new_chat_members or []):
+        if not member.is_bot:
+            _create_pending_if_new(MAIN_CHAT_ID, member.id)
+    # Deliberately sends no welcome/message. Rose handles that.
+
+
+def _claim_overdue():
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT chat_id,user_id FROM presentation_watchdog_tb
+                 WHERE status='pending' AND deadline_at <= NOW()
+                 ORDER BY deadline_at
+                 FOR UPDATE SKIP LOCKED LIMIT 50
+            """)
+            rows = cur.fetchall()
+            # 'cancelled' is a short claim state; failures below restore pending.
+            for chat_id,user_id in rows:
+                cur.execute("UPDATE presentation_watchdog_tb SET status='cancelled' WHERE chat_id=%s AND user_id=%s AND status='pending'", (chat_id,user_id))
+        conn.commit(); return rows
+    except Exception:
+        conn.rollback(); return []
+    finally:
+        _put_connection(conn)
+
+
+def _finish_removal(chat_id, user_id, ok):
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cur:
+            if ok:
+                cur.execute("UPDATE presentation_watchdog_tb SET status='removed',removed_at=NOW() WHERE chat_id=%s AND user_id=%s AND status='cancelled'",(chat_id,user_id))
+            else:
+                cur.execute("UPDATE presentation_watchdog_tb SET status='pending' WHERE chat_id=%s AND user_id=%s AND status='cancelled'",(chat_id,user_id))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        _put_connection(conn)
+
+
+async def presentation_watchdog_job(context: ContextTypes.DEFAULT_TYPE):
+    for chat_id,user_id in _claim_overdue():
+        ok = False
+        try:
+            # ban+unban = remove from group while allowing a future rejoin.
+            await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
+            await context.bot.unban_chat_member(chat_id=chat_id, user_id=user_id, only_if_banned=True)
+            ok = True
+        except Exception as exc:
+            print(f"[PRESENTACION] No pude retirar a {user_id}: {exc}")
+        _finish_removal(chat_id,user_id,ok)
