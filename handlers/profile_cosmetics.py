@@ -1,4 +1,5 @@
 from __future__ import annotations
+from src.utils.seasonal import seasonalize
 
 import hashlib
 from datetime import datetime
@@ -20,11 +21,20 @@ COSMETICS = {
     "marco_obsidiana": ("Marco de Obsidiana", "marco", "epico", 45000, None),
     "marco_vampiro": ("Marco Vampírico", "marco", "legendario", 95000, None),
     "marco_anime_neon": ("Marco Anime Neón", "marco", "epico", 55000, None),
+    "marco_dragon": ("Trono del Dragón", "marco", "legendario", 125000, None),
+    "marco_infernal": ("Portal Infernal", "marco", "legendario", 135000, None),
+    "marco_celestial": ("Alas Celestiales", "marco", "legendario", 130000, None),
+    "marco_realeza": ("Corona Imperial", "marco", "epico", 70000, None),
+    "marco_kitsune": ("Santuario Kitsune", "marco", "epico", 75000, None),
     "insignia_brattamer": ("Brat Tamer", "insignia", "raro", 22000, None),
     "insignia_pet": ("Pet de Élite", "insignia", "raro", 22000, None),
     "insignia_dom": ("Dominio Carmesí", "insignia", "epico", 50000, None),
     "insignia_kitsune": ("Kitsune Imperial", "insignia", "legendario", 110000, None),
     "insignia_otaku": ("Otaku Supremo", "insignia", "comun", 8000, None),
+    "insignia_dragon": ("Corazón de Dragón", "insignia", "legendario", 115000, None),
+    "insignia_infernal": ("Marca Infernal", "insignia", "epico", 65000, None),
+    "insignia_celestial": ("Halo Caído", "insignia", "epico", 65000, None),
+    "insignia_realeza": ("Sello Imperial", "insignia", "raro", 35000, None),
     "marco_halloween": ("Marco Noche de Brujas", "marco", "epico", 60000, "halloween"),
     "insignia_calabaza": ("Calabaza Eterna", "insignia", "raro", 30000, "halloween"),
     "marco_mictlan": ("Marco del Mictlán", "marco", "legendario", 120000, "dia_muertos"),

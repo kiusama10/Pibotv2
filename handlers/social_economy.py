@@ -1,8 +1,9 @@
+from src.utils.seasonal import seasonalize
 import hashlib
 import random
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from src.database.database import _get_connection, _put_connection, get_id_user
 from src.utils.seasonal import current_season
@@ -169,72 +170,162 @@ def _target(update,args):
         return uid,('@'+username),args[1:]
     return None,None,args
 
-async def titulos(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    key,end=ensure_title_rotation();conn=_get_connection()
+def _title_shop_rows():
+    key,end=ensure_title_rotation(); conn=_get_connection()
     try:
-        c=conn.cursor();c.execute("SELECT code,nombre,rareza,precio,stock_total,stock_vendido FROM title_rotation_stock_tb WHERE rotation_key=%s ORDER BY CASE rareza WHEN 'mitico' THEN 1 WHEN 'legendario' THEN 2 WHEN 'epico' THEN 3 WHEN 'raro' THEN 4 ELSE 5 END,precio",(key,));rows=c.fetchall()
+        c=conn.cursor(); c.execute("SELECT code,nombre,rareza,precio,stock_total,stock_vendido FROM title_rotation_stock_tb WHERE rotation_key=%s ORDER BY CASE rareza WHEN 'mitico' THEN 1 WHEN 'legendario' THEN 2 WHEN 'epico' THEN 3 WHEN 'raro' THEN 4 ELSE 5 END,precio",(key,)); rows=c.fetchall()
     finally:_put_connection(conn)
-    left=max(timedelta(),end-datetime.now(timezone.utc));h=int(left.total_seconds()//3600);m=int(left.total_seconds()%3600//60)
-    lines=[f"🏷️ TIENDA DE TÍTULOS · cambia en {h:02d}h {m:02d}m"]
+    return rows,end
+
+def _titles_home_markup():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛍️ Tienda de títulos",callback_data="soc:title_shop"),InlineKeyboardButton("🎒 Mis títulos",callback_data="soc:title_owned")],
+        [InlineKeyboardButton("🎁 Regalos",callback_data="soc:gift_shop"),InlineKeyboardButton("✨ Vestidor",callback_data="cos_home")],
+    ])
+
+def _title_shop_markup(rows):
+    kb=[]
     for code,name,r,p,total,sold in rows:
         stock='∞' if total is None else f'{max(0,total-sold)}/{total}'
-        lines.append(f"{RARE_EMOJI.get(r,'⚪')} {name} — {p:,} PP · stock {stock}\n  /comprartitulo {code}")
-    await update.message.reply_text('\n'.join(lines))
+        kb.append([InlineKeyboardButton(f"{RARE_EMOJI.get(r,'⚪')} {name} · {p:,} PP · {stock}",callback_data=f"soc:title_view:{code}")])
+    kb.append([InlineKeyboardButton("🎒 Mi colección",callback_data="soc:title_owned"),InlineKeyboardButton("⬅️ Inicio",callback_data="soc:title_home")])
+    return InlineKeyboardMarkup(kb)
+
+async def titulos(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    rows,end=_title_shop_rows(); left=max(timedelta(),end-datetime.now(timezone.utc));h=int(left.total_seconds()//3600);m=int(left.total_seconds()%3600//60)
+    text=("🏷️✨ TIENDA DE TÍTULOS ✨🏷️\n\n"
+          "Colecciona títulos, presume sus seriales y equipa tu favorito desde botones.\n"
+          f"🔄 Nueva rotación en {h:02d}h {m:02d}m\n\nToca uno para ver sus detalles.")
+    await update.message.reply_text(text,reply_markup=_title_shop_markup(rows))
 
 async def comprartitulo(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    if not context.args:return await update.message.reply_text('Uso: /comprartitulo codigo')
+    # Compatibilidad: el comando antiguo sigue funcionando, pero la interfaz principal usa botones.
+    if not context.args:return await titulos(update,context)
     st,data=buy_title(update.effective_user.id,context.args[0].lower())
     if st=='ok':
         aid,name,r,serial,total,price=data;ser=f' #{serial}/{total}' if total else ''
-        await update.message.reply_text(f"✨ Título adquirido: {name}{ser}\n{RARE_EMOJI.get(r,'')} {r.title()} · {price:,} PiPesos\nID de colección: {aid}")
+        await update.message.reply_text(f"✨ ¡Título adquirido!\n🏷️ {name}{ser}\n{RARE_EMOJI.get(r,'')} {r.title()} · {price:,} PiPesos",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✨ Equipar ahora",callback_data=f"soc:title_equip:{aid}")],[InlineKeyboardButton("🎒 Mis títulos",callback_data="soc:title_owned")]]))
     elif st=='money':await update.message.reply_text('💸 No tienes suficientes PiPesos.')
     elif st=='soldout':await update.message.reply_text('😈 Llegaste tarde: esa edición se agotó.')
     else:await update.message.reply_text('Ese título no está en la rotación actual.')
 
 async def regalos(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    lines=['🎁 CATÁLOGO DE REGALOS']
-    for code,(name,r,p,_) in GIFTS.items():lines.append(f"{RARE_EMOJI.get(r,'')} {name} — {p:,} PP · `{code}`")
-    lines.append('\n/regalo @usuario codigo · agrega `anonimo` y/o `privado` si quieres.\nTambién funciona respondiendo al mensaje de alguien.')
-    await update.message.reply_text('\n'.join(lines),parse_mode='Markdown')
+    rows=[]
+    for code,(name,r,p,_) in GIFTS.items():
+        rows.append([InlineKeyboardButton(f"{RARE_EMOJI.get(r,'⚪')} {name} · {p:,} PP",callback_data=f"soc:gift_view:{code}")])
+    rows.append([InlineKeyboardButton("🎒 Mis regalos",callback_data="soc:gift_owned"),InlineKeyboardButton("🏷️ Títulos",callback_data="soc:title_home")])
+    context.user_data['gift_reply_target'] = update.message.reply_to_message.from_user.id if update.message.reply_to_message else None
+    await update.message.reply_text("🎁✨ GALERÍA DE REGALOS ✨🎁\n\nToca un regalo para verlo.\n💡 Si usas /regalos respondiendo al mensaje de alguien, podrás regalárselo directamente con un botón.",reply_markup=InlineKeyboardMarkup(rows))
 
 async def regalo(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    raw=list(context.args); anonymous=False; private=(update.effective_chat.type=='private')
-    clean=[]
+    raw=list(context.args); anonymous=False; private=(update.effective_chat.type=='private'); clean=[]
     for x in raw:
         low=x.lower()
         if low in ('anonimo','anónimo'): anonymous=True
         elif low in ('privado','pv'): private=True
         else: clean.append(x)
     uid,name,args=_target(update,clean)
-    if not uid or not args:return await update.message.reply_text('Uso: /regalo @usuario rosa [anonimo] [privado]\nO responde: /regalo rosa anonimo')
+    if not uid or not args:return await update.message.reply_text('🎁 Forma fácil: responde al mensaje de alguien con /regalos y usa los botones.\nTambién sirve: /regalo @usuario rosa [anonimo] [privado]')
     if uid==update.effective_user.id:return await update.message.reply_text('😂 Regalarte cosas tú mismo no cuenta.')
     st,data=buy_gift(update.effective_user.id,uid,args[0].lower(),anonymous,private)
     if st=='ok':
-        aid,gift,r,price,line=data
-        sender='Alguien' if anonymous else update.effective_user.first_name
+        aid,gift,r,price,line=data; sender='Alguien' if anonymous else update.effective_user.first_name
         text=f"🎁 {sender} te regaló {gift}.\n{line}\n💎 {r.title()} · Coleccionable #{aid}"
-        delivered=False
         if private:
             try:
-                await context.bot.send_message(uid,text); delivered=True
-                await context.bot.send_message(update.effective_user.id,f"✅ Regalo privado enviado a {name}. 💸 {price:,} PiPesos.")
-            except Exception:
-                # The asset remains valid; Telegram may refuse a DM if the recipient never opened the bot.
-                await update.message.reply_text(f"🎁 Regalo comprado por {price:,} PiPesos, pero Telegram no me dejó avisarle por PV. El objeto sí quedó en su colección #{aid}.")
-        else:
-            await update.message.reply_text(f"🎁 {sender} le regaló {gift} a {name}.\n{line}\n💸 {price:,} PiPesos · Coleccionable #{aid}")
+                await context.bot.send_message(uid,text); await context.bot.send_message(update.effective_user.id,f"✅ Regalo privado enviado. 💸 {price:,} PiPesos.")
+            except Exception: await update.message.reply_text(f"🎁 Comprado por {price:,} PiPesos. Telegram no permitió el PV, pero el regalo sí quedó en su colección.")
+        else: await update.message.reply_text(text+f"\n💸 {price:,} PiPesos")
     elif st=='money':await update.message.reply_text('💸 Te faltan PiPesos para ese regalo.')
     else:await update.message.reply_text('No encuentro ese regalo. Mira /regalos.')
 
 async def misregalos(update:Update,context:ContextTypes.DEFAULT_TYPE):
     rows=list_assets(update.effective_user.id,'regalo')
-    if not rows:return await update.message.reply_text('🎁 Aún no tienes regalos coleccionables.')
-    await update.message.reply_text('🎁 TUS REGALOS\n'+'\n'.join(f"#{a} · {n} · {RARE_EMOJI.get(r,'')} {r} · {v:,} PP · {e}" for a,n,r,_,_,v,e in rows))
+    if not rows:return await update.message.reply_text('🎁 Aún no tienes regalos coleccionables.',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎁 Ver catálogo",callback_data="soc:gift_shop")]]))
+    kb=[[InlineKeyboardButton(f"{RARE_EMOJI.get(r,'⚪')} {n} · #{a}",callback_data=f"soc:asset_info:{a}")] for a,n,r,_,_,v,e in rows]
+    kb.append([InlineKeyboardButton("🎁 Catálogo",callback_data="soc:gift_shop")])
+    await update.message.reply_text(f"🎁✨ TU COLECCIÓN DE REGALOS ✨🎁\n\nTienes {len(rows)} pieza(s). Toca una para verla.",reply_markup=InlineKeyboardMarkup(kb))
 
 async def mistitulos(update:Update,context:ContextTypes.DEFAULT_TYPE):
     rows=list_assets(update.effective_user.id,'titulo')
-    if not rows:return await update.message.reply_text('🏷️ Aún no tienes títulos.')
-    await update.message.reply_text('🏷️ TUS TÍTULOS\n'+'\n'.join(f"#{a} · {n}"+(f" #{sn}/{st}" if sn else '')+f" · {RARE_EMOJI.get(r,'')} {r} · {e}" for a,n,r,sn,st,_,e in rows))
+    if not rows:return await update.message.reply_text('🏷️ Aún no tienes títulos.',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍️ Ir a la tienda",callback_data="soc:title_shop")]]))
+    kb=[]
+    for a,n,r,sn,st,_,e in rows:
+        serial=f" #{sn}/{st}" if sn else ""; lock=" 🔒" if e!='disponible' else ""
+        kb.append([InlineKeyboardButton(f"{RARE_EMOJI.get(r,'⚪')} {n}{serial}{lock}",callback_data=f"soc:title_info:{a}")])
+    kb.append([InlineKeyboardButton("🛍️ Tienda",callback_data="soc:title_shop")])
+    await update.message.reply_text(f"🏷️✨ TUS TÍTULOS ✨🏷️\n\nTienes {len(rows)}. Toca uno para equiparlo o ver sus datos.",reply_markup=InlineKeyboardMarkup(kb))
+
+async def social_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    q=update.callback_query; await q.answer(); uid=q.from_user.id; data=q.data
+    if data=='soc:title_home': return await q.edit_message_text("🏷️ COLECCIÓN DE TÍTULOS\n\nCompra, colecciona y equipa tu favorito.",reply_markup=_titles_home_markup())
+    if data=='soc:title_shop':
+        rows,end=_title_shop_rows(); left=max(timedelta(),end-datetime.now(timezone.utc));h=int(left.total_seconds()//3600);m=int(left.total_seconds()%3600//60)
+        return await q.edit_message_text(f"🏷️✨ TIENDA DE TÍTULOS ✨🏷️\n\n🔄 Cambia en {h:02d}h {m:02d}m\nToca uno para comprarlo.",reply_markup=_title_shop_markup(rows))
+    if data.startswith('soc:title_view:'):
+        code=data.split(':',2)[2]; rows,_=_title_shop_rows(); item=next((x for x in rows if x[0]==code),None)
+        if not item:return await q.answer('Ese título ya no está disponible.',show_alert=True)
+        _,name,r,p,total,sold=item; stock='∞' if total is None else f'{max(0,total-sold)}/{total}'
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton(f"💰 Comprar · {p:,} PP",callback_data=f"soc:title_buy:{code}")],[InlineKeyboardButton("⬅️ Tienda",callback_data="soc:title_shop")]])
+        return await q.edit_message_text(f"{RARE_EMOJI.get(r,'⚪')} {name}\n✨ Rareza: {r.title()}\n📦 Stock: {stock}\n💰 Precio: {p:,} PiPesos",reply_markup=kb)
+    if data.startswith('soc:title_buy:'):
+        code=data.split(':',2)[2]; st,res=buy_title(uid,code)
+        if st=='ok':
+            aid,name,r,serial,total,price=res; ser=f' #{serial}/{total}' if total else ''
+            return await q.edit_message_text(f"🎉 ¡YA ES TUYO!\n\n{RARE_EMOJI.get(r,'⚪')} {name}{ser}\n💰 {price:,} PiPesos",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✨ Equipar ahora",callback_data=f"soc:title_equip:{aid}")],[InlineKeyboardButton("🎒 Mis títulos",callback_data="soc:title_owned"),InlineKeyboardButton("🛍️ Tienda",callback_data="soc:title_shop")]]))
+        return await q.answer({'money':'No tienes suficientes PiPesos.','soldout':'Se agotó justo antes de tu compra.','missing':'Ya salió de la rotación.'}.get(st,'No pude completar la compra.'),show_alert=True)
+    if data=='soc:title_owned':
+        rows=list_assets(uid,'titulo')
+        if not rows:return await q.edit_message_text('🏷️ Aún no tienes títulos.',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍️ Tienda",callback_data="soc:title_shop")]]))
+        kb=[[InlineKeyboardButton(f"{RARE_EMOJI.get(r,'⚪')} {n}"+(f" #{sn}/{st}" if sn else ''),callback_data=f"soc:title_info:{a}")] for a,n,r,sn,st,_,e in rows]
+        kb.append([InlineKeyboardButton("🛍️ Tienda",callback_data="soc:title_shop"),InlineKeyboardButton("⬅️ Inicio",callback_data="soc:title_home")])
+        return await q.edit_message_text('🏷️✨ TUS TÍTULOS ✨🏷️\n\nToca uno para equiparlo.',reply_markup=InlineKeyboardMarkup(kb))
+    if data.startswith('soc:title_info:'):
+        aid=int(data.rsplit(':',1)[1]); row=next((x for x in list_assets(uid,'titulo') if x[0]==aid),None)
+        if not row:return await q.answer('Ese título no está disponible.',show_alert=True)
+        a,n,r,sn,st,v,e=row; ser=f' #{sn}/{st}' if sn else ''
+        kb=[[InlineKeyboardButton("✨ Equipar",callback_data=f"soc:title_equip:{aid}")]] if e=='disponible' else []
+        kb.append([InlineKeyboardButton("⬅️ Mis títulos",callback_data="soc:title_owned")])
+        return await q.edit_message_text(f"{RARE_EMOJI.get(r,'⚪')} {n}{ser}\n✨ {r.title()}\n💎 Valor base: {v:,} PP\n📦 Estado: {e}",reply_markup=InlineKeyboardMarkup(kb))
+    if data.startswith('soc:title_equip:'):
+        from handlers.profile_social import _equip
+        aid=int(data.rsplit(':',1)[1]); name=_equip(uid,aid)
+        if not name:return await q.answer('No se puede equipar ese título.',show_alert=True)
+        return await q.edit_message_text(f"✨🏷️ TÍTULO EQUIPADO\n\n{name}\n\nYa aparece en tu perfil.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎒 Mis títulos",callback_data="soc:title_owned"),InlineKeyboardButton("👤 Ver perfil",callback_data="soc:profile")]]))
+    if data=='soc:gift_shop':
+        kb=[[InlineKeyboardButton(f"{RARE_EMOJI.get(r,'⚪')} {name} · {p:,} PP",callback_data=f"soc:gift_view:{code}")] for code,(name,r,p,_) in GIFTS.items()]
+        kb.append([InlineKeyboardButton("🎒 Mis regalos",callback_data="soc:gift_owned")])
+        return await q.edit_message_text('🎁✨ GALERÍA DE REGALOS ✨🎁\n\nToca uno para ver sus detalles.',reply_markup=InlineKeyboardMarkup(kb))
+    if data.startswith('soc:gift_view:'):
+        code=data.split(':',2)[2]; item=GIFTS.get(code)
+        if not item:return await q.answer('Regalo no disponible.',show_alert=True)
+        name,r,p,lines=item; target=context.user_data.get('gift_reply_target'); kb=[]
+        if target and target!=uid: kb.append([InlineKeyboardButton(f"🎁 Regalar por {p:,} PP",callback_data=f"soc:gift_buy:{code}:{target}")])
+        kb.append([InlineKeyboardButton("⬅️ Regalos",callback_data="soc:gift_shop")])
+        hint='\n\n✅ Tienes un destinatario seleccionado.' if target and target!=uid else '\n\n💡 Para regalar con un botón, responde al mensaje de la persona con /regalos.'
+        return await q.edit_message_text(f"{RARE_EMOJI.get(r,'⚪')} {name}\n✨ {r.title()}\n💰 {p:,} PiPesos\n\n{lines[0]}{hint}",reply_markup=InlineKeyboardMarkup(kb))
+    if data.startswith('soc:gift_buy:'):
+        _,_,code,target=data.split(':',3); target=int(target); st,res=buy_gift(uid,target,code,False,False)
+        if st=='ok':
+            aid,name,r,price,line=res
+            try: await context.bot.send_message(target,f"🎁 {q.from_user.first_name} te regaló {name}.\n{line}\n💎 {r.title()} · Coleccionable #{aid}")
+            except Exception: pass
+            return await q.edit_message_text(f"🎁 ¡REGALO ENVIADO!\n\n{name}\n💸 {price:,} PiPesos\n✨ Ya pertenece a su colección.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎁 Seguir viendo",callback_data="soc:gift_shop")]]))
+        return await q.answer('No tienes saldo suficiente.' if st=='money' else 'No pude enviar el regalo.',show_alert=True)
+    if data=='soc:gift_owned':
+        rows=list_assets(uid,'regalo')
+        if not rows:return await q.edit_message_text('🎁 Aún no tienes regalos.',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎁 Ver catálogo",callback_data="soc:gift_shop")]]))
+        kb=[[InlineKeyboardButton(f"{RARE_EMOJI.get(r,'⚪')} {n} · #{a}",callback_data=f"soc:asset_info:{a}")] for a,n,r,_,_,v,e in rows]
+        kb.append([InlineKeyboardButton("⬅️ Regalos",callback_data="soc:gift_shop")])
+        return await q.edit_message_text('🎁✨ TUS REGALOS ✨🎁\n\nToca una pieza para verla.',reply_markup=InlineKeyboardMarkup(kb))
+    if data.startswith('soc:asset_info:'):
+        aid=int(data.rsplit(':',1)[1]); row=next((x for x in list_assets(uid,'regalo') if x[0]==aid),None)
+        if not row:return await q.answer('Ese regalo ya no está en tu colección.',show_alert=True)
+        a,n,r,sn,st,v,e=row
+        return await q.edit_message_text(f"🎁 {n}\n{RARE_EMOJI.get(r,'⚪')} {r.title()}\n💎 Valor base: {v:,} PP\n📦 Estado: {e}\n🆔 Colección #{a}",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Mis regalos",callback_data="soc:gift_owned")]]))
+    if data=='soc:profile':
+        from handlers.profile_social import _render
+        return await q.edit_message_text(_render(uid,uid),reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏷️ Mis títulos",callback_data="soc:title_owned"),InlineKeyboardButton("🎁 Mis regalos",callback_data="soc:gift_owned")],[InlineKeyboardButton("✨ Mi vestidor",callback_data="cos_home")]]))
 
 async def mercado(update:Update,context:ContextTypes.DEFAULT_TYPE):
     rows=list_market()

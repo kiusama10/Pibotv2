@@ -1,3 +1,4 @@
+from src.utils.seasonal import seasonalize
 import os
 import random
 from telegram import Update

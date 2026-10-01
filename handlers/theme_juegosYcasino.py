@@ -1,3 +1,4 @@
+from src.utils.seasonal import seasonalize
 import asyncio,random,uuid
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup

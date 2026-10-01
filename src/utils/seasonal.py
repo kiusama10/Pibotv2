@@ -104,3 +104,30 @@ PROFILE_STYLES = {
 def profile_style() -> tuple[str, str]:
     """Seasonal profile presentation only; never changes economy or odds."""
     return PROFILE_STYLES[current_season()]
+
+
+SEASONAL_PREFIXES = {
+    "normal": ["✨"],
+    "halloween": ["🎃", "🕸️", "👻", "🦇"],
+    "dia_muertos": ["💀🌼", "🕯️", "🌼"],
+    "navidad": ["🎄", "❄️", "🎁", "🔔"],
+    "san_valentin": ["💘", "🌹", "💗"],
+}
+SEASONAL_SUFFIXES = {
+    "normal": [""],
+    "halloween": ["La noche está mirando. 👁️", "Que empiece la travesura. 🦇", "Octubre reclama otro mensaje. 🎃"],
+    "dia_muertos": ["Entre flores y velas. 🌼", "Que no falten las historias. 🕯️"],
+    "navidad": ["Que no se pierdan los PiPesos entre los regalos. 🎁", "PiBot anda con espíritu navideño. ❄️"],
+    "san_valentin": ["Hasta PiBot anda romántico hoy. 💘", "Con cariño... y quizá algunos PiPesos. 🌹"],
+}
+
+def seasonalize(text: str, *, compact: bool = False) -> str:
+    """Presentation-only seasonal wrapper. Never changes game/economy semantics."""
+    season=current_season()
+    if season=="normal" or not text:
+        return text
+    prefix=choice(SEASONAL_PREFIXES[season])
+    if compact:
+        return f"{prefix} {text}"
+    suffix=choice(SEASONAL_SUFFIXES[season])
+    return f"{prefix} {text}" + (f"\n\n{suffix}" if suffix else "")
