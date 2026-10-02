@@ -58,19 +58,20 @@ from handlers.bdsm_quiz import quiz_tick, quiz_callback, quiz_manual, quiz_now, 
 from handlers.bdsm_facts import bdsm_fact_tick, ensure_fact_tables, FACT_INTERVAL_SECONDS
 from handlers.bdsm_dictionary import dictionary_tick, INTERVAL_SECONDS as DICTIONARY_INTERVAL_SECONDS
 from handlers.knowledge import wiki, buscar
-from handlers.relics import boveda, misreliquias, relic_callback, ensure_relic_tables
 from src.utils.instance_guard import acquire_single_poller_lock
 from src.utils.seasonal_bot import SeasonalExtBot
 from src.utils.root_owner import ensure_root_identity
 from handlers.casino_pvp import tortugas, tortuga, ranking_tortugas, blackjack, cancelar_blackjack, casino_pvp_callback, ensure_casino_pvp_tables, turtle_season_maintenance_job, process_turtle_input
 from handlers.auctions import subasta, puja, versubasta, cancelarsubasta, auction_maintenance_job
-from handlers.assassin_game import asesino, assassin_callback
+from handlers.assassin_game import asesino, assassin_callback, assassin_cycle_job, assassin_track_member, ensure_assassin_tables
 from handlers.help_center import pipesos, instrucciones, canales, help_callback, channel_callback
 from handlers.bounty import caza
 from handlers.vinculos import vinculo, cancelarvinculo, separarse, vinculo_callback, ensure_vinculo_tables
 from handlers.drawing_game import dibujar, matar_dibujo, drawing_callback, drawing_guess, ensure_drawing_tables, drawing_maintenance_job
 from handlers.presentation_watchdog import silent_new_member_watch, detect_presentation_message, presentation_watchdog_job, ensure_presentation_tables
 from handlers.music_fee import paid_music_post, ensure_music_tables, activarmusica, desactivarmusica
+from handlers.shop_admin import agregargif, cancelaragregargif, gif_admin_text_input
+from handlers.pipeso_extras import cajas, pociones, nivel, tipografias, gifvictoria, extras_callback, victory_callback, victory_toggle_callback, victory_input, xp_activity, ensure_extras_tables
 
 # Handler imports - User onboarding
 from handlers.welcoming import nuevo_usuario, mensaje_de_presentaciones
@@ -92,6 +93,10 @@ async def auto_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user = update.effective_user
     if not user or user.is_bot:
         return
+
+    # Registra silenciosamente miembros vistos para el sorteo automático del Asesino.
+    try: assassin_track_member(update)
+    except Exception: pass
 
     try:
         nombre = normalizar_nombre(user.first_name or "", user.last_name or "")
@@ -477,7 +482,8 @@ def main() -> None:
     ensure_presentation_tables()
     ensure_music_tables()
     ensure_vinculo_tables()
-    ensure_relic_tables()
+    ensure_extras_tables()
+    ensure_assassin_tables()
     
     print("[INIT] Restarting active combats...")
     restart_all_combats()
@@ -502,6 +508,7 @@ def main() -> None:
         app.job_queue.run_repeating(bdsm_fact_tick, interval=FACT_INTERVAL_SECONDS, first=300, name="bdsm_fact_2h")
         app.job_queue.run_repeating(dictionary_tick, interval=DICTIONARY_INTERVAL_SECONDS, first=1200, name="bdsm_dictionary_75m")
         app.job_queue.run_repeating(turtle_season_maintenance_job, interval=3600, first=45, name="turtle_monthly_awards")
+        app.job_queue.run_repeating(assassin_cycle_job, interval=300, first=20, name="assassin_6h_cycle")
 
     # Group -4: capture genuinely new members BEFORE auto-registration. Sends nothing.
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, silent_new_member_watch), group=-4)
@@ -511,6 +518,7 @@ def main() -> None:
     # Group -2: Auto-register users on any message (silent, never blocks)
     app.add_handler(MessageHandler(filters.ALL, auto_registrar), group=-2)
     # Participation is throttled to one point/minute/user and flushed in batches.
+    app.add_handler(MessageHandler(filters.ALL, xp_activity), group=-4)
     app.add_handler(MessageHandler(filters.ALL, track_activity), group=-3)
 
     # Group -1: Community blocking filter (runs first, can stop others)
@@ -564,13 +572,18 @@ def main() -> None:
     app.add_handler(CommandHandler("versubasta", versubasta), group=2)
     app.add_handler(CommandHandler("cancelarsubasta", cancelarsubasta), group=2)
     app.add_handler(CommandHandler("asesino", asesino), group=2)
+    app.add_handler(CommandHandler("agregargif", agregargif), group=2)
+    app.add_handler(CommandHandler("cancelaragregargif", cancelaragregargif), group=2)
     app.add_handler(CommandHandler("pipesos", pipesos), group=2)
     app.add_handler(CommandHandler("instrucciones", instrucciones), group=2)
     app.add_handler(CommandHandler("canales", canales), group=2)
     app.add_handler(CommandHandler("wiki", wiki), group=2)
     app.add_handler(CommandHandler("buscar", buscar), group=2)
-    app.add_handler(CommandHandler("boveda", boveda), group=2)
-    app.add_handler(CommandHandler("misreliquias", misreliquias), group=2)
+    app.add_handler(CommandHandler("cajas", cajas), group=2)
+    app.add_handler(CommandHandler("pociones", pociones), group=2)
+    app.add_handler(CommandHandler("nivel", nivel), group=2)
+    app.add_handler(CommandHandler("tipografias", tipografias), group=2)
+    app.add_handler(CommandHandler("gifvictoria", gifvictoria), group=2)
     app.add_handler(CommandHandler("caza", caza), group=2)
     app.add_handler(CommandHandler("vinculo", vinculo), group=2)
     app.add_handler(CommandHandler("cancelarvinculo", cancelarvinculo), group=2)
@@ -651,7 +664,7 @@ def main() -> None:
     app.add_handler(
         CallbackQueryHandler(
             tienda_callback,
-            pattern="^(producto_|volver_menu|abrir_tienda|volver_catalogo|comprar_)"
+            pattern="^(producto_|volver_menu|abrir_tienda|volver_catalogo|comprar_|shop_page_|shop_noop$|gif_preview_)"
         ),
         group=5
     )
@@ -665,13 +678,15 @@ def main() -> None:
         group=5
     )
     app.add_handler(CallbackQueryHandler(social_callback, pattern="^soc:"), group=5)
-    app.add_handler(CallbackQueryHandler(relic_callback, pattern="^rel:"), group=5)
     app.add_handler(CallbackQueryHandler(vinculo_callback, pattern="^vin:"), group=5)
     app.add_handler(
         CallbackQueryHandler(bankiu_callback, pattern="^bank_"),
         group=5
     )
     app.add_handler(CallbackQueryHandler(quiz_callback, pattern="^bq:"), group=5)
+    app.add_handler(CallbackQueryHandler(extras_callback, pattern="^ex:(pot|box|font):"), group=5)
+    app.add_handler(CallbackQueryHandler(victory_toggle_callback, pattern="^vg:toggle:"), group=5)
+    app.add_handler(CallbackQueryHandler(victory_callback, pattern="^vg:(gif|text|games|preview|remove)$"), group=5)
     app.add_handler(CallbackQueryHandler(casino_pvp_callback, pattern="^(turtle|bj):"), group=5)
     app.add_handler(CallbackQueryHandler(assassin_callback, pattern="^as:"), group=5)
     app.add_handler(CallbackQueryHandler(drawing_callback, pattern="^draw:"), group=5)
@@ -685,6 +700,7 @@ def main() -> None:
     # Turtle UI text input (rename/custom stake). It ignores users without a pending turtle action.
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_turtle_input), group=8)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_social_input), group=9)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gif_admin_text_input), group=10)
 
     # Group 6: Punishment filter (prevents messages outside punishment corner)
     app.add_handler(MessageHandler(filters.ALL, filtro_castigo), group=6)
@@ -697,6 +713,7 @@ def main() -> None:
         print("[INSTANCE] Otra instancia de PiBot ya posee el polling. Esta copia queda en espera segura.")
         time.sleep(15)
     print("[INSTANCE] Lock adquirido: esta es la única instancia autorizada para getUpdates.")
+    app.add_handler(MessageHandler((filters.TEXT | filters.ANIMATION) & ~filters.COMMAND, victory_input), group=11)
     app.run_polling(drop_pending_updates=True)
 
 
