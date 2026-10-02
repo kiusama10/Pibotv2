@@ -119,3 +119,11 @@ def obtener_temas_por_comunidad(community_id: int) -> dict:
 _raw_music_thread = os.getenv("MUSIC_THREAD_ID", "").strip()
 MUSIC_THREAD_ID = int(_raw_music_thread) if _raw_music_thread.lstrip("-").isdigit() else None
 MUSIC_POST_PRICE = int(os.getenv("MUSIC_POST_PRICE", "500"))
+
+# Protected owner identity. Prefer KIU_ROOT_ID in Render; username fallback keeps
+# the owner recoverable when BOTMASTER_IDS was accidentally left empty.
+_raw_root_id = os.getenv("KIU_ROOT_ID", "").strip()
+KIU_ROOT_ID = int(_raw_root_id) if _raw_root_id.isdigit() else None
+KIU_ROOT_USERNAME = os.getenv("KIU_ROOT_USERNAME", "Kiusama10").strip().lstrip("@").lower()
+if KIU_ROOT_ID and KIU_ROOT_ID not in BOTMASTER_IDS:
+    BOTMASTER_IDS.append(KIU_ROOT_ID)
