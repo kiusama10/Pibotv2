@@ -3,6 +3,7 @@ import os, random, secrets, threading, time, unicodedata, io
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ContextTypes
 from src.database.database import vinculo_reward_amount, _get_connection, _put_connection
+from handlers.pipeso_extras import send_victory
 from PIL import Image, ImageDraw
 
 ROUND_SECONDS=120
@@ -16,6 +17,7 @@ WORDS=WORDS_NORMAL+WORDS_BDSM
 _strokes={}; _stroke_lock=threading.Lock()
 _chat_feed={}; _feed_lock=threading.Lock()
 _canvas_versions={}; _version_lock=threading.Lock()
+_canvas_auth={}; _auth_lock=threading.Lock(); _ended_games=set()
 
 def ensure_drawing_tables():
     conn=_get_connection()
@@ -113,6 +115,10 @@ async def _start_round(context,gid):
     with _stroke_lock:_strokes[gid]=[]
     with _feed_lock:_chat_feed[gid]=[]
     with _version_lock:_canvas_versions[gid]=1
+    with _auth_lock:
+        _canvas_auth[(str(gid),token)]=time.time()+ROUND_SECONDS+30
+        _canvas_auth[(str(gid),viewer_token)]=time.time()+ROUND_SECONDS+30
+        _ended_games.discard(str(gid))
     rows=[]
     if WEBAPP_BASE_URL:
         rows.append([InlineKeyboardButton('🖌️ ABRIR LIENZO · SOLO DIBUJANTE',url=f"{WEBAPP_BASE_URL}/pibot-canvas-v4?game={gid}&token={token}&mode=draw")])
@@ -242,11 +248,13 @@ async def drawing_guess(update:Update, context:ContextTypes.DEFAULT_TYPE):
     except Exception: conn.rollback(); return
     finally:_put_connection(conn)
     _stop_live_jobs(context,gid)
+    with _auth_lock:_ended_games.add(str(gid))
     winner=_name(update.effective_user)
     text=f"🏆 ¡{winner} acertó!\n🎨 La palabra era {word.upper()}.\n💰 +{credited:,} PiPesos" + (" · incluye +20% por vínculo 💞" if credited>WIN_PRIZE else "") + "\n\n✅ La ronda terminó."
     kb=InlineKeyboardMarkup([[InlineKeyboardButton('🎨 Tomar turno',callback_data=f'draw:take:{gid}')]])
     # Aviso independiente en el mismo tema: no depende de que Telegram conserve el reply.
     await context.bot.send_message(chat_id=chat,message_thread_id=thread,text=text,reply_markup=kb)
+    await send_victory(context,uid,'dibujo',chat,thread,winner)
     # El mensaje del dibujo también queda marcado como finalizado para que el artista lo vea al instante.
     try:
         conn=_get_connection(); c=conn.cursor(); c.execute("SELECT live_message_id FROM drawing_games_tb WHERE game_id=%s",(gid,)); rr=c.fetchone(); conn.rollback(); _put_connection(conn)
@@ -263,6 +271,7 @@ async def _round_timeout(context:ContextTypes.DEFAULT_TYPE):
     except Exception: conn.rollback(); return
     finally:_put_connection(conn)
     _stop_live_jobs(context,gid)
+    with _auth_lock:_ended_games.add(str(gid))
     await context.bot.send_message(chat,f"⏰ Tiempo. La palabra era {word.upper()}. Nadie cobró esta ronda.\n\nLa ronda terminó. Quien quiera dibujar puede tomar el siguiente turno.",message_thread_id=thread,reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🎨 Tomar turno',callback_data=f'draw:take:{gid}')]]))
 
 async def _next_round_job(context): await _start_round(context,context.job.data['gid'])
@@ -284,15 +293,29 @@ async def drawing_maintenance_job(context:ContextTypes.DEFAULT_TYPE):
         except Exception: pass
     
 # HTTP API usado por el lienzo. Token secreto del dibujante valida escritura.
-def canvas_get(gid,token):
+def _canvas_token_ok(gid,token):
+    key=(str(gid),token)
+    now=time.time()
+    with _auth_lock:
+        exp=_canvas_auth.get(key)
+        if exp and exp>now:return True
+        if exp:_canvas_auth.pop(key,None)
     conn=_get_connection()
     try:
         c=conn.cursor(); c.execute("SELECT 1 FROM drawing_games_tb WHERE game_id=%s AND (drawer_token=%s OR viewer_token=%s) AND status='active' AND round_ends_at>now()",(gid,token,token)); ok=bool(c.fetchone())
     finally:_put_connection(conn)
-    if not ok:return None
+    if ok:
+        with _auth_lock:_canvas_auth[key]=now+150
+    return ok
+
+def canvas_get(gid,token):
+    if not _canvas_token_ok(gid,token):return None
     with _stroke_lock:return list(_strokes.get(gid,[]))
 
 def canvas_meta(gid,token):
+    with _auth_lock:
+        if str(gid) in _ended_games and (str(gid),token) in _canvas_auth:return {"ended":True}
+    if not _canvas_token_ok(gid,token):return None
     conn=_get_connection()
     try:
         c=conn.cursor(); c.execute("SELECT word FROM drawing_games_tb WHERE game_id=%s AND drawer_token=%s AND status='active' AND round_ends_at>now()",(gid,token)); r=c.fetchone()
@@ -315,20 +338,12 @@ def canvas_change_word(gid,token):
     finally:_put_connection(conn)
 
 def canvas_chat(gid,token):
-    conn=_get_connection()
-    try:
-        c=conn.cursor(); c.execute("SELECT 1 FROM drawing_games_tb WHERE game_id=%s AND drawer_token=%s AND status='active' AND round_ends_at>now()",(gid,token)); ok=bool(c.fetchone())
-    finally:_put_connection(conn)
-    if not ok:return None
+    if not _canvas_token_ok(gid,token):return None
     with _feed_lock:return list(_chat_feed.get(gid,[]))
 
 def canvas_append(gid,token,items):
     if not isinstance(items,list) or len(items)>200:return False
-    conn=_get_connection()
-    try:
-        c=conn.cursor(); c.execute("SELECT 1 FROM drawing_games_tb WHERE game_id=%s AND drawer_token=%s AND status='active' AND round_ends_at>now()",(gid,token)); ok=bool(c.fetchone())
-    finally:_put_connection(conn)
-    if not ok:return False
+    if not _canvas_token_ok(gid,token):return False
     clean=[]
     for x in items:
         if isinstance(x,dict) and x.get('t') in ('s','clear'):

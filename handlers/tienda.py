@@ -1,7 +1,7 @@
 import os
 from telegram import InputMediaPhoto, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from src.database.database import get_campo_usuario, get_campo_item, comprar_item_atomico
+from src.database.database import get_campo_usuario, get_campo_item, comprar_item_atomico, get_catalog_items, get_item_gifs
 from src.config import BOT_USERNAME
 from telegram.error import TelegramError
 
@@ -69,6 +69,8 @@ async def tienda_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()  # importante responder el callback
     data = query.data
+    if data == "shop_noop":
+        return
     # ------- VOLVER AL MENÚ PRINCIPAL (robusto) -------
     if data == "volver_menu":
         print("User ha regresado al menu principal")
@@ -101,6 +103,24 @@ async def tienda_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
             return
+
+    # ------- PAGINAR CATÁLOGO DINÁMICO -------
+    if data.startswith("shop_page_"):
+        try: page=max(1,int(data.rsplit("_",1)[1]))
+        except Exception: page=1
+        await query.edit_message_caption(caption="🛍️ **Catálogo de productos**",parse_mode="Markdown",reply_markup=botonera_catalogo(page))
+        return
+
+    # ------- PREVISUALIZAR UN GIF DEL ITEM -------
+    if data.startswith("gif_preview_"):
+        import random
+        try: id_item=int(data.rsplit("_",1)[1])
+        except Exception: return
+        gifs=get_item_gifs(id_item)
+        if not gifs:
+            await context.bot.send_message(chat_id=query.from_user.id,text="🎞️ Este artículo usa por ahora los GIFs clásicos del bot. Puedes añadirle más con /agregargif."); return
+        await context.bot.send_animation(chat_id=query.from_user.id,animation=random.choice(gifs),caption=f"🎞️ Vista previa · {get_campo_item(id_item,'nombre')}")
+        return
 
     # ------- MOSTRAR ITEM -------
     if data.startswith("producto_"):
@@ -225,7 +245,7 @@ async def mostrar_item(id_item, descripcion, update: Update, context: ContextTyp
 
     botonera = InlineKeyboardMarkup([
         [InlineKeyboardButton("⬅️ Volver al catálogo", callback_data="volver_catalogo")],
-        [InlineKeyboardButton("🛒 Comprar", callback_data=f"comprar_{id_item}")]
+        [InlineKeyboardButton("🎞️ Ver GIF", callback_data=f"gif_preview_{id_item}"), InlineKeyboardButton("🛒 Comprar", callback_data=f"comprar_{id_item}")]
     ])
 
     # Imagen
@@ -245,19 +265,24 @@ async def mostrar_item(id_item, descripcion, update: Update, context: ContextTyp
 # ==============================
 #   BOTONERA CATÁLOGO
 # ==============================
-def botonera_catalogo():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("1️⃣ Collar", callback_data="producto_1"),
-            InlineKeyboardButton("2️⃣ Látigo", callback_data="producto_2"),
-            InlineKeyboardButton("3️⃣ Fusta", callback_data="producto_3"),
-        ],
-        [
-            InlineKeyboardButton("4️⃣ Galleta", callback_data="producto_4"),
-            InlineKeyboardButton("5️⃣ Bola mordaza", callback_data="producto_5"),
-            InlineKeyboardButton("6️⃣ ???", callback_data="producto_6"),
-        ],
-        [
-            InlineKeyboardButton("⬅️ Volver al menú", callback_data="volver_menu")
-        ]
-    ])
+def botonera_catalogo(page=1):
+    """Catálogo desde PostgreSQL: admite items nuevos sin tocar código."""
+    items=get_catalog_items()
+    per_page=8
+    pages=max(1,(len(items)+per_page-1)//per_page)
+    page=max(1,min(int(page or 1),pages))
+    chunk=items[(page-1)*per_page:page*per_page]
+    rows=[]
+    for i in range(0,len(chunk),2):
+        row=[]
+        for iid,nombre,precio,categoria in chunk[i:i+2]:
+            row.append(InlineKeyboardButton(f"{nombre} · {int(precio):,}",callback_data=f"producto_{iid}"))
+        rows.append(row)
+    if pages>1:
+        nav=[]
+        if page>1: nav.append(InlineKeyboardButton("⬅️",callback_data=f"shop_page_{page-1}"))
+        nav.append(InlineKeyboardButton(f"{page}/{pages}",callback_data="shop_noop"))
+        if page<pages: nav.append(InlineKeyboardButton("➡️",callback_data=f"shop_page_{page+1}"))
+        rows.append(nav)
+    rows.append([InlineKeyboardButton("⬅️ Volver al menú",callback_data="volver_menu")])
+    return InlineKeyboardMarkup(rows)

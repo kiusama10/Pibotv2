@@ -54,6 +54,25 @@ CUSTOM_FRAME_BORDERS = {
 
 
 
+
+def _profile_display_name(uid, name):
+    code="normal"
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT font_code FROM user_profile_style_tb WHERE user_id=%s",(uid,)); r=c.fetchone(); code=r[0] if r else "normal"
+    except Exception: pass
+    finally: _put_connection(conn)
+    maps={
+      "bold":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇𝐈𝐉𝐊𝐋𝐌𝐍𝐎𝐏𝐐𝐑𝐒𝐓𝐔𝐕𝐖𝐗𝐘𝐙𝐚𝐛𝐜𝐝𝐞𝐟𝐠𝐡𝐢𝐣𝐤𝐥𝐦𝐧𝐨𝐩𝐪𝐫𝐬𝐭𝐮𝐯𝐰𝐱𝐲𝐳𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗"),
+      "mono":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","𝙰𝙱𝙲𝙳𝙴𝙵𝙶𝙷𝙸𝙹𝙺𝙻𝙼𝙽𝙾𝙿𝚀𝚁𝚂𝚃𝚄𝚅𝚆𝚇𝚈𝚉𝚊𝚋𝚌𝚍𝚎𝚏𝚐𝚑𝚒𝚓𝚔𝚕𝚖𝚗𝚘𝚙𝚚𝚛𝚜𝚝𝚞𝚟𝚠𝚡𝚢𝚣𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿"),
+      "circled":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","ⒶⒷⒸⒹⒺⒻⒼⒽⒾⒿⓀⓁⓂⓃⓄⓅⓆⓇⓈⓉⓊⓋⓌⓍⓎⓏⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩ⓪①②③④⑤⑥⑦⑧⑨")
+    }
+    if code in maps:
+        a,b=maps[code]; return str(name).translate(str.maketrans(a,b))
+    if code=="smallcaps":
+        return str(name).translate(str.maketrans("abcdefghijklmnopqrstuvwxyz","ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘqʀꜱᴛᴜᴠᴡxʏᴢ"))
+    return str(name)
+
 def _ensure_profile_phrase():
     conn = _get_connection()
     try:
@@ -260,13 +279,13 @@ def _render(uid: int, viewer: int):
 
     lines = [
         border,
-        f"{season_icon} PERFIL DE {nombre}",
+        f"{season_icon} PERFIL DE {_profile_display_name(uid,nombre)}",
         border,
         f"🏷️ {title}",
         f"🎖️ {badge_name or 'Sin insignia equipada'}",
         f"🖼️ {frame_name or 'Marco de temporada'}",
         f"💰 {saldo:,} PiPesos",
-        f"📚 {counts.get('titulo',0)} títulos · 🏛️ {counts.get('reliquia',0)} reliquias",
+        f"📚 {counts.get('titulo',0)} títulos · 🎁 cosméticos de cajas",
         f"✨ {counts.get('cos_marco',0)} marcos · 🎖️ {counts.get('cos_insignia',0)} insignias",
     ]
     for label, val in [
@@ -626,7 +645,7 @@ async def _build_profile_card(uid: int, viewer: int, context: ContextTypes.DEFAU
             im.paste(av,(95,155),mask); d.ellipse((89,149,351,411),outline=c1,width=7); d.ellipse((82,142,358,418),outline=c2,width=2)
         except Exception: pass
     x=390; y=175
-    d.text((x,y),str(nombre)[:28],font=title_font,fill=(245,245,255)); y+=65
+    d.text((x,y),_profile_display_name(uid,nombre)[:28],font=title_font,fill=(245,245,255)); y+=65
     if username: d.text((x,y),"@"+str(username).lstrip('@')[:30],font=small,fill=(180,185,210)); y+=45
     title=(tname+(f" #{sn}/{st}" if sn else "")) if tname else "Sin título equipado"
     for line in _wrap(d,title,body_b,560)[:2]: d.text((x,y),line,font=body_b,fill=c1); y+=40
@@ -641,7 +660,7 @@ async def _build_profile_card(uid: int, viewer: int, context: ContextTypes.DEFAU
         y+=8; d.text((100,y),"F R A S E",font=small,fill=c2); y+=38
         for line in _wrap(d,'“'+str(frase)+'”',body,850)[:3]: d.text((115,y),line,font=body,fill=(245,245,255)); y+=39
     y+=12; d.line((90,y,990,y),fill=c1,width=2); y+=25
-    d.text((100,y),f"COLECCIÓN • {counts.get('titulo',0)} títulos • {counts.get('reliquia',0)} reliquias • {counts.get('cos_marco',0)} marcos",font=small,fill=(200,205,225)); y+=48
+    d.text((100,y),f"COLECCIÓN • {counts.get('titulo',0)} títulos • {counts.get('cos_marco',0)} marcos",font=small,fill=(200,205,225)); y+=48
     d.text((100,y),"V Í N C U L O",font=small,fill=c2); y+=38
     link_text = formal_link or rel or "Sin vínculo activo"
     d.text((115,y),str(link_text)[:42],font=body,fill=(242,242,250)); y+=38

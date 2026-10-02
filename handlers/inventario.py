@@ -17,7 +17,8 @@ from src.database.database import (
     update_cantidad,
     delete_item_user,
     reservar_item_usuario,
-    devolver_item_usuario
+    devolver_item_usuario,
+    get_item_gifs
     )
 from src.config import BOT_USERNAME
 from handlers.general import get_receptor
@@ -283,23 +284,16 @@ async def usar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Normalizamos la ruta
     ruta_carpeta = os.path.abspath(ruta_carpeta)
 
-    # Comprobamos que existe
-    if not os.path.isdir(ruta_carpeta):
-        print(f"No existe la carpeta: {ruta_carpeta}")
-        return None, None
-
-    # Listamos solo GIFs
-    archivos = [f for f in os.listdir(ruta_carpeta) if f.endswith(".gif")]
-
-    if not archivos:
-        print(f"No hay GIFs en {ruta_carpeta}")
-        return None, None
-
-    # Elegimos uno al azar
-
-    gif_seleccionado = random.choice(archivos)
-    
-    gif_path = os.path.join(ruta_carpeta, gif_seleccionado)
+    # Mezclamos GIFs clásicos de carpeta + GIFs añadidos desde Telegram.
+    # Así los artículos que ya existen también se pueden ampliar sin redeploy.
+    opciones=[]
+    if os.path.isdir(ruta_carpeta):
+        opciones.extend(("local",os.path.join(ruta_carpeta,f)) for f in os.listdir(ruta_carpeta) if f.lower().endswith(".gif"))
+    opciones.extend(("telegram",fid) for fid in get_item_gifs(item_id))
+    if not opciones:
+        await update.message.reply_text("⚠️ Este artículo todavía no tiene GIFs disponibles.")
+        return
+    gif_tipo,gif_path=random.choice(opciones)
     
     caption = get_campo_item(item_id, "mensaje")
 
@@ -319,13 +313,11 @@ async def usar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        with open(gif_path, "rb") as animation:
-            await context.bot.send_animation(
-                chat_id=update.effective_chat.id,
-                message_thread_id=update.message.message_thread_id,
-                animation=animation,
-                caption=caption_final
-            )
+        if gif_tipo=="telegram":
+            await context.bot.send_animation(chat_id=update.effective_chat.id,message_thread_id=update.message.message_thread_id,animation=gif_path,caption=caption_final)
+        else:
+            with open(gif_path, "rb") as animation:
+                await context.bot.send_animation(chat_id=update.effective_chat.id,message_thread_id=update.message.message_thread_id,animation=animation,caption=caption_final)
     except Exception as exc:
         devolver_item_usuario(user.id, item_id)
         print(f"[INVENTARIO] No pude enviar el efecto; item devuelto: {exc}")

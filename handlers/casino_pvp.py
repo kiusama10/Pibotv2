@@ -1,3 +1,4 @@
+from handlers.pipeso_extras import send_victory
 """Juegos PvP persistentes del tema Juegos (528): Tortugas y Blackjack."""
 import random
 import uuid
@@ -377,6 +378,7 @@ def _next_live(players, current_uid):
 def _finish_multi(c,gid,stake,players):
     valid=[(p[0],p[1],_score(p[2])) for p in players if _score(p[2])<=21]
     pot=stake*len(players)
+    winner_meta=[]
     if not valid:
         for p in players: _pay(p[0],stake,c)
         result="🤝 Todos se pasaron de 21. Se devolvieron las entradas."
@@ -384,13 +386,13 @@ def _finish_multi(c,gid,stake,players):
         best=max(x[2] for x in valid); winners=[x for x in valid if x[2]==best]
         share=pot//len(winners); rem=pot-share*len(winners)
         for i,(uid,name,score) in enumerate(winners): _pay(uid,share+(rem if i==0 else 0),c)
-        names=', '.join(x[1] for x in winners)
+        names=', '.join(x[1] for x in winners); winner_meta=[(x[0],x[1]) for x in winners]
         result=(f"🏆 Ganador: {names} · {best} puntos · {pot:,} PiPesos" if len(winners)==1 else f"🤝 Empate entre {names} · {best} puntos. Pozo {pot:,} PiPesos repartido.")
     c.execute("UPDATE blackjack_games_tb SET status='finished',updated_at=now() WHERE game_id=%s",(gid,))
     lines=["🃏 FINAL"]+[f"👤 {p[1]}: {' '.join(p[2])} = {_score(p[2])}" for p in players]
-    return '\n'.join(lines)+"\n\n"+result
+    return '\n'.join(lines)+"\n\n"+result, winner_meta
 
-async def _bj_cb(q,parts):
+async def _bj_cb(q,parts,context):
     action,gid=parts[1],parts[2]; uid=q.from_user.id; conn=_get_connection()
     try:
         c=conn.cursor(); c.execute("SELECT chat_id,thread_id,creator_id,stake,status,turn_user_id,deck,action_started FROM blackjack_games_tb WHERE game_id=%s FOR UPDATE",(gid,)); g=c.fetchone()
@@ -427,14 +429,18 @@ async def _bj_cb(q,parts):
             c.execute("UPDATE blackjack_players_tb SET hand=%s,busted=%s WHERE game_id=%s AND user_id=%s",(hand,busted,gid,uid)); players=_bj_players(c,gid)
             nxt=_next_live(players,uid)
             if nxt is None:
-                result=_finish_multi(c,gid,stake,players); conn.commit(); await q.answer(); await q.edit_message_reply_markup(None); await q.message.reply_text(result); return
+                result,winner_meta=_finish_multi(c,gid,stake,players); conn.commit(); await q.answer(); await q.edit_message_reply_markup(None); await q.message.reply_text(result);
+                for wuid,wname in winner_meta: await send_victory(context,wuid,'blackjack',chat,thread,wname)
+                return
             c.execute("UPDATE blackjack_games_tb SET deck=%s,turn_user_id=%s,action_started=true,updated_at=now() WHERE game_id=%s",(deck,nxt,gid)); conn.commit(); await q.answer()
             nname=next(p[1] for p in players if p[0]==nxt); prefix=f"💥 {me[1]} se pasó con {score}." if busted else f"🃏 {me[1]} pidió {hand[-1]} · Total {score}."
             await q.message.reply_text(prefix+f"\n➡️ Turno de {nname}",reply_markup=_bj_buttons(gid)); return
         if action=='stand':
             c.execute("UPDATE blackjack_players_tb SET stood=true WHERE game_id=%s AND user_id=%s",(gid,uid)); players=_bj_players(c,gid); nxt=_next_live(players,uid)
             if nxt is None:
-                result=_finish_multi(c,gid,stake,players); conn.commit(); await q.answer(); await q.edit_message_reply_markup(None); await q.message.reply_text(result); return
+                result,winner_meta=_finish_multi(c,gid,stake,players); conn.commit(); await q.answer(); await q.edit_message_reply_markup(None); await q.message.reply_text(result);
+                for wuid,wname in winner_meta: await send_victory(context,wuid,'blackjack',chat,thread,wname)
+                return
             c.execute("UPDATE blackjack_games_tb SET turn_user_id=%s,action_started=true,updated_at=now() WHERE game_id=%s",(nxt,gid)); conn.commit(); await q.answer(); nname=next(p[1] for p in players if p[0]==nxt)
             await q.message.reply_text(f"✋ {me[1]} se planta con {_score(hand)}.\n➡️ Turno de {nname}",reply_markup=_bj_buttons(gid)); return
     except Exception as exc:
@@ -495,7 +501,7 @@ async def casino_pvp_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         elif len(parts)==2 and parts[1]=='help':
             await q.answer(); await q.message.reply_text("🐢 CÓMO JUGAR\n\n1. Ponle nombre a tu tortuga.\n2. En Juegos toca 🏁 Crear carrera y elige la entrada.\n3. De 2 a 6 personas pueden unirse.\n4. Cuando sea tu turno manda el dado 🎲 real de Telegram.\n5. La primera tortuga que alcance la meta gana el pozo.\n\n🏆 Cada victoria cuenta para el ranking mensual. Al cerrar el mes: 10,000 al #1, 6,000 al #2 y 3,000 al #3.",reply_markup=_turtle_menu())
         else: await _turtle_cb(q,parts)
-    elif parts[0]=='bj': await _bj_cb(q,parts)
+    elif parts[0]=='bj': await _bj_cb(q,parts,context)
 
 async def process_turtle_dice(update:Update,context:ContextTypes.DEFAULT_TYPE):
     msg=update.effective_message
@@ -523,7 +529,8 @@ async def process_turtle_dice(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 c.execute("""INSERT INTO turtle_monthly_stats_tb(season,user_id,races,wins) VALUES(%s,%s,1,%s)
                   ON CONFLICT(season,user_id) DO UPDATE SET races=turtle_monthly_stats_tb.races+1,wins=turtle_monthly_stats_tb.wins+EXCLUDED.wins""",(season,p[0],1 if p[0]==uid else 0))
             c.execute("UPDATE turtle_games_tb SET status='finished',updated_at=now() WHERE game_id=%s",(gid,)); conn.commit()
-            await msg.reply_text(f"🎲 {value} — {random.choice(TURTLE_LINES[value])}\n🏆 ¡{current[2]} de {current[1]} cruzó la meta!\n💰 Pozo: {pot:,} PiPesos.\n👑 Victoria registrada en el ranking mensual."); return True
+            await msg.reply_text(f"🎲 {value} — {random.choice(TURTLE_LINES[value])}\n🏆 ¡{current[2]} de {current[1]} cruzó la meta!\n💰 Pozo: {pot:,} PiPesos.\n👑 Victoria registrada en el ranking mensual.")
+            await send_victory(context,uid,'tortugas',chat,JUEGOS_THREAD_ID,current[1]); return True
         nxt=(idx+1)%len(ps); c.execute("UPDATE turtle_games_tb SET turn_index=%s,updated_at=now() WHERE game_id=%s",(nxt,gid)); conn.commit()
         bars=[]
         for p in ps:

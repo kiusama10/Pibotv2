@@ -1,3 +1,4 @@
+from handlers.pipeso_extras import send_victory
 from src.utils.seasonal import seasonalize
 import asyncio,random,uuid
 from datetime import datetime
@@ -366,6 +367,7 @@ async def detectar_dado(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=fin_msg,
                 parse_mode='Markdown'
             )
+            await send_victory(context,id_ganador,'lucha',combat_chat_id or update.effective_chat.id,combat_thread_id,ganador_name)
             return
 
         siguiente_turno_atacante = 0 if turno_atacante_original else 1
