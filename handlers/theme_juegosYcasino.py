@@ -4,7 +4,7 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from handlers.general import get_receptor
-from src.database.database import normalizar_nombre,get_campo_usuario,insert_user,dar_puntos,quitar_puntos,update_perfil,get_suerte,reservar_apuesta_doble,reembolsar_apuesta_doble,consumir_uso_diario,transferir_robo_atomico,get_usuario_resumen,reservar_apuesta_persistente,liquidar_apuesta_persistente,registrar_dado_apuesta,obtener_apuestas_reservadas
+from src.database.database import normalizar_nombre,get_campo_usuario,insert_user,dar_puntos, dar_recompensa,quitar_puntos,update_perfil,get_suerte,reservar_apuesta_doble,reembolsar_apuesta_doble,consumir_uso_diario,transferir_robo_atomico,get_usuario_resumen,reservar_apuesta_persistente,liquidar_apuesta_persistente,registrar_dado_apuesta,obtener_apuestas_reservadas
 from src.config import obtener_temas_por_comunidad
 
 # === BASE DE DATOS EN MEMORIA ===
@@ -635,7 +635,7 @@ async def jugar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     valor = dice_message.dice.value
     if valor == 6 or valor == 1:
-        if dar_puntos(user_id, 1000):
+        if dar_recompensa(user_id, 1000):
             resultado = f"🎉 ¡Ganaste! sacaste {valor} 🎲\n💰 Se te acreditaron 1,000 PiPesos."
         else:
             resultado = f"🎲 Sacaste {valor}, pero la base de datos no confirmó el premio. No se anunciará un abono inexistente."

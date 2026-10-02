@@ -134,6 +134,10 @@ def _counts(uid: int):
             (uid,),
         )
         counts.update({f"cos_{k}": v for k, v in c.fetchall()})
+        try:
+            c.execute("SELECT COUNT(*) FROM user_relics_tb WHERE user_id=%s",(uid,)); counts["reliquia"]=c.fetchone()[0]
+        except Exception:
+            counts["reliquia"]=0
         return counts
     finally:
         _put_connection(conn)
@@ -262,15 +266,9 @@ def _render(uid: int, viewer: int):
         f"🎖️ {badge_name or 'Sin insignia equipada'}",
         f"🖼️ {frame_name or 'Marco de temporada'}",
         f"💰 {saldo:,} PiPesos",
-        f"📚 {counts.get('titulo',0)} títulos · 🎁 {counts.get('regalo',0)} regalos",
+        f"📚 {counts.get('titulo',0)} títulos · 🏛️ {counts.get('reliquia',0)} reliquias",
         f"✨ {counts.get('cos_marco',0)} marcos · 🎖️ {counts.get('cos_insignia',0)} insignias",
     ]
-    gifts = _gift_summary(uid, viewer)
-    if gifts:
-        gift_text = " · ".join(f"{n} ×{qty}" if qty > 1 else n for n, qty in gifts)
-        lines.append(f"🎁 Regalos: {gift_text}")
-    else:
-        lines.append("🎁 Regalos: ninguno visible")
     for label, val in [
         ("Rol", rol), ("Experiencia", exp), ("Gustos", gustos),
         ("Vínculo", formal_link or rel), ("Sobre mí", bio), ("Frase", frase), ("Límites", limites),
@@ -578,7 +576,15 @@ async def _build_profile_card(uid: int, viewer: int, context: ContextTypes.DEFAU
      badge_id, badge_name, badge_code, custom_photo_file_id)=r
     if viewer != uid and not publico:
         return None, "🔒 Este perfil es privado."
-    gifts=_gift_summary(uid,viewer); counts=_counts(uid)
+    counts=_counts(uid)
+    formal_link=None
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT CASE WHEN user_a=%s THEN user_b ELSE user_a END FROM vinculos_tb WHERE status='active' AND (user_a=%s OR user_b=%s) ORDER BY vinculo_id DESC LIMIT 1",(uid,uid,uid)); vr=c.fetchone()
+        if vr:
+            c.execute("SELECT COALESCE(NULLIF(username,''),nombre,%s) FROM perfiles_tb WHERE id_user=%s",(f"Usuario {vr[0]}",vr[0])); nr=c.fetchone(); formal_link=nr[0] if nr else f"Usuario {vr[0]}"
+    except Exception: formal_link=None
+    finally: _put_connection(conn)
     theme=FRAME_THEMES.get(frame_code, ((180,80,255),(255,50,190), current_season().replace('_',' ').upper()))
     c1,c2,theme_name=theme
     # Tarjeta más compacta: menos espacio muerto y más presencia visual del marco.
@@ -635,21 +641,12 @@ async def _build_profile_card(uid: int, viewer: int, context: ContextTypes.DEFAU
         y+=8; d.text((100,y),"F R A S E",font=small,fill=c2); y+=38
         for line in _wrap(d,'“'+str(frase)+'”',body,850)[:3]: d.text((115,y),line,font=body,fill=(245,245,255)); y+=39
     y+=12; d.line((90,y,990,y),fill=c1,width=2); y+=25
-    d.text((100,y),f"COLECCIÓN  •  {counts.get('titulo',0)} títulos  •  {counts.get('cos_marco',0)} marcos  •  {counts.get('cos_insignia',0)} insignias",font=small,fill=(200,205,225)); y+=48
-    d.text((100,y),"R E G A L O S",font=small,fill=c2); y+=38
-    if gifts:
-        # Colección visual: mini ficha por tipo de regalo, no una línea de nombres.
-        for idx,(n,q) in enumerate(gifts[:8]):
-            col=idx%4; row=idx//4; gx=105+col*225; gy=y+row*92
-            _gift_icon(d,gx,gy,n,c1,c2)
-            clean=str(n)
-            # quita el primer símbolo no ASCII de los nombres del catálogo para evitar cuadros vacíos
-            clean=' '.join(part for part in clean.split() if any(ch.isalnum() for ch in part))
-            d.text((gx+74,gy+7),clean[:15],font=_font(21,True),fill=(242,242,250))
-            d.text((gx+74,gy+38),f"×{q}",font=_font(22,True),fill=c1)
-        y += 92*((min(len(gifts),8)+3)//4)
-    else:
-        d.text((115,y),"Sin regalos visibles todavía.",font=small,fill=(165,170,190)); y+=34
+    d.text((100,y),f"COLECCIÓN • {counts.get('titulo',0)} títulos • {counts.get('reliquia',0)} reliquias • {counts.get('cos_marco',0)} marcos",font=small,fill=(200,205,225)); y+=48
+    d.text((100,y),"V Í N C U L O",font=small,fill=c2); y+=38
+    link_text = formal_link or rel or "Sin vínculo activo"
+    d.text((115,y),str(link_text)[:42],font=body,fill=(242,242,250)); y+=38
+    if formal_link:
+        d.text((115,y),"Bonus de recompensas: +20%",font=small,fill=c1); y+=34
     # Optional bio/gustos, clipped so the card remains clean.
     extras=[]
     if bio: extras.append(("SOBRE MÍ",bio))
@@ -673,12 +670,12 @@ async def perfil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     card, text = await _build_profile_card(target, target, context)
     url = await _edit_profile_url(context)
     markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏷️ Mis títulos", callback_data="soc:title_owned"), InlineKeyboardButton("🎁 Mis regalos", callback_data="soc:gift_owned")],
+        [InlineKeyboardButton("🏷️ Mis títulos", callback_data="soc:title_owned"), InlineKeyboardButton("🏛️ Bóveda", callback_data="rel:mine")],
         [InlineKeyboardButton("✨ Mi vestidor / Tienda", url=url.replace("start=editar_perfil", "start=vestidor")), InlineKeyboardButton("📸 Mi foto", url=url)],
         [InlineKeyboardButton("✏️ Editar mi perfil", url=url)],
     ])
     if card:
-        caption = f"✨ Perfil de {update.effective_user.full_name}\n🎨 Marco: {_profile(target)[18] or 'Temporada'}\n🎁 Mira su colección completa en la tarjeta."
+        caption = f"✨ Perfil de {update.effective_user.full_name}\n🎨 Marco: {_profile(target)[18] or 'Temporada'}\n🏛️ Reliquias, títulos y vínculo aparecen en la tarjeta."
         return await update.effective_message.reply_photo(photo=card, caption=caption, reply_markup=markup)
     await update.effective_message.reply_text(text, reply_markup=markup)
 

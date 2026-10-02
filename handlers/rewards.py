@@ -5,7 +5,7 @@ from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 from src.config import obtener_temas_por_comunidad
-from src.database.database import normalizar_nombre,get_campo_usuario,insert_user,dar_puntos
+from src.database.database import normalizar_nombre,get_campo_usuario,insert_user,dar_puntos, dar_recompensa
 from handlers.presentation_watchdog import mark_presented
 
 contador_imagenes_multimedia = {}
@@ -77,7 +77,7 @@ async def detectar_imagen_presentacion(update: Update, context: ContextTypes.DEF
     if get_campo_usuario(user_id,"id_user") is None:
         insert_user(user_id,0,username,nombre)
     
-    if not dar_puntos(user_id, 5):
+    if not dar_recompensa(user_id, 5):
         print(f"[REWARDS] No se pudo acreditar presentación a {user_id}; podrá volver a intentarse.")
         return
     contador_imagenes_presentacion.append(user_id)
@@ -121,7 +121,7 @@ async def detectar_imagenes_multimedia(update: Update, context: ContextTypes.DEF
         if get_campo_usuario(user_id,"id_user") is None:
             insert_user(user_id,0,username,nombre)
         # Solo consumir el bloque y anunciar si el abono realmente se confirmó.
-        if dar_puntos(user_id,10):
+        if dar_recompensa(user_id,10):
             contador_imagenes_multimedia[user_id] = 0
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
@@ -178,7 +178,7 @@ async def detectar_imagenes_nsfw(update: Update, context: ContextTypes.DEFAULT_T
         recompensa = bloques * 1000
         if get_campo_usuario(user_id,"id_user") is None:
             insert_user(user_id,0,username,nombre)
-        if dar_puntos(user_id, recompensa):
+        if dar_recompensa(user_id, recompensa):
             contador_imagenes_nsfw[user_id] = sobrante
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
@@ -223,7 +223,7 @@ async def detectar_exhibicion(update: Update, context: ContextTypes.DEFAULT_TYPE
     if get_campo_usuario(user_id, "id_user") is None:
         insert_user(user_id, 0, username, nombre)
 
-    if dar_puntos(user_id, recompensa):
+    if dar_recompensa(user_id, recompensa):
         tipo = "video" if tiene_video else "foto"
         await context.bot.send_message(
             chat_id=update.effective_chat.id,

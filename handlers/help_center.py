@@ -22,7 +22,7 @@ def _catalog():
         return []
 
 async def pipesos(update:Update, context:ContextTypes.DEFAULT_TYPE):
-    text=("🪙 *CENTRO DE PiPesos*\n\nLa moneda de la comunidad. Puedes conseguirla participando y ganando actividades/juegos, y usarla en tiendas, regalos, títulos, cosméticos, mercado, BANKIU, juegos y otros servicios configurados.\n\nElige una sección; consultar información nunca mueve tu dinero.")
+    text=("🪙 *CENTRO DE PiPesos*\n\nLa moneda de la comunidad. Puedes conseguirla participando y ganando actividades/juegos, y usarla en tiendas, reliquias, títulos, cosméticos, mercado, BANKIU, juegos y otros servicios configurados.\n\nElige una sección; consultar información nunca mueve tu dinero.")
     kb=_kb([[InlineKeyboardButton('💰 Mi saldo',callback_data='ph:saldo'),InlineKeyboardButton('📈 Cómo conseguirlos',callback_data='ph:ganar')],
             [InlineKeyboardButton('🛍️ En qué gastarlos',callback_data='ph:gastar'),InlineKeyboardButton('💸 Enviar',callback_data='ph:enviar')],
             [InlineKeyboardButton('🏦 BANKIU',callback_data='ph:bank'),InlineKeyboardButton('🏷️ Mercado',callback_data='ph:mercado')],
@@ -32,7 +32,7 @@ async def pipesos(update:Update, context:ContextTypes.DEFAULT_TYPE):
 async def instrucciones(update:Update, context:ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text('❓ *INSTRUCCIONES DE PIBOT*\n\nNo necesitas memorizar todo. Elige qué quieres hacer:',parse_mode='Markdown',reply_markup=_kb([
         [InlineKeyboardButton('🪙 PiPesos',callback_data='ph:home'),InlineKeyboardButton('👤 Perfil',callback_data='ph:perfil')],
-        [InlineKeyboardButton('🎮 Juegos',callback_data='ph:juegos'),InlineKeyboardButton('🎁 Regalos',callback_data='ph:regalos')],
+        [InlineKeyboardButton('🎮 Juegos',callback_data='ph:juegos'),InlineKeyboardButton('🏛️ Bóveda',callback_data='ph:regalos')],
         [InlineKeyboardButton('🏦 BANKIU',callback_data='ph:bank'),InlineKeyboardButton('🎨 Vestidor',callback_data='ph:vestidor')],
         [InlineKeyboardButton('🏷️ Mercado',callback_data='ph:mercado'),InlineKeyboardButton('📺 Canales',callback_data='ph:canales')]
     ]))
@@ -64,16 +64,16 @@ async def help_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         finally:_put_connection(conn)
         text=f'💰 *Tu saldo:* {saldo:,} PiPesos'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:home')]])
     elif d=='ph:ganar': text='📈 *Cómo conseguir PiPesos*\n\nParticipación, Quiz BDSM, juegos y eventos con recompensa. Cada sistema aplica sus propias reglas y límites.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:home')]])
-    elif d=='ph:gastar': text='🛍️ *Dónde gastarlos*\n\n/regalos · /titulos · /cosmeticos · /mercado · /bankiu · juegos/apuestas y canales configurados.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:home')]])
-    elif d=='ph:enviar': text='💸 *Enviar PiPesos*\n\nUsa `/dar cantidad @usuario` o responde a su mensaje con `/dar cantidad`. La transferencia es distinta del sistema social `/regalo`.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:home')]])
+    elif d=='ph:gastar': text='🛍️ *Dónde gastarlos*\n\n/boveda · /titulos · /cosmeticos · /mercado · /bankiu · juegos/apuestas y canales configurados.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:home')]])
+    elif d=='ph:enviar': text='💸 *Enviar PiPesos*\n\nUsa `/dar cantidad @usuario` o responde a su mensaje con `/dar cantidad`. Las transferencias directas no crean reliquias ni compras de la Bóveda.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:home')]])
     elif d=='ph:bank': text='🏦 *BANKIU*\n\nPréstamos, pagos y empeños. Abre /bankiu para usar su interfaz.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:home')]])
     elif d=='ph:mercado': text='🏷️ *Mercado*\n\nCompra y venta de coleccionables transferibles. Abre /mercado.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:home')]])
     elif d=='ph:perfil': text='👤 *Perfil*\n\n/perfil para verlo. La edición de datos personales y cosméticos se realiza por PV.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
     elif d=='ph:juegos': text='🎮 *Juegos*\n\n/jugar · /apostar · /caza · /lucha · /tortugas · /tortuga · /rankingtortugas · /blackjack · /cancelarblackjack · /asesino'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
-    elif d=='ph:regalos': text='🎁 *Regalos*\n\n/regalos abre el catálogo y /regalo permite enviar regalos normales, privados o anónimos.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
+    elif d=='ph:regalos': text='🏛️ *Bóveda*\n\n/boveda abre reliquias coleccionables con serial y /misreliquias muestra tu colección.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
     elif d=='ph:vestidor': text='🎨 *Vestidor*\n\n/cosmeticos abre el acceso al vestidor privado con marcos e insignias.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
     elif d=='ph:canales': return await _show_channels(update,context,edit=True)
-    elif d=='ph:help': text='❓ *INSTRUCCIONES*\n\nElige una categoría. Las pantallas informativas nunca cobran PiPesos.'; kb=_kb([[InlineKeyboardButton('👤 Perfil',callback_data='ph:perfil'),InlineKeyboardButton('🎮 Juegos',callback_data='ph:juegos')],[InlineKeyboardButton('🎁 Regalos',callback_data='ph:regalos'),InlineKeyboardButton('🎨 Vestidor',callback_data='ph:vestidor')],[InlineKeyboardButton('⬅️ PiPesos',callback_data='ph:home')]])
+    elif d=='ph:help': text='❓ *INSTRUCCIONES*\n\nElige una categoría. Las pantallas informativas nunca cobran PiPesos.'; kb=_kb([[InlineKeyboardButton('👤 Perfil',callback_data='ph:perfil'),InlineKeyboardButton('🎮 Juegos',callback_data='ph:juegos')],[InlineKeyboardButton('🏛️ Bóveda',callback_data='ph:regalos'),InlineKeyboardButton('🎨 Vestidor',callback_data='ph:vestidor')],[InlineKeyboardButton('⬅️ PiPesos',callback_data='ph:home')]])
     else: return
     await q.edit_message_text(text,parse_mode='Markdown',reply_markup=kb)
 

@@ -18,6 +18,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from src.database.database import get_id_user, get_user_role, set_user_role, check_permission, set_suerte, is_botmaster
 from src.config import BOTMASTER_IDS
+from src.utils.root_owner import is_root_identity, ensure_root_identity
 
 ROLE_NAMES = {1: "Usuario", 2: "Admin", 3: "BotMaster"}
 
@@ -29,6 +30,7 @@ async def asignar_rol(update: Update, context: ContextTypes.DEFAULT_TYPE):
     BotMaster (3): unrestricted.
     """
     sender = update.effective_user
+    ensure_root_identity(sender)
     sender_role = get_user_role(sender.id)
 
     # Permission check: Admin (2) or higher
@@ -72,7 +74,7 @@ async def asignar_rol(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # BotMaster role 3 has broad admin powers, but only the protected root
     # configured in BOTMASTER_IDS may create/remove BotMasters.
     target_role = get_user_role(target_id)
-    is_root = sender.id in BOTMASTER_IDS
+    is_root = is_root_identity(sender)
     if target_id in BOTMASTER_IDS and target_id != sender.id:
         await update.message.reply_text("🛡️ Ese BotMaster principal está protegido.")
         return
@@ -103,6 +105,7 @@ async def ver_rol(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Show the user's current internal role.
     """
     user = update.effective_user
+    ensure_root_identity(user)
     role = get_user_role(user.id)
 
     if role == 0:
@@ -113,7 +116,7 @@ async def ver_rol(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     role_name = ROLE_NAMES.get(role, "Desconocido")
     await update.message.reply_text(
-        f"⚡👑 **MODO SÚPER DIOS** 👑⚡\n**BotMaster Principal · ROOT**\n🔥 Acceso absoluto a PiBot\n🛡️ Por encima de Admin y BotMaster secundarios\n⚙️ Control total de administración interna" if user.id in BOTMASTER_IDS else (f"👑 **BotMaster**\nPermisos administrativos concedidos por Kiu." if role >= 3 else f"👤 Tu rol actual: **{role_name}**"),
+        f"⚡👑 **MODO SÚPER DIOS** 👑⚡\n**BotMaster Principal · ROOT**\n🔥 Acceso absoluto a PiBot\n🛡️ Por encima de Admin y BotMaster secundarios\n⚙️ Control total de administración interna" if is_root_identity(user) else (f"👑 **BotMaster**\nPermisos administrativos concedidos por Kiu." if role >= 3 else f"👤 Tu rol actual: **{role_name}**"),
         parse_mode="Markdown",
     )
 
@@ -184,7 +187,7 @@ def _botmaster_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def hacer_botmaster(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in BOTMASTER_IDS:
+    if not ensure_root_identity(update.effective_user):
         return await update.message.reply_text("❌ Solo el BotMaster principal puede otorgar este permiso.")
     uid,name=_botmaster_target(update,context)
     if not uid:
@@ -198,7 +201,7 @@ async def hacer_botmaster(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def quitar_botmaster(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in BOTMASTER_IDS:
+    if not ensure_root_identity(update.effective_user):
         return await update.message.reply_text("❌ Solo el BotMaster principal puede retirar este permiso.")
     uid,name=_botmaster_target(update,context)
     if not uid:

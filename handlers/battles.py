@@ -236,262 +236,63 @@ def cancelar_combate_activo_atomico(id_combate: int, actor_id: int):
 # ==================== BATTLE COMMANDS ====================
 
 async def lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Start a battle challenge with another user.
-    Syntax: /lucha [@username] [cantidad]
-    
-    The opponent has 60 seconds to accept with /aceptar lucha
-    """
-    sender = update.effective_user
-    sender_username = sender.username or f"Usuario{sender.id}"
-    
-    # Check if sender already has a pending challenge or active combat
-    if sender.id in pending_challenges:
-        await update.message.reply_text(
-            "⚔️ Ya tienes un desafío pendiente.\n"
-            "Espera a que sea aceptado o rechazado."
-        )
-        return
-    
-    if get_combate_activo(sender.id):
-        await update.message.reply_text(
-            "⚔️ Ya estás en un combate activo.\n"
-            "Termina el combate antes de retarme a otro."
-        )
-        return
-    
-    # Parse arguments
-    if not context.args or len(context.args) < 2:
-        await update.message.reply_text(
-            "📋 Uso: /lucha @usuario cantidad\n"
-            "Ejemplo: /lucha @juan 50\n\n"
-            "⚔️ Cómo funciona:\n"
-            "1️⃣ Retar a alguien (tiene 60s para aceptar)\n"
-            "2️⃣ Si acepta, inicia el combate\n"
-            "3️⃣ Lanzan dados por turnos alternados\n"
-            "4️⃣ Lanza el dado 🎲 (el resultado es el daño)\n"
-            "5️⃣ Primero en llegar a 0 HP pierde\n"
-            "💰 El ganador se queda con la apuesta doble"
-        )
-        return
-    
-    # Get opponent username
-    opponent_username = context.args[0].replace("@", "")
-    
-    # Get opponent ID
-    from src.database.database import get_id_user
-    opponent_id = get_id_user(opponent_username)
-    
-    if not opponent_id:
-        await update.message.reply_text(f"❌ No encontré a @{opponent_username}")
-        return
-    
-    if opponent_id == sender.id:
-        await update.message.reply_text("❌ No puedes retarte a ti mismo")
-        return
-    
-    # Check if opponent already has a pending challenge or active combat
-    if opponent_id in pending_challenges or get_combate_activo(opponent_id):
-        await update.message.reply_text(
-            f"❌ @{opponent_username} ya está en un combate o tiene un desafío pendiente"
-        )
-        return
-    
-    # Get bet amount
-    try:
-        apuesta = int(context.args[1])
-    except ValueError:
-        await update.message.reply_text("❌ La apuesta debe ser un número")
-        return
-    
-    if apuesta <= 0:
-        await update.message.reply_text("❌ La apuesta debe ser mayor a 0")
-        return
-    
-    # Check balance
-    saldo_atacante = get_campo_usuario(sender.id, "saldo") or 0
-    saldo_defensor = get_campo_usuario(opponent_id, "saldo") or 0
-    
-    if saldo_atacante < apuesta:
-        await update.message.reply_text(
-            f"❌ Saldo insuficiente\n"
-            f"Tienes: {saldo_atacante} PiPesos | Necesitas: {apuesta}"
-        )
-        return
-    
-    if saldo_defensor < apuesta:
-        await update.message.reply_text(
-            f"❌ @{opponent_username} no tiene suficientes PiPesos\n"
-            f"Tiene: {saldo_defensor} | Necesita: {apuesta}"
-        )
-        return
-    
-    # Reserve both bets atomically. No partial charge is possible.
-    if not reservar_apuesta_doble(sender.id, opponent_id, apuesta):
-        await update.message.reply_text(
-            "❌ No se pudo reservar la apuesta. Verifica que ambos sigan teniendo saldo suficiente."
-        )
-        return
-    
-    # Store challenge in memory
-    pending_challenges[sender.id] = {
-        "opponent_id": opponent_id,
-        "opponent_username": opponent_username,
-        "apuesta": apuesta,
-        "timestamp": datetime.now(),
-        "chat_id": update.effective_chat.id,
-        "message_thread_id": update.message.message_thread_id
-    }
-    
-    # Send challenge message to opponent
-    challenge_msg = (
-        f"⚔️ **¡DESAFÍO DE LUCHA!**\n\n"
-        f"🥊 {sender_username} te reta a batalla\n"
-        f"💰 Apuesta: {apuesta} PiPesos para cada uno\n\n"
-        f"⏱️ Tienes 60 segundos para aceptar\n"
-        f"Escribe: /aceptarlucha"
-    )
-    
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        message_thread_id=update.message.message_thread_id,
-        text=challenge_msg,
-        parse_mode='Markdown'
-    )
-    
-    # Setup 60-second timeout
+    """Abre una lucha pública en el tema. Uso: /lucha cantidad."""
+    sender=update.effective_user; name=sender.username or sender.first_name or f"Usuario{sender.id}"
+    if sender.id in pending_challenges: return await update.message.reply_text("⚔️ Ya tienes un desafío abierto. Usa /cancelarlucha o espera 60 segundos.")
+    if get_combate_activo(sender.id): return await update.message.reply_text("⚔️ Ya estás en un combate activo.")
+    if not context.args: return await update.message.reply_text("📋 Uso: /lucha cantidad\nEjemplo: /lucha 1000\n\n⚔️ Queda abierta 60 segundos y cualquier otra persona del mismo tema puede entrar con /aceptarlucha.")
+    try: apuesta=int(str(context.args[0]).replace(',',''))
+    except Exception: apuesta=0
+    if apuesta<=0: return await update.message.reply_text("❌ La apuesta debe ser un número mayor a 0.")
+    if (get_campo_usuario(sender.id,"saldo") or 0)<apuesta: return await update.message.reply_text("💸 No tienes saldo suficiente para esa apuesta.")
+    chat=update.effective_chat.id; thread=update.message.message_thread_id
+    if any(x.get("chat_id")==chat and x.get("message_thread_id")==thread for x in pending_challenges.values()): return await update.message.reply_text("⚔️ Ya hay una lucha abierta en este tema. Acéptala con /aceptarlucha.")
+    stamp=datetime.now(); pending_challenges[sender.id]={"opponent_id":None,"apuesta":apuesta,"timestamp":stamp,"chat_id":chat,"message_thread_id":thread,"challenger_name":name}
+    await context.bot.send_message(chat_id=chat,message_thread_id=thread,text=f"⚔️ ¡DESAFÍO ABIERTO!\n\n🥊 {name} abre una batalla\n💰 Apuesta: {apuesta:,} PiPesos por jugador\n⏱️ 60 segundos\n\nCualquier otra persona puede entrar con /aceptarlucha")
     async def timeout_challenge():
-        await asyncio.sleep(60)
-        if sender.id in pending_challenges:
-            # Challenge expired
-            del pending_challenges[sender.id]
-            
-            # Return both reserved bets atomically
-            reembolsar_apuesta_doble(sender.id, opponent_id, apuesta)
-            
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                message_thread_id=update.message.message_thread_id,
-                text=f"⏱️ @{opponent_username} no aceptó el desafío de {sender_username}. Se devolvieron {apuesta} PiPesos a cada jugador."
-            )
-    
+        await asyncio.sleep(60); cur=pending_challenges.get(sender.id)
+        if cur and cur.get("timestamp")==stamp:
+            pending_challenges.pop(sender.id,None)
+            try: await context.bot.send_message(chat_id=chat,message_thread_id=thread,text="⏱️ Nadie aceptó la lucha. Se cerró sin cobrar PiPesos.")
+            except Exception: pass
     asyncio.create_task(timeout_challenge())
 
 
 async def cancelar_lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id=update.effective_user.id; chat_id=update.effective_chat.id; thread_id=update.message.message_thread_id
-    challenge=pending_challenges.get(user_id); challenger_id=user_id
-    if challenge is None:
-        for cid,data in list(pending_challenges.items()):
-            if data.get("opponent_id")==user_id: challenge=data; challenger_id=cid; break
+    uid=update.effective_user.id; chat=update.effective_chat.id; thread=update.message.message_thread_id
+    challenge=pending_challenges.get(uid)
     if challenge is not None:
-        if chat_id != challenge.get("chat_id") or thread_id != challenge.get("message_thread_id"):
-            return await update.message.reply_text("⚠️ Cancela la lucha en el mismo tema donde fue creada.")
-        removed=pending_challenges.pop(challenger_id,None)
-        if removed is None: return await update.message.reply_text("ℹ️ Ese desafío ya no está pendiente.")
-        if not reembolsar_apuesta_doble(challenger_id,removed["opponent_id"],removed["apuesta"]):
-            pending_challenges[challenger_id]=removed
-            return await update.message.reply_text("⚠️ No pude cancelar la lucha de forma segura. No marqué el desafío como cancelado.")
-        return await update.message.reply_text(f"🛑 Lucha cancelada. Se devolvieron {removed['apuesta']} PiPesos a cada jugador.")
-    combate=get_combate_activo(user_id)
+        if chat!=challenge.get("chat_id") or thread!=challenge.get("message_thread_id"): return await update.message.reply_text("⚠️ Cancela la lucha en el mismo tema donde fue creada.")
+        pending_challenges.pop(uid,None); return await update.message.reply_text("🛑 Desafío cancelado. No se había cobrado ningún PiPeso.")
+    combate=get_combate_activo(uid)
     if not combate: return await update.message.reply_text("ℹ️ No tienes una lucha pendiente ni un combate activo.")
-    if chat_id != combate.get("chat_id") or thread_id != combate.get("message_thread_id"):
-        return await update.message.reply_text("⚠️ Cancela la lucha en el mismo tema donde está ocurriendo.")
-    result=cancelar_combate_activo_atomico(combate["id_combate"],user_id)
-    if result=="cancelled": return await update.message.reply_text(f"🛑 Combate cancelado. Se devolvieron {combate['apuesta']} PiPesos a cada jugador.")
+    if chat!=combate.get("chat_id") or thread!=combate.get("message_thread_id"): return await update.message.reply_text("⚠️ Cancela la lucha en el mismo tema donde está ocurriendo.")
+    result=cancelar_combate_activo_atomico(combate["id_combate"],uid)
+    if result=="cancelled": return await update.message.reply_text(f"🛑 Combate cancelado. Se devolvieron {combate['apuesta']:,} PiPesos a cada jugador.")
     if result=="closed": return await update.message.reply_text("ℹ️ Esa lucha ya terminó o fue cancelada.")
     await update.message.reply_text("⚠️ No pude cancelar la lucha de forma segura; no se hizo ningún reembolso parcial.")
 
 
 async def aceptar_lucha(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Accept a battle challenge.
-    Syntax: /aceptarlucha
-    """
-    user = update.effective_user
-    user_id = user.id
-    user_username = user.username or f"Usuario{user_id}"
-    
-    # Check if there's a challenge for this user
-    challenge = None
-    challenger_id = None
-    
-    for chall_id, chall_data in pending_challenges.items():
-        if chall_data["opponent_id"] == user_id:
-            challenge = chall_data
-            challenger_id = chall_id
-            break
-    
-    if not challenge:
-        await update.message.reply_text(
-            "❌ No tienes ningún desafío pendiente\n"
-            "Alguien debe retarte primero con /lucha"
-        )
-        return
+    user=update.effective_user; uid=user.id; chat=update.effective_chat.id; thread=update.message.message_thread_id
+    challenge=None; challenger_id=None
+    for cid,data in list(pending_challenges.items()):
+        if data.get("chat_id")==chat and data.get("message_thread_id")==thread: challenge=data; challenger_id=cid; break
+    if not challenge: return await update.message.reply_text("❌ No hay una lucha abierta en este tema. Alguien debe usar /lucha cantidad primero.")
+    if challenger_id==uid: return await update.message.reply_text("😂 No puedes aceptar tu propia lucha.")
+    if datetime.now()-challenge["timestamp"]>timedelta(seconds=60): pending_challenges.pop(challenger_id,None); return await update.message.reply_text("⏱️ Ese desafío ya expiró.")
+    if get_combate_activo(uid): return await update.message.reply_text("⚔️ Ya estás en un combate activo.")
+    apuesta=challenge["apuesta"]
+    if not reservar_apuesta_doble(challenger_id,uid,apuesta): return await update.message.reply_text("💸 No se pudo reservar la apuesta: uno de los dos ya no tiene saldo suficiente.")
+    pending_challenges.pop(challenger_id,None)
+    challenger_name=challenge.get("challenger_name") or get_campo_usuario(challenger_id,"username") or f"Usuario{challenger_id}"
+    user_name=user.username or user.first_name or f"Usuario{uid}"
+    combat_id=crear_combate(challenger_id,uid,challenger_name,user_name,apuesta,chat,thread)
+    if combat_id==-1:
+        reembolsar_apuesta_doble(challenger_id,uid,apuesta); return await update.message.reply_text("⚠️ No pude crear el combate. La reserva fue devuelta.")
+    await update.message.reply_text(f"⚔️ ¡LUCHA ACEPTADA!\n🥊 {challenger_name} vs {user_name}\n💰 Pozo: {apuesta*2:,} PiPesos\n❤️ 20 HP cada uno\n\n🎲 Turno de {challenger_name}. Lanza el dado de Telegram.")
 
-    # A challenge can only be accepted in the exact chat/topic where it was created.
-    if (update.effective_chat.id != challenge.get("chat_id") or
-            update.message.message_thread_id != challenge.get("message_thread_id")):
-        await update.message.reply_text("⚠️ Debes aceptar la lucha en el mismo tema donde te retaron.")
-        return
-    
-    # Check timeout (60 seconds)
-    time_elapsed = datetime.now() - challenge["timestamp"]
-    if time_elapsed > timedelta(seconds=60):
-        # Challenge expired
-        if challenger_id in pending_challenges:
-            del pending_challenges[challenger_id]
-        
-        reembolsar_apuesta_doble(challenger_id, user_id, challenge["apuesta"])
-        await update.message.reply_text("⏱️ Este desafío ya expiró. Las apuestas fueron devueltas.")
-        return
-    
-    # Remove challenge from pending
-    del pending_challenges[challenger_id]
-    
-    # Get challenger info
-    challenger_username = get_campo_usuario(challenger_id, "username")
-    if not challenger_username:
-        challenger_username = f"Usuario{challenger_id}"
-    
-    apuesta = challenge["apuesta"]
-    
-    # Create combat
-    combat_id = crear_combate(
-        challenger_id, user_id,
-        challenger_username,
-        user_username,
-        apuesta,
-        challenge.get("chat_id"),
-        challenge.get("message_thread_id")
-    )
-    
-    if combat_id == -1:
-        await update.message.reply_text("❌ Error al crear el combate")
-        # Refund both reserved bets as one transaction
-        reembolsar_apuesta_doble(challenger_id, user_id, apuesta)
-        return
-    
-    # Get combat details
-    combate = get_combate_by_id(combat_id)
-    
-    # Start combat message
-    start_msg = (
-        f"⚔️ **¡COMBATE INICIADO!**\n\n"
-        f"🥊 {combate['username_atacante']} vs {combate['username_defensor']}\n"
-        f"❤️ HP: 20 vs 20\n"
-        f"💰 Apuesta: {apuesta} PiPesos para cada jugador\n\n"
-        f"📊 Primer turno: @{combate['username_atacante']}\n"
-        f"🎲 Lanza el dado 🎲 para atacar"
-    )
-    
-    # El combate vive en el mismo chat/tema donde se creó el desafío.
-    await context.bot.send_message(
-        chat_id=challenge["chat_id"],
-        message_thread_id=challenge.get("message_thread_id"),
-        text=start_msg,
-        parse_mode='Markdown'
-    )
+
 
 
 

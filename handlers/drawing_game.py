@@ -2,7 +2,7 @@
 import os, random, secrets, threading, time, unicodedata, io
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ContextTypes
-from src.database.database import _get_connection, _put_connection
+from src.database.database import vinculo_reward_amount, _get_connection, _put_connection
 from PIL import Image, ImageDraw
 
 ROUND_SECONDS=120
@@ -54,7 +54,7 @@ def _reserve(uid, amount, c):
     c.execute("UPDATE usuarios_tb SET saldo=saldo-%s WHERE id_user=%s AND saldo >= %s",(amount,uid,amount)); return c.rowcount==1
 
 def _pay(uid, amount, c):
-    c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(amount,uid)); return c.rowcount==1
+    amount=vinculo_reward_amount(uid,amount,c); c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(amount,uid)); return amount if c.rowcount==1 else 0
 
 async def dibujar(update:Update, context:ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type=='private':
@@ -236,13 +236,14 @@ async def drawing_guess(update:Update, context:ContextTypes.DEFAULT_TYPE):
         if uid==drawer or guess!=_norm(word): conn.rollback(); return
         c.execute("INSERT INTO drawing_round_wins_tb(game_id,round_no,winner_id,prize) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING",(gid,rno,uid,WIN_PRIZE))
         if c.rowcount!=1: conn.rollback(); return
-        if not _pay(uid,WIN_PRIZE,c): conn.rollback(); return
+        credited=_pay(uid,WIN_PRIZE,c)
+        if not credited: conn.rollback(); return
         c.execute("UPDATE drawing_games_tb SET status='finished',word=NULL,drawer_token=NULL,viewer_token=NULL,round_ends_at=NULL,updated_at=now() WHERE game_id=%s AND round_no=%s",(gid,rno)); conn.commit()
     except Exception: conn.rollback(); return
     finally:_put_connection(conn)
     _stop_live_jobs(context,gid)
     winner=_name(update.effective_user)
-    text=f"🏆 ¡{winner} acertó!\n🎨 La palabra era {word.upper()}.\n💰 +1,500 PiPesos\n\n✅ La ronda terminó."
+    text=f"🏆 ¡{winner} acertó!\n🎨 La palabra era {word.upper()}.\n💰 +{credited:,} PiPesos" + (" · incluye +20% por vínculo 💞" if credited>WIN_PRIZE else "") + "\n\n✅ La ronda terminó."
     kb=InlineKeyboardMarkup([[InlineKeyboardButton('🎨 Tomar turno',callback_data=f'draw:take:{gid}')]])
     # Aviso independiente en el mismo tema: no depende de que Telegram conserve el reply.
     await context.bot.send_message(chat_id=chat,message_thread_id=thread,text=text,reply_markup=kb)
@@ -250,7 +251,7 @@ async def drawing_guess(update:Update, context:ContextTypes.DEFAULT_TYPE):
     try:
         conn=_get_connection(); c=conn.cursor(); c.execute("SELECT live_message_id FROM drawing_games_tb WHERE game_id=%s",(gid,)); rr=c.fetchone(); conn.rollback(); _put_connection(conn)
         if rr and rr[0]:
-            await context.bot.edit_message_caption(chat_id=chat,message_id=rr[0],caption=f"🎉 {winner} ADIVINÓ · {word.upper()}\n💰 Premio: 1,500 PiPesos\n✅ Ronda terminada",reply_markup=kb)
+            await context.bot.edit_message_caption(chat_id=chat,message_id=rr[0],caption=f"🎉 {winner} ADIVINÓ · {word.upper()}\n💰 Premio: {credited:,} PiPesos\n✅ Ronda terminada",reply_markup=kb)
     except Exception: pass
 
 async def _round_timeout(context:ContextTypes.DEFAULT_TYPE):

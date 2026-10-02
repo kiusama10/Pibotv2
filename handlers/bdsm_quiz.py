@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timezone
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
-from src.database.database import _get_connection, _put_connection
+from src.database.database import vinculo_reward_amount, _get_connection, _put_connection
 
 QUIZ_CHAT_ID=-1003290179217
 QUIZ_THREAD_ID=435
@@ -130,7 +130,7 @@ async def quiz_callback(update: Update,context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 print('[QUIZ keyboard]',e)
             return
-        c.execute("UPDATE bdsm_quiz_rounds_tb SET status='won',winner_id=%s,closed_at=NOW() WHERE round_id=%s AND status='open'",(uid,rid)); c.execute('UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s',(QUIZ_REWARD,uid))
+        c.execute("UPDATE bdsm_quiz_rounds_tb SET status='won',winner_id=%s,closed_at=NOW() WHERE round_id=%s AND status='open'",(uid,rid)); reward=vinculo_reward_amount(uid,QUIZ_REWARD,c); c.execute('UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s',(reward,uid))
         if c.rowcount!=1: conn.rollback(); await cq.answer('No pude acreditar el premio.',show_alert=True); return
         conn.commit()
     except Exception as e: conn.rollback(); print('[QUIZ callback]',e); await cq.answer('Error de base de datos.',show_alert=True); return

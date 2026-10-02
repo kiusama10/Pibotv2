@@ -414,9 +414,9 @@ async def _bj_cb(q,parts):
             if len(players)<2: conn.rollback(); await q.answer("Se necesitan al menos 2 jugadores.",show_alert=True); return
             deck=_deck()
             for p in players:
-                hand=[deck.pop(),deck.pop()]; c.execute("UPDATE blackjack_players_tb SET hand=%s,stood=false,busted=false WHERE game_id=%s AND user_id=%s",(hand,gid,p[0]))
+                hand=[deck.pop()]; c.execute("UPDATE blackjack_players_tb SET hand=%s,stood=false,busted=false WHERE game_id=%s AND user_id=%s",(hand,gid,p[0]))
             c.execute("UPDATE blackjack_games_tb SET status='active',turn_user_id=%s,deck=%s,action_started=false,updated_at=now() WHERE game_id=%s",(players[0][0],deck,gid)); conn.commit(); players=_bj_players(c,gid); await q.answer(); await q.edit_message_reply_markup(None)
-            lines=["🃏 ¡EMPIEZA EL BLACKJACK!"]+[f"👤 {p[1]}: {' '.join(p[2])} = {_score(p[2])}" for p in players]
+            lines=["🃏 ¡EMPIEZA EL BLACKJACK! · UNA CARTA INICIAL"]+[f"👤 {p[1]}: {' '.join(p[2])} = {_score(p[2])}" for p in players]
             await q.message.reply_text('\n'.join(lines)+f"\n\n➡️ Turno de {players[0][1]}",reply_markup=_bj_buttons(gid)); return
         if status!='active' or uid not in ids: conn.rollback(); await q.answer("No estás jugando esta mesa.",show_alert=True); return
         if uid!=turn: conn.rollback(); await q.answer("No es tu turno.",show_alert=True); return

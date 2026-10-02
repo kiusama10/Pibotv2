@@ -58,9 +58,9 @@ def _commands_text():
         "\n⚔️ *Combates*\n/lucha · /aceptarlucha · /ataque\n"
         "\n💰 *Economía*\n/pipesos · /tienda · /inventario · /usar · /dar · /ver · /bankiu · /pagarbanco\n"
         "\n👤 *Perfil y personalización*\n/perfil · /editarperfil · /privacidadperfil · /titulos · /mistitulos · /equipartitulo · /cosmeticos · /miscosmeticos\n"
-        "\n🎁 *Social y mercado*\n/regalos · /regalo · /misregalos · /mercado · /vender · /comprarmercado · /empenar · /desempenar\n"
+        "\n🏛️ *Bóveda y mercado*\n/boveda · /misreliquias · /mercado · /vender · /comprarmercado · /empenar · /desempenar\n"
         "\n🏆 *Rankings y actividades*\n/ranking · /ricospipesos · /quiz · /subasta · /puja · /cancelarsubasta\n💞 /vinculo · /separarse\n"
-        "\n📺 *Servicios*\n/canales · /instrucciones · /comandos\n"
+        "\n📺 *Servicios*\n/canales · /wiki · /buscar · /instrucciones · /comandos\n"
         "\n🧩 *Otros*\n/MiRol · /Suerte · /userid\n"
     )
 
