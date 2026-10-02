@@ -1673,3 +1673,26 @@ def reemplazar_acentos(cadena: str) -> str:
     for acentuada, normalizada in reemplazos:
         cadena = cadena.replace(acentuada, normalizada)
     return cadena
+
+# ==================== REWARD BONUSES ====================
+def vinculo_reward_amount(id_user: int, base_amount: int, cursor=None) -> int:
+    """Return base reward +20% while user has an active vínculo.
+    Intended only for newly-created rewards, never transfers, refunds, loans or wager pots.
+    """
+    base=max(0,int(base_amount))
+    own=False; conn=None
+    try:
+        if cursor is None:
+            conn=_get_connection(); cursor=conn.cursor(); own=True
+        cursor.execute("SELECT 1 FROM vinculos_tb WHERE status='active' AND (user_a=%s OR user_b=%s) LIMIT 1",(id_user,id_user))
+        return base + ((base*20)//100) if cursor.fetchone() else base
+    except Exception:
+        return base
+    finally:
+        if own: _put_connection(conn)
+
+
+def dar_recompensa(id_user: int, cantidad: int) -> int:
+    """Credit a reward atomically and return the amount actually credited."""
+    amount=vinculo_reward_amount(id_user,cantidad)
+    return amount if dar_puntos(id_user,amount) else 0
