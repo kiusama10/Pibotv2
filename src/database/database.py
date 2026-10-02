@@ -62,7 +62,7 @@ def _get_connection():
         raise ConnectionError("PostgreSQL connection pool is unavailable")
 
     last_error = None
-    for _ in range(2):
+    for attempt in range(12):
         conn = None
         try:
             conn = _connection_pool.getconn()
@@ -73,6 +73,10 @@ def _get_connection():
                 cursor.execute("SELECT 1")
                 cursor.fetchone()
             return conn
+        except pg_pool.PoolError as exc:
+            # Picos muy cortos (WebApp/callbacks) esperan una conexión libre en vez de tumbar el handler.
+            last_error=exc
+            time.sleep(min(0.03*(attempt+1),0.18))
         except (psycopg2.InterfaceError, psycopg2.OperationalError) as exc:
             last_error = exc
             if conn is not None:
@@ -178,6 +182,20 @@ def create_tables():
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_usuario ON items_usuarios_tb(id_user);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_item ON items_usuarios_tb(id_item);")
+
+        # Catálogo ampliable: no modifica los items existentes; solo añade metadatos/GIFs opcionales.
+        cursor.execute("ALTER TABLE items_tb ADD COLUMN IF NOT EXISTS categoria TEXT NOT NULL DEFAULT 'General'")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS item_gifs_tb (
+                gif_id BIGSERIAL PRIMARY KEY,
+                id_item INTEGER NOT NULL REFERENCES items_tb(id_item) ON DELETE CASCADE,
+                telegram_file_id TEXT NOT NULL,
+                added_by BIGINT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(id_item, telegram_file_id)
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_item_gifs_item ON item_gifs_tb(id_item)")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS perfiles_tb (
@@ -1685,7 +1703,16 @@ def vinculo_reward_amount(id_user: int, base_amount: int, cursor=None) -> int:
         if cursor is None:
             conn=_get_connection(); cursor=conn.cursor(); own=True
         cursor.execute("SELECT 1 FROM vinculos_tb WHERE status='active' AND (user_a=%s OR user_b=%s) LIMIT 1",(id_user,id_user))
-        return base + ((base*20)//100) if cursor.fetchone() else base
+        amount = base + ((base*20)//100) if cursor.fetchone() else base
+        # Potenciador temporal: solo se consulta aquí porque esta función se usa para recompensas nuevas,
+        # nunca para transferencias, reembolsos, préstamos ni pozos de apuestas.
+        try:
+            cursor.execute("SELECT multiplier FROM user_boosters_tb WHERE user_id=%s AND kind='money' AND expires_at>NOW()",(id_user,))
+            boost=cursor.fetchone()
+            if boost: amount=int(round(amount*float(boost[0])))
+        except Exception:
+            pass
+        return amount
     except Exception:
         return base
     finally:
@@ -1696,3 +1723,35 @@ def dar_recompensa(id_user: int, cantidad: int) -> int:
     """Credit a reward atomically and return the amount actually credited."""
     amount=vinculo_reward_amount(id_user,cantidad)
     return amount if dar_puntos(id_user,amount) else 0
+
+
+# ==================== DYNAMIC SHOP GIFS ====================
+def get_catalog_items():
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT id_item,nombre,precio,COALESCE(categoria,'General') FROM items_tb ORDER BY id_item")
+        return c.fetchall()
+    finally:_put_connection(conn)
+
+def get_item_gifs(id_item:int):
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT telegram_file_id FROM item_gifs_tb WHERE id_item=%s ORDER BY gif_id",(id_item,))
+        return [r[0] for r in c.fetchall()]
+    finally:_put_connection(conn)
+
+def add_item_gif(id_item:int,file_id:str,added_by:int=None):
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("INSERT INTO item_gifs_tb(id_item,telegram_file_id,added_by) VALUES(%s,%s,%s) ON CONFLICT(id_item,telegram_file_id) DO NOTHING",(id_item,file_id,added_by)); conn.commit(); return True
+    except Exception as e:
+        conn.rollback(); print('[SHOP GIF]',e); return False
+    finally:_put_connection(conn)
+
+def set_item_category(id_item:int,category:str):
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("UPDATE items_tb SET categoria=%s WHERE id_item=%s",(category,id_item)); conn.commit(); return c.rowcount==1
+    except Exception:
+        conn.rollback(); return False
+    finally:_put_connection(conn)
