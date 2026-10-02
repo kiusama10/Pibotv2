@@ -56,6 +56,12 @@ from handlers.global_events import seasonal_event_tick
 from handlers.bankiu_rankings import bankiu, pagarbanco, ranking, ranking_pipesos, bankiu_callback, track_activity, activity_flush_job, ranking_maintenance_job, bankiu_collect_overdue_job
 from handlers.bdsm_quiz import quiz_tick, quiz_callback, quiz_manual, quiz_now, ensure_quiz_tables
 from handlers.bdsm_facts import bdsm_fact_tick, ensure_fact_tables, FACT_INTERVAL_SECONDS
+from handlers.bdsm_dictionary import dictionary_tick, INTERVAL_SECONDS as DICTIONARY_INTERVAL_SECONDS
+from handlers.knowledge import wiki, buscar
+from handlers.relics import boveda, misreliquias, relic_callback, ensure_relic_tables
+from src.utils.instance_guard import acquire_single_poller_lock
+from src.utils.seasonal_bot import SeasonalExtBot
+from src.utils.root_owner import ensure_root_identity
 from handlers.casino_pvp import tortugas, tortuga, ranking_tortugas, blackjack, cancelar_blackjack, casino_pvp_callback, ensure_casino_pvp_tables, turtle_season_maintenance_job, process_turtle_input
 from handlers.auctions import subasta, puja, versubasta, cancelarsubasta, auction_maintenance_job
 from handlers.assassin_game import asesino, assassin_callback
@@ -413,6 +419,12 @@ async def bloquear_comunidad(update: Update, context: ContextTypes.DEFAULT_TYPE)
         raise ApplicationHandlerStop()
 
 
+async def root_identity_bootstrap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Keep Kiu's protected ROOT role self-healing without touching other users."""
+    if update.effective_user:
+        ensure_root_identity(update.effective_user)
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Central unexpected-error logger."""
     import logging
@@ -465,12 +477,14 @@ def main() -> None:
     ensure_presentation_tables()
     ensure_music_tables()
     ensure_vinculo_tables()
+    ensure_relic_tables()
     
     print("[INIT] Restarting active combats...")
     restart_all_combats()
     
-    app = Application.builder().token(BOT_TOKEN).post_init(recuperar_apuestas_al_iniciar).build()
+    app = Application.builder().bot(SeasonalExtBot(token=BOT_TOKEN)).post_init(recuperar_apuestas_al_iniciar).build()
     app.add_error_handler(error_handler)
+    app.add_handler(MessageHandler(filters.ALL, root_identity_bootstrap), group=-10)
     # Lightweight seasonal event check. DB idempotency prevents duplicate Christmas grants.
     if app.job_queue:
         app.job_queue.run_repeating(seasonal_event_tick, interval=3600, first=5, name="seasonal_events")
@@ -485,7 +499,8 @@ def main() -> None:
         _qnow=datetime.now(ZoneInfo("America/Mexico_City")); _qnext=(_qnow+timedelta(hours=1)).replace(minute=0,second=0,microsecond=0)
         app.job_queue.run_repeating(quiz_tick, interval=3600, first=max(1,(_qnext-_qnow).total_seconds()), name="bdsm_quiz_hourly")
         # Educational BDSM capsule every 2.5 hours. No economy side effects.
-        app.job_queue.run_repeating(bdsm_fact_tick, interval=FACT_INTERVAL_SECONDS, first=300, name="bdsm_fact_2h30")
+        app.job_queue.run_repeating(bdsm_fact_tick, interval=FACT_INTERVAL_SECONDS, first=300, name="bdsm_fact_2h")
+        app.job_queue.run_repeating(dictionary_tick, interval=DICTIONARY_INTERVAL_SECONDS, first=1200, name="bdsm_dictionary_75m")
         app.job_queue.run_repeating(turtle_season_maintenance_job, interval=3600, first=45, name="turtle_monthly_awards")
 
     # Group -4: capture genuinely new members BEFORE auto-registration. Sends nothing.
@@ -552,6 +567,10 @@ def main() -> None:
     app.add_handler(CommandHandler("pipesos", pipesos), group=2)
     app.add_handler(CommandHandler("instrucciones", instrucciones), group=2)
     app.add_handler(CommandHandler("canales", canales), group=2)
+    app.add_handler(CommandHandler("wiki", wiki), group=2)
+    app.add_handler(CommandHandler("buscar", buscar), group=2)
+    app.add_handler(CommandHandler("boveda", boveda), group=2)
+    app.add_handler(CommandHandler("misreliquias", misreliquias), group=2)
     app.add_handler(CommandHandler("caza", caza), group=2)
     app.add_handler(CommandHandler("vinculo", vinculo), group=2)
     app.add_handler(CommandHandler("cancelarvinculo", cancelarvinculo), group=2)
@@ -562,10 +581,6 @@ def main() -> None:
     app.add_handler(CommandHandler("matardibujo", matar_dibujo), group=2)
     app.add_handler(CommandHandler("titulos", titulos), group=2)
     app.add_handler(CommandHandler("comprartitulo", comprartitulo), group=2)
-    app.add_handler(CommandHandler("regalos", regalos), group=2)
-    app.add_handler(CommandHandler("regalo", regalo), group=2)
-    app.add_handler(CommandHandler("misregalos", misregalos), group=2)
-    app.add_handler(CommandHandler("rankingregalos", rankingregalos), group=2)
     app.add_handler(CommandHandler("mistitulos", mistitulos), group=2)
     app.add_handler(CommandHandler("mercado", mercado), group=2)
     app.add_handler(CommandHandler("vender", vender), group=2)
@@ -650,6 +665,7 @@ def main() -> None:
         group=5
     )
     app.add_handler(CallbackQueryHandler(social_callback, pattern="^soc:"), group=5)
+    app.add_handler(CallbackQueryHandler(relic_callback, pattern="^rel:"), group=5)
     app.add_handler(CallbackQueryHandler(vinculo_callback, pattern="^vin:"), group=5)
     app.add_handler(
         CallbackQueryHandler(bankiu_callback, pattern="^bank_"),
@@ -674,10 +690,13 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.ALL, filtro_castigo), group=6)
 
     # Start the bot
-    print("🤖 PiBot iniciado e listo para recibir mensajes...")
-    import threading
+    print("🤖 PiBot listo. Iniciando servidor web y guardia de instancia...")
+    import threading, time
     threading.Thread(target=run_server, daemon=True).start()
-    
+    while not acquire_single_poller_lock():
+        print("[INSTANCE] Otra instancia de PiBot ya posee el polling. Esta copia queda en espera segura.")
+        time.sleep(15)
+    print("[INSTANCE] Lock adquirido: esta es la única instancia autorizada para getUpdates.")
     app.run_polling(drop_pending_updates=True)
 
 

@@ -1,0 +1,41 @@
+PiBot KIU - Auditoría/estabilización 2026-10-02
+
+OBJETIVO
+- No borrar ni recalcular datos existentes.
+- Evitar dos pollers con el mismo token usando PostgreSQL advisory lock.
+- Mantener un único run_polling en el proyecto.
+- Recuperación de ROOT para Kiu mediante KIU_ROOT_ID (preferido) o username Kiusama10.
+- Lucha pública: /lucha cantidad; cualquiera del mismo tema puede aceptar.
+- Blackjack: una sola carta inicial por jugador.
+- /wiki y /buscar aceptan consultas de varias palabras.
+- Diccionario BDSM educativo cada 75 minutos en General.
+- Regalos retirados del menú/comandos; sus datos históricos NO se borran.
+- Nueva Bóveda de Reliquias: /boveda y /misreliquias.
+- Vínculos visibles en perfil y +20% en recompensas nuevas seleccionadas (no transferencias, reembolsos, préstamos ni pozos de apuestas).
+- Capa visual estacional central en mensajes de texto/ediciones/captions principales.
+
+SEGURIDAD DE DATOS
+No hay DROP TABLE, TRUNCATE ni DELETE masivo añadido. Las tablas nuevas son aditivas.
+Los regalos históricos permanecen en PostgreSQL aunque ya no estén expuestos como comandos.
+
+INSTANCIA DOBLE
+El nuevo guard usa pg_try_advisory_lock sobre una conexión dedicada. Si otro servicio con el mismo token y DATABASE_URL ya posee el polling, la segunda copia mantiene el servidor web vivo pero NO ejecuta getUpdates; reintenta cada 15 segundos. Si la principal cae, la secundaria puede tomar el lock.
+
+ROOT
+Recomendado en Render: agregar KIU_ROOT_ID con el Telegram numeric ID de Kiu. No es obligatorio para arrancar: existe fallback por username Kiusama10. BOTMASTER_IDS sigue siendo compatible.
+
+PRUEBAS ESTÁTICAS
+- compileall: OK
+- AST de todos los .py: OK
+- imports locales declarados: OK
+- imports main -> handlers: OK
+- CommandHandler duplicados: 0
+- run_polling en todo el proyecto: 1
+- get_updates manuales: 0
+- simulación blackjack aleatoria: 1,000,000 iteraciones OK
+
+NOTA
+No se pudo hacer una prueba real contra Telegram/Supabase desde el contenedor de auditoría porque no dispone de red/credenciales de producción. Eso se valida al desplegar sin exponer secretos.
+
+LIMPIEZA DE DEPLOY
+Se encontraron dentro de gifs_items/sorpresa cuatro instaladores de Windows (.exe/.msi), incluyendo instaladores de Python/Windows/Newgrounds/Flashpoint. PiBot no los usa en Render y añadían decenas de MB al deploy. Se retiraron del paquete nuevo. También se retiró un archivo accidental llamado "tatus --short" que contenía salida de Git. No eran datos de usuarios ni datos de PostgreSQL.
