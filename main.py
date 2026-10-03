@@ -63,7 +63,7 @@ from src.utils.seasonal_bot import SeasonalExtBot
 from src.utils.root_owner import ensure_root_identity
 from handlers.casino_pvp import tortugas, tortuga, ranking_tortugas, blackjack, cancelar_blackjack, casino_pvp_callback, ensure_casino_pvp_tables, turtle_season_maintenance_job, process_turtle_input
 from handlers.auctions import subasta, puja, versubasta, cancelarsubasta, auction_maintenance_job
-from handlers.assassin_game import asesino, assassin_callback, assassin_cycle_job, assassin_track_member, ensure_assassin_tables
+from handlers.assassin_game import asesino, reiniciarasesino, assassin_callback, assassin_cycle_job, assassin_track_member, ensure_assassin_tables
 from handlers.help_center import pipesos, instrucciones, canales, help_callback, channel_callback
 from handlers.bounty import caza
 from handlers.vinculos import vinculo, cancelarvinculo, separarse, vinculo_callback, ensure_vinculo_tables
@@ -586,6 +586,7 @@ def main() -> None:
     app.add_handler(CommandHandler("versubasta", versubasta), group=2)
     app.add_handler(CommandHandler("cancelarsubasta", cancelarsubasta), group=2)
     app.add_handler(CommandHandler("asesino", asesino), group=2)
+    app.add_handler(CommandHandler("reiniciarasesino", reiniciarasesino), group=2)
     app.add_handler(CommandHandler("agregargif", agregargif), group=2)
     app.add_handler(CommandHandler("cancelaragregargif", cancelaragregargif), group=2)
     app.add_handler(CommandHandler("pipesos", pipesos), group=2)
