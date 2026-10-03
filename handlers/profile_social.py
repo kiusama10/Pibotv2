@@ -55,26 +55,26 @@ CUSTOM_FRAME_BORDERS = {
 
 
 
-def _profile_display_name(uid, name):
-    code="normal"
+def _profile_font_code(uid):
+    code="normal__plain"
     conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("SELECT font_code FROM user_profile_style_tb WHERE user_id=%s",(uid,)); r=c.fetchone(); code=r[0] if r else "normal"
-    except Exception: pass
-    finally: _put_connection(conn)
-    maps={
-      "bold":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇𝐈𝐉𝐊𝐋𝐌𝐍𝐎𝐏𝐐𝐑𝐒𝐓𝐔𝐕𝐖𝐗𝐘𝐙𝐚𝐛𝐜𝐝𝐞𝐟𝐠𝐡𝐢𝐣𝐤𝐥𝐦𝐧𝐨𝐩𝐪𝐫𝐬𝐭𝐮𝐯𝐰𝐱𝐲𝐳𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗"),
-      "mono":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","𝙰𝙱𝙲𝙳𝙴𝙵𝙶𝙷𝙸𝙹𝙺𝙻𝙼𝙽𝙾𝙿𝚀𝚁𝚂𝚃𝚄𝚅𝚆𝚇𝚈𝚉𝚊𝚋𝚌𝚍𝚎𝚏𝚐𝚑𝚒𝚓𝚔𝚕𝚖𝚗𝚘𝚙𝚚𝚛𝚜𝚝𝚞𝚟𝚠𝚡𝚢𝚣𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿"),
-      "circled":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","ⒶⒷⒸⒹⒺⒻⒼⒽⒾⒿⓀⓁⓂⓃⓄⓅⓆⓇⓈⓉⓊⓋⓌⓍⓎⓏⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩ⓪①②③④⑤⑥⑦⑧⑨"),
-      "italic":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz","𝐴𝐵𝐶𝐷𝐸𝐹𝐺𝐻𝐼𝐽𝐾𝐿𝑀𝑁𝑂𝑃𝑄𝑅𝑆𝑇𝑈𝑉𝑊𝑋𝑌𝑍𝑎𝑏𝑐𝑑𝑒𝑓𝑔ℎ𝑖𝑗𝑘𝑙𝑚𝑛𝑜𝑝𝑞𝑟𝑠𝑡𝑢𝑣𝑤𝑥𝑦𝑧"),
-      "script":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz","𝒜ℬ𝒞𝒟ℰℱ𝒢ℋℐ𝒥𝒦ℒℳ𝒩𝒪𝒫𝒬ℛ𝒮𝒯𝒰𝒱𝒲𝒳𝒴𝒵𝒶𝒷𝒸𝒹ℯ𝒻ℊ𝒽𝒾𝒿𝓀𝓁𝓂𝓃ℴ𝓅𝓆𝓇𝓈𝓉𝓊𝓋𝓌𝓍𝓎𝓏"),
-      "double":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","𝔸𝔹ℂ𝔻𝔼𝔽𝔾ℍ𝕀𝕁𝕂𝕃𝕄ℕ𝕆ℙℚℝ𝕊𝕋𝕌𝕍𝕎𝕏𝕐ℤ𝕒𝕓𝕔𝕕𝕖𝕗𝕘𝕙𝕚𝕛𝕜𝕝𝕞𝕟𝕠𝕡𝕢𝕣𝕤𝕥𝕦𝕧𝕨𝕩𝕪𝕫𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡")
-    }
-    if code in maps:
-        a,b=maps[code]; return str(name).translate(str.maketrans(a,b))
-    if code=="smallcaps":
-        return str(name).translate(str.maketrans("abcdefghijklmnopqrstuvwxyz","ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘqʀꜱᴛᴜᴠᴡxʏᴢ"))
-    return str(name)
+        c=conn.cursor(); c.execute("SELECT font_code FROM user_profile_style_tb WHERE user_id=%s",(uid,)); r=c.fetchone(); code=r[0] if r else code
+    except Exception:
+        pass
+    finally:
+        _put_connection(conn)
+    if "__" not in code:
+        code=f"{code}__plain"
+    return code
+
+def _profile_display_name(uid, name):
+    from handlers.pipeso_extras import style_text
+    return style_text(name,_profile_font_code(uid))
+
+def _style_profile(uid, text):
+    from handlers.pipeso_extras import style_text
+    return style_text(text,_profile_font_code(uid))
 
 def _ensure_profile_phrase():
     conn = _get_connection()
@@ -315,7 +315,7 @@ def _render(uid: int, viewer: int):
 
     lines = [
         border,
-        f"{season_icon} PERFIL DE {_profile_display_name(uid,nombre)}",
+        f"{season_icon} PERFIL DE {nombre}",
         border,
         f"🏷️ {title}",
         f"🎖️ {badge_name or 'Sin insignia equipada'}",
@@ -341,7 +341,7 @@ def _render(uid: int, viewer: int):
         if val:
             lines.append(f"• {label}: {val}")
     lines.extend([border, f"🎉 Tema actual: {current_season().replace('_',' ').title()}"])
-    return "\n".join(lines)
+    return _style_profile(uid, "\n".join(lines))
 
 
 async def _edit_profile_url(context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -433,9 +433,8 @@ async def profile_editor_callback(update: Update, context: ContextTypes.DEFAULT_
     if data == "profile_help_titles":
         return await q.edit_message_text("🏷️ TUS TÍTULOS\n\nAbre tu colección, toca el que quieras y equípalo.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏷️ Abrir mis títulos", callback_data="soc:title_owned")],[InlineKeyboardButton("⬅️ Volver",callback_data="profile_editor")]]))
     if data == "profile_help_fonts":
-        from handlers.pipeso_extras import FONTS, FONT_LABELS
-        kb=InlineKeyboardMarkup([[InlineKeyboardButton(f"🔤 {FONT_LABELS.get(f,f)}",callback_data=f"ex:font:{f}")] for f in FONTS]+[[InlineKeyboardButton("⬅️ Volver",callback_data="profile_editor")]])
-        return await q.edit_message_text("🔤 TIPOGRAFÍAS\n\nElige una. Cada cambio cuesta 5,000 PiPesos.",reply_markup=kb)
+        from handlers.pipeso_extras import font_markup
+        return await q.edit_message_text("🔤 TIPOGRAFÍAS\n\nAquí aparecen las que has conseguido en cajas. Equiparlas es gratis.",reply_markup=font_markup(0,"profile_editor",q.from_user.id))
     if data == "profile_help_cosmetics":
         from handlers.profile_cosmetics import _home_text, _home_markup
         return await q.edit_message_text(_home_text(), reply_markup=_home_markup())

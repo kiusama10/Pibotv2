@@ -50,8 +50,34 @@ def style_text(text,code):
     elif base=='smallcaps': out=out.translate(str.maketrans("abcdefghijklmnopqrstuvwxyz","ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘqʀꜱᴛᴜᴠᴡxʏᴢ"))
     return _DECO.get(deco,"{t}").format(t=out)
 
-def font_markup(page=0,back_callback=None):
-    pages=(len(FONTS)+FONT_PAGE_SIZE-1)//FONT_PAGE_SIZE; page=max(0,min(page,pages-1)); subset=FONTS[page*FONT_PAGE_SIZE:(page+1)*FONT_PAGE_SIZE]
+def owned_fonts(uid):
+    """Tipografías desbloqueadas por cajas. Normal y la actualmente equipada se conservan siempre."""
+    owned={"normal__plain"}
+    conn=_get_connection()
+    try:
+        c=conn.cursor()
+        c.execute("SELECT asset_code FROM user_box_assets_tb WHERE user_id=%s AND asset_type='font'",(uid,))
+        
+        for r in c.fetchall():
+            if not r: continue
+            code=r[0]
+            if code in FONTS: owned.add(code)
+            elif f"{code}__plain" in FONTS: owned.add(f"{code}__plain")
+        c.execute("SELECT font_code FROM user_profile_style_tb WHERE user_id=%s",(uid,))
+        r=c.fetchone()
+        if r:
+            current=r[0]
+            if current in FONTS: owned.add(current)
+            elif f"{current}__plain" in FONTS: owned.add(f"{current}__plain")
+    except Exception:
+        pass
+    finally:
+        _put_connection(conn)
+    return [f for f in FONTS if f in owned]
+
+def font_markup(page=0,back_callback=None,uid=None):
+    available=owned_fonts(uid) if uid is not None else FONTS
+    pages=max(1,(len(available)+FONT_PAGE_SIZE-1)//FONT_PAGE_SIZE); page=max(0,min(page,pages-1)); subset=available[page*FONT_PAGE_SIZE:(page+1)*FONT_PAGE_SIZE]
     kb=[[InlineKeyboardButton(FONT_LABELS[c],callback_data=f'ex:font:{c}')] for c in subset]
     nav=[]
     if page>0: nav.append(InlineKeyboardButton('⬅️',callback_data=f'ex:fontpage:{page-1}'))
@@ -146,7 +172,7 @@ async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; p=q.data.split(':'); uid=q.from_user.id
     if p[1]=='fontnoop': return await q.answer()
     if p[1]=='fontpage':
-        page=int(p[2]); return await q.edit_message_reply_markup(reply_markup=font_markup(page,'profile_editor'))
+        page=int(p[2]); return await q.edit_message_reply_markup(reply_markup=font_markup(page,'profile_editor',q.from_user.id))
     if p[1]=='font': return await font_callback(q,p[2])
     if p[1]=='pot':
         code=p[2]; price,mins,mult,name=POTIONS[code]; kind='xp' if code.startswith('xp') else 'money'; conn=_get_connection()
@@ -179,22 +205,21 @@ async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         await q.answer('Caja abierta 🎁',show_alert=True); return await q.message.reply_text(f"🎁 Abriste {name}\n✨ Te salió: {label}")
 
 async def tipografias(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text('🔤 TIPOGRAFÍAS DE PERFIL\n\nHay más de 100 estilos. Elige uno; cada cambio cuesta 5,000 PiPesos.',reply_markup=font_markup(0))
+    await update.effective_message.reply_text('🔤 TIPOGRAFÍAS DE PERFIL\n\nAquí aparecen las tipografías que has conseguido en cajas. Equipar o cambiar entre las que ya tienes es gratis.',reply_markup=font_markup(0,uid=update.effective_user.id))
 
 async def font_callback(q,code):
     uid=q.from_user.id
     if code not in FONTS: return await q.answer('Tipografía inválida.',show_alert=True)
+    if code not in owned_fonts(uid): return await q.answer('🔒 Esa tipografía todavía no te ha salido en una caja.',show_alert=True)
     conn=_get_connection()
     try:
         c=conn.cursor(); c.execute("SELECT font_code FROM user_profile_style_tb WHERE user_id=%s FOR UPDATE",(uid,)); old=c.fetchone(); old_code=old[0] if old else 'normal'
-        if old_code==code: conn.rollback(); return await q.answer('Ya estás usando esa tipografía.',show_alert=True)
-        c.execute("UPDATE usuarios_tb SET saldo=saldo-5000 WHERE id_user=%s AND saldo>=5000",(uid,))
-        if c.rowcount!=1: conn.rollback(); return await q.answer('Necesitas 5,000 PiPesos para cambiar la tipografía.',show_alert=True)
+        if old_code==code or (old_code=='normal' and code=='normal__plain'): conn.rollback(); return await q.answer('Ya estás usando esa tipografía.',show_alert=True)
         c.execute("INSERT INTO user_profile_style_tb(user_id,font_code) VALUES(%s,%s) ON CONFLICT(user_id) DO UPDATE SET font_code=EXCLUDED.font_code,updated_at=now()",(uid,code)); conn.commit()
     except Exception:
         conn.rollback(); return await q.answer('No pude cambiar la tipografía.',show_alert=True)
     finally:_put_connection(conn)
-    await q.answer(f'Tipografía {code} equipada · -5,000 PiPesos.',show_alert=True)
+    await q.answer(f'Tipografía equipada: {FONT_LABELS.get(code,code)}.',show_alert=True)
 
 async def gifvictoria(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type!='private': return await update.effective_message.reply_text('🏆 Configura tu celebración por privado con PiBot.')
