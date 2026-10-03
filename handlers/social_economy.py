@@ -19,6 +19,15 @@ TITLE_POOL = [
     ("the_cleaner","The Cleaner","legendario",225000,3),("demon_king","Demon King","mitico",600000,1),
     ("vampire_overlord","Vampire Overlord","mitico",650000,1),("crimson_shogun","Crimson Shogun","mitico",700000,1),
 ]
+
+# Catálogo ampliado: conserva todos los títulos originales y añade más de 100 opciones temáticas.
+_EXTRA_TITLE_A=["Guardián","Reina","Rey","Dama","Señor","Príncipe","Princesa","Soberano","Soberana","Maestro","Maestra","Heredero"]
+_EXTRA_TITLE_B=["del Eclipse","de Medianoche","de Obsidiana","Carmesí","del Aftercare","del Protocolo","de las Cadenas","del Consenso","de la Luna","del Caos"]
+for _i,(_a,_b) in enumerate(((_a,_b) for _a in _EXTRA_TITLE_A for _b in _EXTRA_TITLE_B),1):
+    _code=f"extra_{_i:03d}"
+    _name=f"{_a} {_b}"
+    if not any(x[0]==_code or x[1]==_name for x in TITLE_POOL):
+        TITLE_POOL.append((_code,_name,"comun",8000,None))
 GIFTS = {
     "rosa":("🌹 Rosa","comun",2000,["Un clásico que todavía funciona.","PiBot certifica que hubo intención bonita."]),
     "chocolates":("🍫 Chocolates","comun",3000,["Dulces, caros y sin necesidad de compartir.","El soborno emocional ha sido entregado."]),

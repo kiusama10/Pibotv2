@@ -5,11 +5,61 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from src.database.database import _get_connection,_put_connection
 
-BOXES={"mini":(5000,"📦 Caja Sumisa"),"pro":(15000,"🖤 Caja Dominante"),"elite":(40000,"👑 Caja Switch Élite")}
+SEASON_BOX_NAMES={
+    "normal": {"mini":"📦 Caja Misteriosa","pro":"🖤 Caja Nocturna","elite":"👑 Caja Imperial"},
+    "halloween": {"mini":"🎃 Caja Calabaza","pro":"🦇 Caja Noche de Brujas","elite":"👑 Caja Emperador Oscuro"},
+    "dia_muertos": {"mini":"💀 Caja Cempasúchil","pro":"🌼 Caja del Mictlán","elite":"👑 Caja Alma Eterna"},
+    "navidad": {"mini":"🎁 Caja Invernal","pro":"❄️ Caja Noche Nevada","elite":"👑 Caja Krampus"},
+    "san_valentin": {"mini":"💌 Caja Corazón","pro":"🖤 Caja Pasión","elite":"👑 Caja Vínculo Eterno"},
+}
+BOX_PRICES={"mini":5000,"pro":15000,"elite":40000}
+def current_boxes():
+    names=SEASON_BOX_NAMES.get(current_season(),SEASON_BOX_NAMES["normal"])
+    return {k:(BOX_PRICES[k],names[k]) for k in ("mini","pro","elite")}
+
 POTIONS={"money1":(5000,60,1.25,"🪙 Elixir de Fortuna x1.25"),"money3":(12000,180,1.25,"🪙 Elixir de Fortuna x1.25"),"xp1":(5000,60,1.50,"✨ Elixir de Experiencia x1.50"),"xp3":(12000,180,1.50,"✨ Elixir de Experiencia x1.50")}
-BDSM_TITLES=["Collar de Medianoche","Dominante de Acero","Sumisión de Seda","Switch del Eclipse","Guardián del Aftercare","Dueño del Silencio","Reina del Protocolo","Consentimiento Sagrado","Cuerda Carmesí","Mirada Dominante","Entrega Absoluta","Señor del Shibari","Dama del Collar","Príncipe del Aftercare","Musa Sumisa","Dominio Nocturno"]
-FONTS=["normal","bold","italic","script","double","mono","smallcaps","circled"]
-FONT_LABELS={"normal":"Normal","bold":"𝐍𝐞𝐠𝐫𝐢𝐭𝐚","italic":"𝐼𝑡𝑎𝑙𝑖𝑐","script":"𝒮𝒸𝓇𝒾𝓅𝓉","double":"𝔻𝕠𝕓𝕝𝕖","mono":"𝙼𝚘𝚗𝚘","smallcaps":"ꜱᴍᴀʟʟᴄᴀᴘꜱ","circled":"Ⓒⓘⓡⓒⓛⓔⓓ"}
+_BASE_TITLES=["Collar de Medianoche","Dominante de Acero","Sumisión de Seda","Switch del Eclipse","Guardián del Aftercare","Dueño del Silencio","Reina del Protocolo","Consentimiento Sagrado","Cuerda Carmesí","Mirada Dominante","Entrega Absoluta","Señor del Shibari","Dama del Collar","Príncipe del Aftercare","Musa Sumisa","Dominio Nocturno"]
+_TITLE_A=["Guardián","Reina","Rey","Dama","Señor","Príncipe","Princesa","Soberano","Soberana","Maestro","Maestra","Alma"]
+_TITLE_B=["del Eclipse","de Medianoche","de Obsidiana","Carmesí","del Aftercare","del Protocolo","de las Cadenas","del Consenso","de la Luna","del Caos","de Terciopelo","del Santuario"]
+BDSM_TITLES=list(dict.fromkeys(_BASE_TITLES+[f"{a} {b}" for a in _TITLE_A for b in _TITLE_B]))  # 150+ títulos posibles en cajas
+
+FONT_BASES=["normal","bold","italic","script","double","mono","smallcaps","circled"]
+FONT_DECORATORS=[
+    ("plain","{t}"),("stars","✦ {t} ✦"),("spark","✨ {t} ✨"),("moon","☾ {t} ☽"),("heart","♡ {t} ♡"),
+    ("diamond","◇ {t} ◇"),("crown","♛ {t} ♛"),("chain","⛓ {t} ⛓"),("dot","• {t} •"),("wave","〜 {t} 〜"),
+    ("cross","† {t} †"),("flower","❀ {t} ❀"),("arrow","➤ {t} ◀"),("bracket","【{t}】"),("angle","《{t}》"),
+]
+FONTS=[f"{base}__{deco}" for base in FONT_BASES for deco,_ in FONT_DECORATORS]  # 120 opciones
+_BASE_LABELS={"normal":"Normal","bold":"𝐍𝐞𝐠𝐫𝐢𝐭𝐚","italic":"𝐼𝑡𝑎𝑙𝑖𝑐","script":"𝒮𝒸𝓇𝒾𝓅𝓉","double":"𝔻𝕠𝕓𝕝𝕖","mono":"𝙼𝚘𝚗𝚘","smallcaps":"ꜱᴍᴀʟʟᴄᴀᴘꜱ","circled":"Ⓒⓘⓡⓒⓛⓔⓓ"}
+_DECO=dict(FONT_DECORATORS)
+FONT_LABELS={code:_DECO[code.split('__',1)[1]].format(t=_BASE_LABELS[code.split('__',1)[0]]) for code in FONTS}
+FONT_PAGE_SIZE=12
+
+def style_text(text,code):
+    base,deco=(code.split('__',1)+['plain'])[:2] if '__' in code else (code,'plain')
+    maps={
+      "bold":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇𝐈𝐉𝐊𝐋𝐌𝐍𝐎𝐏𝐐𝐑𝐒𝐓𝐔𝐕𝐖𝐗𝐘𝐙𝐚𝐛𝐜𝐝𝐞𝐟𝐠𝐡𝐢𝐣𝐤𝐥𝐦𝐧𝐨𝐩𝐪𝐫𝐬𝐭𝐮𝐯𝐰𝐱𝐲𝐳𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟡"),
+      "mono":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","𝙰𝙱𝙲𝙳𝙴𝙵𝙶𝙷𝙸𝙹𝙺𝙻𝙼𝙽𝙾𝙿𝚀𝚁𝚂𝚃𝚄𝚅𝚆𝚇𝚈𝚉𝚊𝚋𝚌𝚍𝚎𝚏𝚐𝚑𝚒𝚓𝚔𝚕𝚖𝚗𝚘𝚙𝚚𝚛𝚜𝚝𝚞𝚟𝚠𝚡𝚢𝚣𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿"),
+      "circled":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","ⒶⒷⒸⒹⒺⒻⒼⒽⒾⒿⓀⓁⓂⓃⓄⓅⓆⓇⓈⓉⓊⓋⓌⓍⓎⓏⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩ⓪①②③④⑤⑥⑦⑧⑨"),
+      "italic":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz","𝐴𝐵𝐶𝐷𝐸𝐹𝐺𝐻𝐼𝐽𝐾𝐿𝑀𝑁𝑂𝑃𝑄𝑅𝑆𝑇𝑈𝑉𝑊𝑋𝑌𝑍𝑎𝑏𝑐𝑑𝑒𝑓𝑔ℎ𝑖𝑗𝑘𝑙𝑚𝑛𝑜𝑝𝑞𝑟𝑠𝑡𝑢𝑣𝑤𝑥𝑦𝑧"),
+      "script":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz","𝒜ℬ𝒞𝒟ℰℱ𝒢ℋℐ𝒥𝒦ℒℳ𝒩𝒪𝒫𝒬ℛ𝒮𝒯𝒰𝒱𝒲𝒳𝒴𝒵𝒶𝒷𝒸𝒹ℯ𝒻ℊ𝒽𝒾𝒿𝓀𝓁𝓂𝓃ℴ𝓅𝓆𝓇𝓈𝓉𝓊𝓋𝓌𝓍𝓎𝓏"),
+      "double":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","𝔸𝔹ℂ𝔻𝔼𝔽𝔾ℍ𝕀𝕁𝕂𝕃𝕄ℕ𝕆ℙℚℝ𝕊𝕋𝕌𝕍𝕎𝕏𝕐ℤ𝕒𝕓𝕔𝕕𝕖𝕗𝕘𝕙𝕚𝕛𝕜𝕝𝕞𝕟𝕠𝕡𝕢𝕣𝕤𝕥𝕦𝕧𝕨𝕩𝕪𝕫𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡")}
+    out=str(text)
+    if base in maps:
+        a,b=maps[base]; out=out.translate(str.maketrans(a,b))
+    elif base=='smallcaps': out=out.translate(str.maketrans("abcdefghijklmnopqrstuvwxyz","ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘqʀꜱᴛᴜᴠᴡxʏᴢ"))
+    return _DECO.get(deco,"{t}").format(t=out)
+
+def font_markup(page=0,back_callback=None):
+    pages=(len(FONTS)+FONT_PAGE_SIZE-1)//FONT_PAGE_SIZE; page=max(0,min(page,pages-1)); subset=FONTS[page*FONT_PAGE_SIZE:(page+1)*FONT_PAGE_SIZE]
+    kb=[[InlineKeyboardButton(FONT_LABELS[c],callback_data=f'ex:font:{c}')] for c in subset]
+    nav=[]
+    if page>0: nav.append(InlineKeyboardButton('⬅️',callback_data=f'ex:fontpage:{page-1}'))
+    nav.append(InlineKeyboardButton(f'{page+1}/{pages}',callback_data='ex:fontnoop'))
+    if page<pages-1: nav.append(InlineKeyboardButton('➡️',callback_data=f'ex:fontpage:{page+1}'))
+    kb.append(nav)
+    if back_callback: kb.append([InlineKeyboardButton('⬅️ Volver',callback_data=back_callback)])
+    return InlineKeyboardMarkup(kb)
 _last_activity={}
 
 def ensure_extras_tables():
@@ -82,8 +132,8 @@ async def pociones(update:Update,context:ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("🧪 POCIONES\n\nLos potenciadores de PiPesos solo afectan recompensas NUEVAS creadas por PiBot; nunca transferencias, mercado, préstamos o apuestas entre usuarios.",reply_markup=InlineKeyboardMarkup(kb))
 
 async def cajas(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    kb=[[InlineKeyboardButton(f"{name} · {price:,} PiPesos",callback_data=f'ex:box:{code}')] for code,(price,name) in BOXES.items()]
-    await update.effective_message.reply_text("🎁 CAJAS MISTERIOSAS\n\nPueden contener títulos BDSM, tipografías de perfil y premios de PiPesos. Si sale un coleccionable que ya tienes, PiBot lo convierte en 2,000 PiPesos.",reply_markup=InlineKeyboardMarkup(kb))
+    kb=[[InlineKeyboardButton(f"{name} · {price:,} PiPesos",callback_data=f'ex:box:{code}')] for code,(price,name) in current_boxes().items()]
+    await update.effective_message.reply_text(f"🎁 CAJAS DE {current_season().replace('_',' ').upper()}\n\nPueden contener cualquiera de las más de 100 tipografías, más de 100 títulos y premios de PiPesos. Si sale un coleccionable que ya tienes, PiBot lo convierte en 2,000 PiPesos.",reply_markup=InlineKeyboardMarkup(kb))
 
 def _roll_box(code):
     tier={'mini':0,'pro':1,'elite':2}[code]; x=random.random()
@@ -94,6 +144,9 @@ def _roll_box(code):
 
 async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; p=q.data.split(':'); uid=q.from_user.id
+    if p[1]=='fontnoop': return await q.answer()
+    if p[1]=='fontpage':
+        page=int(p[2]); return await q.edit_message_reply_markup(reply_markup=font_markup(page,'profile_editor'))
     if p[1]=='font': return await font_callback(q,p[2])
     if p[1]=='pot':
         code=p[2]; price,mins,mult,name=POTIONS[code]; kind='xp' if code.startswith('xp') else 'money'; conn=_get_connection()
@@ -104,7 +157,7 @@ async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         finally:_put_connection(conn)
         return await q.answer(f'{name} activado por {mins//60}h.',show_alert=True)
     if p[1]=='box':
-        code=p[2]; price,name=BOXES[code]; conn=_get_connection(); kind,val,label=_roll_box(code)
+        code=p[2]; price,name=current_boxes()[code]; conn=_get_connection(); kind,val,label=_roll_box(code)
         try:
             c=conn.cursor();
             if not _charge(c,uid,price): conn.rollback(); return await q.answer('No tienes suficientes PiPesos.',show_alert=True)
@@ -126,8 +179,7 @@ async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         await q.answer('Caja abierta 🎁',show_alert=True); return await q.message.reply_text(f"🎁 Abriste {name}\n✨ Te salió: {label}")
 
 async def tipografias(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    kb=[[InlineKeyboardButton(f'🔤 {FONT_LABELS.get(f,f)}',callback_data=f'ex:font:{f}')] for f in FONTS]
-    await update.effective_message.reply_text('🔤 TIPOGRAFÍAS DE PERFIL\n\nElige el estilo que quieras. Cada cambio cuesta 5,000 PiPesos y se cobra únicamente al tocar la opción.',reply_markup=InlineKeyboardMarkup(kb))
+    await update.effective_message.reply_text('🔤 TIPOGRAFÍAS DE PERFIL\n\nHay más de 100 estilos. Elige uno; cada cambio cuesta 5,000 PiPesos.',reply_markup=font_markup(0))
 
 async def font_callback(q,code):
     uid=q.from_user.id

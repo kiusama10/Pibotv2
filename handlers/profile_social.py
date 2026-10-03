@@ -341,7 +341,18 @@ def _render(uid: int, viewer: int):
         if val:
             lines.append(f"• {label}: {val}")
     lines.extend([border, f"🎉 Tema actual: {current_season().replace('_',' ').title()}"])
-    return "\n".join(lines)
+    rendered="\n".join(lines)
+    try:
+        from handlers.pipeso_extras import style_text
+        conn=_get_connection()
+        try:
+            c=conn.cursor(); c.execute("SELECT font_code FROM user_profile_style_tb WHERE user_id=%s",(uid,)); fr=c.fetchone(); font_code=fr[0] if fr else "normal__plain"
+        finally: _put_connection(conn)
+        # La tipografía elegida se aplica a toda la presentación, línea por línea.
+        rendered="\n".join(style_text(line,font_code) if line else line for line in rendered.split("\n"))
+    except Exception:
+        pass
+    return rendered
 
 
 async def _edit_profile_url(context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -433,9 +444,8 @@ async def profile_editor_callback(update: Update, context: ContextTypes.DEFAULT_
     if data == "profile_help_titles":
         return await q.edit_message_text("🏷️ TUS TÍTULOS\n\nAbre tu colección, toca el que quieras y equípalo.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏷️ Abrir mis títulos", callback_data="soc:title_owned")],[InlineKeyboardButton("⬅️ Volver",callback_data="profile_editor")]]))
     if data == "profile_help_fonts":
-        from handlers.pipeso_extras import FONTS, FONT_LABELS
-        kb=InlineKeyboardMarkup([[InlineKeyboardButton(f"🔤 {FONT_LABELS.get(f,f)}",callback_data=f"ex:font:{f}")] for f in FONTS]+[[InlineKeyboardButton("⬅️ Volver",callback_data="profile_editor")]])
-        return await q.edit_message_text("🔤 TIPOGRAFÍAS\n\nElige una. Cada cambio cuesta 5,000 PiPesos.",reply_markup=kb)
+        from handlers.pipeso_extras import font_markup
+        return await q.edit_message_text("🔤 TIPOGRAFÍAS\n\nHay más de 100 estilos. Elige uno. Cada cambio cuesta 5,000 PiPesos.",reply_markup=font_markup(0,"profile_editor"))
     if data == "profile_help_cosmetics":
         from handlers.profile_cosmetics import _home_text, _home_markup
         return await q.edit_message_text(_home_text(), reply_markup=_home_markup())

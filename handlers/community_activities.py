@@ -95,14 +95,14 @@ def add_weekly_points(uid:int, quiz=0, daily=0):
 def ranking_rows(ws=None,limit=20):
     ws=ws or _week_start(); conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("""SELECT p.user_id,p.quiz_points,p.daily_points,(p.quiz_points+p.daily_points) total,COALESCE(NULLIF(u.username,''),NULLIF(u.nombre,''),p.user_id::text)
-        FROM community_weekly_points_tb p LEFT JOIN usuarios_tb u ON u.id_user=p.user_id WHERE p.week_start=%s ORDER BY total DESC,p.quiz_points DESC,p.updated_at ASC LIMIT %s""",(ws,limit)); return c.fetchall()
+        c=conn.cursor(); c.execute("""SELECT p.user_id,p.quiz_points,p.daily_points,(p.quiz_points+p.daily_points) total,COALESCE(NULLIF(pr.username,''),NULLIF(pr.nombre,''),p.user_id::text)
+        FROM community_weekly_points_tb p LEFT JOIN perfiles_tb pr ON pr.id_user=p.user_id WHERE p.week_start=%s ORDER BY total DESC,p.quiz_points DESC,p.updated_at ASC LIMIT %s""",(ws,limit)); return c.fetchall()
     finally:_put_connection(conn)
 
 def ranking_text():
     rows=ranking_rows(); lines=['🏆 RANKING SEMANAL · CONOCIMIENTO','',f'Semana del {_week_start().strftime("%d/%m/%Y")}', '']
     if not rows: lines.append('Todavía no hay puntos esta semana.')
-    for i,(uid,q,d,total,name) in enumerate(rows,1): lines.append(f'{i}. {name} — {total} pts · Quiz {q} · Pregunta del Día {d}')
+    for i,(uid,q,d,total,name) in enumerate(rows,1): lines.append(f'{i}. {name} — {total} pts · {q} aciertos de Quiz · {d//2} Preguntas del Día')
     lines += ['', '🥇 10,000 · 🥈 6,000 · 🥉 3,000 PiPesos', '#RankingQuiz']
     return '\n'.join(lines)
 
