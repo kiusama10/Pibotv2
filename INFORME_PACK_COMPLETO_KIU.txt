@@ -1,0 +1,38 @@
+PIBOT V2 - PACK COMPLETO KIU
+
+Cambios incluidos:
+- Tienda: botón Abrir tienda corregido desde /start.
+- Apuestas: botón Aceptar apuesta conservando /aceptar.
+- Juegos nuevos: Dardos, Boliche y Aliados Traicioneros, todos con apuesta abierta, botones de lanzamiento y cancelación.
+- Dardos/Boliche esperan la animación de Telegram antes de mostrar el resultado.
+- Aliados: 3 vidas, desempates entre empatados, Tirador Supremo, selección de víctima por botones, timeout de 1 minuto y votación grupal.
+- GIF de victoria: Dardos, Boliche y Aliados añadidos a la selección por juego.
+- Perfil simplificado: sin tarjeta/marcos generados; conserva datos BDSM/sociales, relación, títulos, imagen propia y ratings.
+- Tipografías por botones: 5,000 PiPesos por cambio.
+- Ratings: Tortugas, Quiz, Dibuja, Asesino y juegos emoji cuando existan estadísticas.
+- Eliminados de comandos/UI: pociones, nivel, mercado/venta, empeño/desempeño y marcos/vestidor.
+- Pregunta del Día: 1,200 preguntas distintas, 10:00 AM America/Mexico_City, reply obligatorio, 2,000 PiPesos y +2 puntos.
+- Quiz: 30 minutos, explicación al acertar, +1 punto y botón de ranking semanal.
+- Ranking semanal: 10,000 / 6,000 / 3,000 PiPesos; pago idempotente y distintivos temporales.
+- Automáticos: separación mínima compartida para Quiz/Información/Diccionario y ventana protegida para Pregunta del Día.
+- Hashtags: #QuizPiBot #DiccionarioPiBot #InfoPiBot #PistasAsesino #RankingQuiz #PreguntaDelDia.
+- Asesino: pistas públicas difíciles en el mismo tema del juego.
+- Presentaciones: lógica de expulsión intacta; sólo añade aviso que se borra a los 2 minutos.
+- /comandos actualizado.
+
+Protecciones:
+- src/utils/root_owner.py: sin cambios respecto al ZIP original.
+- handlers/roles.py: sin cambios respecto al ZIP original.
+- No se recalculan saldos existentes.
+- Tablas nuevas son aditivas con CREATE TABLE IF NOT EXISTS.
+
+Validación realizada:
+- compileall completo.
+- AST: 47 archivos Python, 0 errores.
+- 1,000,000 simulaciones Dardos/Boliche: 0 fallos de ganador.
+- 200,000 partidas simuladas de Aliados (3,289,671 disparos): 0 estados inválidos.
+- 2,000,000 simulaciones de conservación económica: 0 fallos.
+- Total de escenarios simulados: 3,200,000+.
+- Banco Pregunta del Día: 1,200 textos únicos.
+
+Nota: las simulaciones masivas son de invariantes/lógica pura. No sustituyen una prueba real contra Telegram/Supabase/Render, que depende de servicios externos y credenciales.

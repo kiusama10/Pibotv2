@@ -46,7 +46,7 @@ from handlers.roles import asignar_rol, ver_rol, suerte, hacer_botmaster, quitar
 
 # Handler imports - Games and rewards
 from handlers.theme_juegosYcasino import (
-    apostar, aceptar, detectar_dado, cancelar_apuesta, jugar, robar, reiniciar_apuesta_callback, recuperar_apuestas_al_iniciar
+    apostar, aceptar, detectar_dado, cancelar_apuesta, jugar, robar, reiniciar_apuesta_callback, aceptar_apuesta_callback, recuperar_apuestas_al_iniciar
 )
 from handlers.rewards import manejar_imagenes
 from handlers.social_economy import titulos, comprartitulo, regalos, regalo, misregalos, mistitulos, rankingregalos, mercado, vender, comprarmercado, empenar, desempenar, social_callback, process_social_input
@@ -75,6 +75,8 @@ from handlers.pipeso_extras import cajas, pociones, nivel, tipografias, gifvicto
 
 # Handler imports - User onboarding
 from handlers.welcoming import nuevo_usuario, mensaje_de_presentaciones
+from handlers.emoji_party_games import dardos, boliche, aliados, cancelar_emoji_juego, emoji_game_callback
+from handlers.community_activities import ensure_community_tables, daily_question_job, daily_answer_handler, weekly_awards_job, ranking_callback, ranking_command, pregunta_dia_info
 
 # Constants
 RUTA_CASTIGADOS = PUNISHMENT_FILE
@@ -484,6 +486,7 @@ def main() -> None:
     ensure_vinculo_tables()
     ensure_extras_tables()
     ensure_assassin_tables()
+    ensure_community_tables()
     
     print("[INIT] Restarting active combats...")
     restart_all_combats()
@@ -509,6 +512,12 @@ def main() -> None:
         app.job_queue.run_repeating(dictionary_tick, interval=DICTIONARY_INTERVAL_SECONDS, first=1200, name="bdsm_dictionary_75m")
         app.job_queue.run_repeating(turtle_season_maintenance_job, interval=3600, first=45, name="turtle_monthly_awards")
         app.job_queue.run_repeating(assassin_cycle_job, interval=300, first=20, name="assassin_6h_cycle")
+        # Pregunta del Día: 10:00 AM hora de México. El coordinador reserva su ventana para evitar choques.
+        from datetime import time as dt_time
+        from zoneinfo import ZoneInfo as _ZoneInfo
+        app.job_queue.run_daily(daily_question_job, time=dt_time(hour=10, minute=0, tzinfo=_ZoneInfo('America/Mexico_City')), name='pregunta_del_dia_10mx')
+        # Cierre/pago semanal idempotente: lunes 10:50, fuera de la ventana protegida de la Pregunta del Día.
+        app.job_queue.run_daily(weekly_awards_job, time=dt_time(hour=10, minute=50, tzinfo=_ZoneInfo('America/Mexico_City')), days=(1,), name='ranking_quiz_weekly')
 
     # Group -4: capture genuinely new members BEFORE auto-registration. Sends nothing.
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, silent_new_member_watch), group=-4)
@@ -518,7 +527,6 @@ def main() -> None:
     # Group -2: Auto-register users on any message (silent, never blocks)
     app.add_handler(MessageHandler(filters.ALL, auto_registrar), group=-2)
     # Participation is throttled to one point/minute/user and flushed in batches.
-    app.add_handler(MessageHandler(filters.ALL, xp_activity), group=-4)
     app.add_handler(MessageHandler(filters.ALL, track_activity), group=-3)
 
     # Group -1: Community blocking filter (runs first, can stop others)
@@ -535,6 +543,10 @@ def main() -> None:
     app.add_handler(CommandHandler("apostar", apostar), group=1)
     app.add_handler(CommandHandler("aceptar", aceptar), group=1)
     app.add_handler(CommandHandler("cancelar", cancelar_apuesta), group=1)
+    app.add_handler(CommandHandler("dardos", dardos), group=1)
+    app.add_handler(CommandHandler("boliche", boliche), group=1)
+    app.add_handler(CommandHandler("aliados", aliados), group=1)
+    app.add_handler(CommandHandler(["cancelardardos","cancelarboliche","cancelaraliados"], cancelar_emoji_juego), group=1)
     app.add_handler(CommandHandler("robar", robar), group=1)
     app.add_handler(CommandHandler("jugar", jugar), group=1)
     app.add_handler(CommandHandler("usar", usar), group=1)
@@ -562,6 +574,8 @@ def main() -> None:
     app.add_handler(CommandHandler("ricospipesos", ranking_pipesos), group=2)
     app.add_handler(CommandHandler("quiz", quiz_manual), group=2)
     app.add_handler(CommandHandler("quizahora", quiz_now), group=2)
+    app.add_handler(CommandHandler("rankingquiz", ranking_command), group=2)
+    app.add_handler(CommandHandler("preguntadia", pregunta_dia_info), group=2)
     app.add_handler(CommandHandler("tortugas", tortugas), group=2)
     app.add_handler(CommandHandler("tortuga", tortuga), group=2)
     app.add_handler(CommandHandler("rankingtortugas", ranking_tortugas), group=2)
@@ -580,8 +594,6 @@ def main() -> None:
     app.add_handler(CommandHandler("wiki", wiki), group=2)
     app.add_handler(CommandHandler("buscar", buscar), group=2)
     app.add_handler(CommandHandler("cajas", cajas), group=2)
-    app.add_handler(CommandHandler("pociones", pociones), group=2)
-    app.add_handler(CommandHandler("nivel", nivel), group=2)
     app.add_handler(CommandHandler("tipografias", tipografias), group=2)
     app.add_handler(CommandHandler("gifvictoria", gifvictoria), group=2)
     app.add_handler(CommandHandler("caza", caza), group=2)
@@ -595,21 +607,11 @@ def main() -> None:
     app.add_handler(CommandHandler("titulos", titulos), group=2)
     app.add_handler(CommandHandler("comprartitulo", comprartitulo), group=2)
     app.add_handler(CommandHandler("mistitulos", mistitulos), group=2)
-    app.add_handler(CommandHandler("mercado", mercado), group=2)
-    app.add_handler(CommandHandler("vender", vender), group=2)
-    app.add_handler(CommandHandler("comprarmercado", comprarmercado), group=2)
-    app.add_handler(CommandHandler("empenar", empenar), group=2)
-    app.add_handler(CommandHandler("desempenar", desempenar), group=2)
     app.add_handler(CommandHandler("perfil", perfil), group=2)
     app.add_handler(CommandHandler("fotoperfil", fotoperfil), group=2)
     app.add_handler(CommandHandler("editarperfil", editarperfil), group=2)
     app.add_handler(CommandHandler("privacidadperfil", privacidadperfil), group=2)
     app.add_handler(CommandHandler("equipartitulo", equipartitulo), group=2)
-    app.add_handler(CommandHandler("cosmeticos", cosmeticos), group=2)
-    app.add_handler(CommandHandler("comprarcosmetico", comprarcosmetico), group=2)
-    app.add_handler(CommandHandler("miscosmeticos", miscosmeticos), group=2)
-    app.add_handler(CommandHandler("equiparmarco", equiparmarco), group=2)
-    app.add_handler(CommandHandler("equiparinsignia", equiparinsignia), group=2)
 
     # Group 2.5: Battle/Combat system (refactored)
     app.add_handler(CommandHandler("lucha", lucha), group=2)
@@ -622,6 +624,7 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, profile_text_input), group=2)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.PHOTO, profile_photo_input), group=2)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, drawing_guess), group=3)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, daily_answer_handler), group=4)
 
     # Paid music posts. Disabled safely until MUSIC_THREAD_ID is configured.
     app.add_handler(MessageHandler((filters.AUDIO | filters.VIDEO | filters.TEXT) & ~filters.COMMAND, paid_music_post), group=2)
@@ -650,7 +653,7 @@ def main() -> None:
     app.add_handler(
         CallbackQueryHandler(
             menu_callback,
-            pattern="^(ver_comandos|ver_inventario|perfil|instrucciones)$"
+            pattern="^(ver_comandos|ver_inventario|perfil|instrucciones|abrir_tienda)$"
         ),
         group=5
     )
@@ -664,7 +667,7 @@ def main() -> None:
     app.add_handler(
         CallbackQueryHandler(
             tienda_callback,
-            pattern="^(producto_|volver_menu|abrir_tienda|volver_catalogo|comprar_|shop_page_|shop_noop$|gif_preview_)"
+            pattern="^(producto_|volver_menu|volver_catalogo|comprar_|shop_page_|shop_noop$|gif_preview_)"
         ),
         group=5
     )
@@ -684,16 +687,22 @@ def main() -> None:
         group=5
     )
     app.add_handler(CallbackQueryHandler(quiz_callback, pattern="^bq:"), group=5)
-    app.add_handler(CallbackQueryHandler(extras_callback, pattern="^ex:(pot|box|font):"), group=5)
+    app.add_handler(CallbackQueryHandler(extras_callback, pattern="^ex:(box|font):"), group=5)
     app.add_handler(CallbackQueryHandler(victory_toggle_callback, pattern="^vg:toggle:"), group=5)
     app.add_handler(CallbackQueryHandler(victory_callback, pattern="^vg:(gif|text|games|preview|remove)$"), group=5)
     app.add_handler(CallbackQueryHandler(casino_pvp_callback, pattern="^(turtle|bj):"), group=5)
     app.add_handler(CallbackQueryHandler(assassin_callback, pattern="^as:"), group=5)
+    app.add_handler(CallbackQueryHandler(emoji_game_callback, pattern="^eg:"), group=5)
+    app.add_handler(CallbackQueryHandler(ranking_callback, pattern="^cr:rank$"), group=5)
     app.add_handler(CallbackQueryHandler(drawing_callback, pattern="^draw:"), group=5)
     app.add_handler(CallbackQueryHandler(help_callback, pattern="^ph:"), group=5)
     app.add_handler(CallbackQueryHandler(channel_callback, pattern="^ch:"), group=5)
     app.add_handler(
         CallbackQueryHandler(reiniciar_apuesta_callback, pattern="^reiniciar_apuesta$"),
+        group=5
+    )
+    app.add_handler(
+        CallbackQueryHandler(aceptar_apuesta_callback, pattern="^aceptar_apuesta$"),
         group=5
     )
 
