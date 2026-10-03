@@ -9,6 +9,7 @@ BOXES={"mini":(5000,"📦 Caja Sumisa"),"pro":(15000,"🖤 Caja Dominante"),"eli
 POTIONS={"money1":(5000,60,1.25,"🪙 Elixir de Fortuna x1.25"),"money3":(12000,180,1.25,"🪙 Elixir de Fortuna x1.25"),"xp1":(5000,60,1.50,"✨ Elixir de Experiencia x1.50"),"xp3":(12000,180,1.50,"✨ Elixir de Experiencia x1.50")}
 BDSM_TITLES=["Collar de Medianoche","Dominante de Acero","Sumisión de Seda","Switch del Eclipse","Guardián del Aftercare","Dueño del Silencio","Reina del Protocolo","Consentimiento Sagrado","Cuerda Carmesí","Mirada Dominante","Entrega Absoluta","Señor del Shibari","Dama del Collar","Príncipe del Aftercare","Musa Sumisa","Dominio Nocturno"]
 FONTS=["normal","bold","italic","script","double","mono","smallcaps","circled"]
+FONT_LABELS={"normal":"Normal","bold":"𝐍𝐞𝐠𝐫𝐢𝐭𝐚","italic":"𝐼𝑡𝑎𝑙𝑖𝑐","script":"𝒮𝒸𝓇𝒾𝓅𝓉","double":"𝔻𝕠𝕓𝕝𝕖","mono":"𝙼𝚘𝚗𝚘","smallcaps":"ꜱᴍᴀʟʟᴄᴀᴘꜱ","circled":"Ⓒⓘⓡⓒⓛⓔⓓ"}
 _last_activity={}
 
 def ensure_extras_tables():
@@ -82,15 +83,13 @@ async def pociones(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
 async def cajas(update:Update,context:ContextTypes.DEFAULT_TYPE):
     kb=[[InlineKeyboardButton(f"{name} · {price:,} PiPesos",callback_data=f'ex:box:{code}')] for code,(price,name) in BOXES.items()]
-    await update.effective_message.reply_text("🎁 CAJAS MISTERIOSAS\n\nPueden contener títulos BDSM, tipografías de perfil, pociones y premios de PiPesos. Los cosméticos repetidos se convierten en XP.",reply_markup=InlineKeyboardMarkup(kb))
+    await update.effective_message.reply_text("🎁 CAJAS MISTERIOSAS\n\nPueden contener títulos BDSM, tipografías de perfil y premios de PiPesos. Si sale un coleccionable que ya tienes, PiBot lo convierte en 2,000 PiPesos.",reply_markup=InlineKeyboardMarkup(kb))
 
 def _roll_box(code):
     tier={'mini':0,'pro':1,'elite':2}[code]; x=random.random()
     if x < .34: return 'title',random.choice(BDSM_TITLES),random.choice(BDSM_TITLES)
     if x < .60: 
         f=random.choice(FONTS); return 'font',f,f'Tipografía {f}'
-    if x < .86:
-        p=random.choice(list(POTIONS)); return 'potion',p,POTIONS[p][3]
     money=random.choice(([1000,2000,3000],[3000,5000,8000],[8000,12000,20000])[tier]); return 'money',str(money),f'{money:,} PiPesos'
 
 async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
@@ -116,34 +115,34 @@ async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 code='box_'+''.join(ch.lower() if ch.isalnum() else '_' for ch in val).strip('_')
                 c.execute("SELECT 1 FROM social_assets_tb WHERE propietario_id=%s AND asset_type='titulo' AND code=%s LIMIT 1",(uid,code))
                 if c.fetchone():
-                    c.execute("UPDATE user_progression_tb SET xp=xp+25 WHERE user_id=%s",(uid,)); label+=' · repetido → +25 XP'
+                    c.execute("UPDATE usuarios_tb SET saldo=saldo+2000 WHERE id_user=%s",(uid,)); label+=' · repetido → +2,000 PiPesos'
                 else:
                     c.execute("INSERT INTO social_assets_tb(asset_type,code,nombre,rareza,valor_base,propietario_id,origen) VALUES('titulo',%s,%s,'caja',0,%s,'caja_misteriosa')",(code,val,uid))
             else:
                 c.execute("INSERT INTO user_box_assets_tb(user_id,asset_type,asset_code,asset_name) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING",(uid,kind,val,label))
-                if c.rowcount==0: c.execute("UPDATE user_progression_tb SET xp=xp+25 WHERE user_id=%s",(uid,)); label+=' · repetido → +25 XP'
+                if c.rowcount==0: c.execute("UPDATE usuarios_tb SET saldo=saldo+2000 WHERE id_user=%s",(uid,)); label+=' · repetido → +2,000 PiPesos'
             conn.commit()
         finally:_put_connection(conn)
         await q.answer('Caja abierta 🎁',show_alert=True); return await q.message.reply_text(f"🎁 Abriste {name}\n✨ Te salió: {label}")
 
 async def tipografias(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    uid=update.effective_user.id; conn=_get_connection()
-    try:
-        c=conn.cursor(); c.execute("SELECT asset_code FROM user_box_assets_tb WHERE user_id=%s AND asset_type='font' ORDER BY asset_id",(uid,)); owned=[r[0] for r in c.fetchall()]
-    finally:_put_connection(conn)
-    owned=['normal']+owned; kb=[[InlineKeyboardButton(f'🔤 {f}',callback_data=f'ex:font:{f}')] for f in dict.fromkeys(owned)]
-    await update.effective_message.reply_text('🔤 TIPOGRAFÍAS DE PERFIL\nLas especiales salen en Cajas Misteriosas.',reply_markup=InlineKeyboardMarkup(kb))
+    kb=[[InlineKeyboardButton(f'🔤 {FONT_LABELS.get(f,f)}',callback_data=f'ex:font:{f}')] for f in FONTS]
+    await update.effective_message.reply_text('🔤 TIPOGRAFÍAS DE PERFIL\n\nElige el estilo que quieras. Cada cambio cuesta 5,000 PiPesos y se cobra únicamente al tocar la opción.',reply_markup=InlineKeyboardMarkup(kb))
 
 async def font_callback(q,code):
     uid=q.from_user.id
-    if code!='normal':
-        conn=_get_connection(); c=conn.cursor(); c.execute("SELECT 1 FROM user_box_assets_tb WHERE user_id=%s AND asset_type='font' AND asset_code=%s",(uid,code)); ok=c.fetchone(); _put_connection(conn)
-        if not ok:return await q.answer('Aún no tienes esa tipografía.',show_alert=True)
+    if code not in FONTS: return await q.answer('Tipografía inválida.',show_alert=True)
     conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("INSERT INTO user_profile_style_tb(user_id,font_code) VALUES(%s,%s) ON CONFLICT(user_id) DO UPDATE SET font_code=EXCLUDED.font_code,updated_at=now()",(uid,code)); conn.commit()
+        c=conn.cursor(); c.execute("SELECT font_code FROM user_profile_style_tb WHERE user_id=%s FOR UPDATE",(uid,)); old=c.fetchone(); old_code=old[0] if old else 'normal'
+        if old_code==code: conn.rollback(); return await q.answer('Ya estás usando esa tipografía.',show_alert=True)
+        c.execute("UPDATE usuarios_tb SET saldo=saldo-5000 WHERE id_user=%s AND saldo>=5000",(uid,))
+        if c.rowcount!=1: conn.rollback(); return await q.answer('Necesitas 5,000 PiPesos para cambiar la tipografía.',show_alert=True)
+        c.execute("INSERT INTO user_profile_style_tb(user_id,font_code) VALUES(%s,%s) ON CONFLICT(user_id) DO UPDATE SET font_code=EXCLUDED.font_code,updated_at=now()",(uid,code)); conn.commit()
+    except Exception:
+        conn.rollback(); return await q.answer('No pude cambiar la tipografía.',show_alert=True)
     finally:_put_connection(conn)
-    await q.answer(f'Tipografía {code} equipada.',show_alert=True)
+    await q.answer(f'Tipografía {code} equipada · -5,000 PiPesos.',show_alert=True)
 
 async def gifvictoria(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type!='private': return await update.effective_message.reply_text('🏆 Configura tu celebración por privado con PiBot.')
@@ -155,7 +154,7 @@ async def gifvictoria(update:Update,context:ContextTypes.DEFAULT_TYPE):
     kb=InlineKeyboardMarkup([[InlineKeyboardButton('🎞️ Subir/cambiar GIF',callback_data='vg:gif'),InlineKeyboardButton('💬 Cambiar texto',callback_data='vg:text')],[InlineKeyboardButton('🎮 Elegir juegos',callback_data='vg:games'),InlineKeyboardButton('👁 Vista previa',callback_data='vg:preview')],[InlineKeyboardButton('🗑️ Quitar celebración',callback_data='vg:remove')]])
     await update.effective_message.reply_text(f"🏆 TU CELEBRACIÓN DE VICTORIA\n\nEstado: {'✅ configurada' if r else '❌ sin configurar'}\nJuegos: {', '.join(games)}\nPrecio de {'cambio' if r else 'primera configuración'}: {price:,} PiPesos\n\nTodo se configura aquí con botones.",reply_markup=kb)
 
-GAMES=[('all','🌐 Todos'),('lucha','⚔️ Lucha'),('dibujo','🎨 Dibujo'),('tortugas','🐢 Tortugas'),('blackjack','🃏 Blackjack')]
+GAMES=[('all','🌐 Todos'),('lucha','⚔️ Lucha'),('dibujo','🎨 Dibujo'),('tortugas','🐢 Tortugas'),('blackjack','🃏 Blackjack'),('dardos','🎯 Dardos'),('boliche','🎳 Boliche'),('aliados','🤝 Aliados')]
 async def victory_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; uid=q.from_user.id; action=q.data.split(':')[1]
     if q.message.chat.type!='private': return await q.answer('Ábrelo por privado.',show_alert=True)

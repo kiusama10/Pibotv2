@@ -3,6 +3,8 @@ from __future__ import annotations
 import random
 from telegram.ext import ContextTypes
 from src.utils.seasonal import seasonalize
+from src.database.database import _get_connection,_put_connection
+from handlers.community_activities import auto_can_post
 
 CHAT_ID=-1003290179217
 THREAD_ID=435
@@ -30,8 +32,23 @@ TERMS=[
 ("Subspace","Término comunitario usado para describir un estado subjetivo de concentración o alteración de la percepción que algunas personas reportan durante dinámicas intensas."),
 ]
 _last=None
+def ensure_dictionary_tables():
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("CREATE TABLE IF NOT EXISTS bdsm_dictionary_history_tb(term TEXT PRIMARY KEY,last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),uses INT NOT NULL DEFAULT 1)"); conn.commit()
+    except Exception: conn.rollback()
+    finally:_put_connection(conn)
+
+def _pick_term():
+    ensure_dictionary_tables(); conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT term FROM bdsm_dictionary_history_tb ORDER BY last_used_at DESC LIMIT %s",(max(1,len(TERMS)-3),)); recent={r[0] for r in c.fetchall()}
+        pool=[x for x in TERMS if x[0] not in recent] or TERMS; term,definition=random.choice(pool)
+        c.execute("INSERT INTO bdsm_dictionary_history_tb(term) VALUES(%s) ON CONFLICT(term) DO UPDATE SET last_used_at=NOW(),uses=bdsm_dictionary_history_tb.uses+1",(term,)); conn.commit(); return term,definition
+    finally:_put_connection(conn)
+
 async def dictionary_tick(context:ContextTypes.DEFAULT_TYPE):
     global _last
-    choices=[x for x in TERMS if x[0]!=_last] or TERMS
-    term,definition=random.choice(choices); _last=term
-    await context.bot.send_message(chat_id=CHAT_ID,message_thread_id=THREAD_ID,text=seasonalize(f"📖 DICCIONARIO BDSM · {term}\n\n{definition}\n\n💬 Una misma palabra puede tener matices distintos entre personas; cuando importe, conviene aclarar qué significa para cada quien.",compact=True))
+    if not auto_can_post('dictionary'): return
+    term,definition=_pick_term(); _last=term
+    await context.bot.send_message(chat_id=CHAT_ID,message_thread_id=THREAD_ID,text=seasonalize(f"📖 DICCIONARIO BDSM · {term}\n\n{definition}\n\n💬 Una misma palabra puede tener matices distintos entre personas; cuando importe, conviene aclarar qué significa para cada quien.\n\n#DiccionarioPiBot",compact=True))

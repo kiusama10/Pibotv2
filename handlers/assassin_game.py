@@ -45,6 +45,20 @@ def assassin_track_member(update):
     except Exception: conn.rollback()
     finally:_put_connection(conn)
 
+
+def _cryptic_hint(name:str):
+    clean=''.join(ch for ch in str(name) if ch.isalnum())
+    n=len(clean)
+    hints=[]
+    if n:
+        bucket='corto (hasta 5 caracteres)' if n<=5 else ('medio (6 a 9 caracteres)' if n<=9 else 'largo (10 o más caracteres)')
+        hints.append(f'El alias del asesino es {bucket}.')
+        hints.append('El alias del asesino tiene una cantidad par de caracteres.' if n%2==0 else 'El alias del asesino tiene una cantidad impar de caracteres.')
+        vowels=sum(ch.lower() in 'aeiouáéíóú' for ch in clean)
+        hints.append('En su alias predominan las consonantes.' if vowels < max(1,n/2) else 'En su alias hay bastantes vocales.')
+    hints += ['El asesino sigue entre las personas que PiBot ha visto activas recientemente.','No confíes demasiado en quien parezca demasiado inocente. Esta pista no descarta a nadie.']
+    return random.choice(hints)
+
 def _thread(update):
     m=update.effective_message; return getattr(m,'message_thread_id',None)
 
@@ -129,3 +143,9 @@ async def assassin_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         finally:_put_connection(conn)
         await q.answer('Víctima elegida. 😈',show_alert=True); await q.edit_message_text(f'🔪 Misión completada. Elegiste a {name}.')
         await context.bot.send_message(chat_id=chat,message_thread_id=thread,text=f'☠️ *{name} ha sido víctima del Asesino.*\n¿Quién habrá sido? 👀',parse_mode='Markdown')
+        # Pista deliberadamente amplia: ayuda a investigar sin regalar la identidad.
+        conn2=_get_connection()
+        try:
+            cc=conn2.cursor(); cc.execute("SELECT nombre FROM assassin_group_members_tb WHERE chat_id=%s AND user_id=%s",(chat,killer)); kr=cc.fetchone(); kname=kr[0] if kr else str(killer)
+        finally:_put_connection(conn2)
+        await context.bot.send_message(chat_id=chat,message_thread_id=thread,text=f'🕵️ PISTA DEL ASESINO\n\n{_cryptic_hint(kname)}\n\n#PistasAsesino')

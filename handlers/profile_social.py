@@ -65,7 +65,10 @@ def _profile_display_name(uid, name):
     maps={
       "bold":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇𝐈𝐉𝐊𝐋𝐌𝐍𝐎𝐏𝐐𝐑𝐒𝐓𝐔𝐕𝐖𝐗𝐘𝐙𝐚𝐛𝐜𝐝𝐞𝐟𝐠𝐡𝐢𝐣𝐤𝐥𝐦𝐧𝐨𝐩𝐪𝐫𝐬𝐭𝐮𝐯𝐰𝐱𝐲𝐳𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗"),
       "mono":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","𝙰𝙱𝙲𝙳𝙴𝙵𝙶𝙷𝙸𝙹𝙺𝙻𝙼𝙽𝙾𝙿𝚀𝚁𝚂𝚃𝚄𝚅𝚆𝚇𝚈𝚉𝚊𝚋𝚌𝚍𝚎𝚏𝚐𝚑𝚒𝚓𝚔𝚕𝚖𝚗𝚘𝚙𝚚𝚛𝚜𝚝𝚞𝚟𝚠𝚡𝚢𝚣𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿"),
-      "circled":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","ⒶⒷⒸⒹⒺⒻⒼⒽⒾⒿⓀⓁⓂⓃⓄⓅⓆⓇⓈⓉⓊⓋⓌⓍⓎⓏⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩ⓪①②③④⑤⑥⑦⑧⑨")
+      "circled":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","ⒶⒷⒸⒹⒺⒻⒼⒽⒾⒿⓀⓁⓂⓃⓄⓅⓆⓇⓈⓉⓊⓋⓌⓍⓎⓏⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩ⓪①②③④⑤⑥⑦⑧⑨"),
+      "italic":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz","𝐴𝐵𝐶𝐷𝐸𝐹𝐺𝐻𝐼𝐽𝐾𝐿𝑀𝑁𝑂𝑃𝑄𝑅𝑆𝑇𝑈𝑉𝑊𝑋𝑌𝑍𝑎𝑏𝑐𝑑𝑒𝑓𝑔ℎ𝑖𝑗𝑘𝑙𝑚𝑛𝑜𝑝𝑞𝑟𝑠𝑡𝑢𝑣𝑤𝑥𝑦𝑧"),
+      "script":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz","𝒜ℬ𝒞𝒟ℰℱ𝒢ℋℐ𝒥𝒦ℒℳ𝒩𝒪𝒫𝒬ℛ𝒮𝒯𝒰𝒱𝒲𝒳𝒴𝒵𝒶𝒷𝒸𝒹ℯ𝒻ℊ𝒽𝒾𝒿𝓀𝓁𝓂𝓃ℴ𝓅𝓆𝓇𝓈𝓉𝓊𝓋𝓌𝓍𝓎𝓏"),
+      "double":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","𝔸𝔹ℂ𝔻𝔼𝔽𝔾ℍ𝕀𝕁𝕂𝕃𝕄ℕ𝕆ℙℚℝ𝕊𝕋𝕌𝕍𝕎𝕏𝕐ℤ𝕒𝕓𝕔𝕕𝕖𝕗𝕘𝕙𝕚𝕛𝕜𝕝𝕞𝕟𝕠𝕡𝕢𝕣𝕤𝕥𝕦𝕧𝕨𝕩𝕪𝕫𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡")
     }
     if code in maps:
         a,b=maps[code]; return str(name).translate(str.maketrans(a,b))
@@ -91,7 +94,7 @@ def _editor_markup():
         [InlineKeyboardButton("💜 Gustos", callback_data="profile_text_gustos"), InlineKeyboardButton("💞 Vínculo", callback_data="profile_help_vinculo")],
         [InlineKeyboardButton("🪪 Sobre mí", callback_data="profile_text_bio"), InlineKeyboardButton("💬 Mi frase", callback_data="profile_text_frase")],
         [InlineKeyboardButton("🛡️ Límites", callback_data="profile_text_limites"), InlineKeyboardButton("🔐 Privacidad", callback_data="profile_privacy")],
-        [InlineKeyboardButton("🏷️ Títulos", callback_data="profile_help_titles"), InlineKeyboardButton("✨ Vestidor", callback_data="profile_help_cosmetics")],
+        [InlineKeyboardButton("🏷️ Títulos", callback_data="profile_help_titles"), InlineKeyboardButton("🔤 Tipografía", callback_data="profile_help_fonts")],
         [InlineKeyboardButton("📸 Foto de mi tarjeta", callback_data="profile_photo"), InlineKeyboardButton("👁️ Ver mi perfil", callback_data="profile_preview")],
     ])
 
@@ -111,7 +114,7 @@ async def _editor_screen(q):
         "🎭 Rol · ⭐ experiencia · 💜 gustos\n"
         "🔗 vínculo · 🪪 sobre mí · 💬 frase\n"
         "🛡️ límites · 🔐 privacidad\n"
-        "🏷️ títulos · ✨ marcos e insignias",
+        "🏷️ títulos · 🔤 tipografía",
         reply_markup=_editor_markup(),
     )
 
@@ -251,6 +254,39 @@ def _save_profile_photo(uid: int, file_id: str | None):
         _put_connection(conn)
 
 
+
+def _ratings(uid:int):
+    """Ratings visuales calculados solo con estadísticas que PiBot ya registra."""
+    out=[]; conn=_get_connection()
+    def stars(score):
+        n=max(1,min(5,int(round(score)))); return '⭐'*n+'☆'*(5-n)
+    try:
+        c=conn.cursor()
+        try:
+            c.execute("SELECT COALESCE(SUM(races),0),COALESCE(SUM(wins),0) FROM turtle_monthly_stats_tb WHERE user_id=%s",(uid,)); races,wins=c.fetchone()
+            if races: out.append(('🐢 Tortugas',stars(1+4*float(wins)/max(1,races)),f'{wins}/{races} victorias'))
+        except Exception: conn.rollback()
+        try:
+            c.execute("SELECT COUNT(*),COALESCE(SUM(CASE WHEN correct THEN 1 ELSE 0 END),0) FROM bdsm_quiz_attempts_tb WHERE user_id=%s",(uid,)); tries,ok=c.fetchone()
+            if tries: out.append(('🧠 Quiz',stars(1+4*float(ok)/max(1,tries)),f'{ok}/{tries} aciertos'))
+        except Exception: conn.rollback()
+        try:
+            c.execute("SELECT COUNT(*) FROM drawing_round_wins_tb WHERE winner_id=%s",(uid,)); wins=c.fetchone()[0]
+            if wins: out.append(('🎨 Dibuja',stars(min(5,1+wins/3)),f'{wins} rondas ganadas'))
+        except Exception: conn.rollback()
+        try:
+            c.execute("SELECT COUNT(*) FROM assassin_choices_tb WHERE killer_id=%s",(uid,)); kills=c.fetchone()[0]
+            if kills: out.append(('🔪 Asesino',stars(min(5,1+kills/2)),f'{kills} misiones'))
+        except Exception: conn.rollback()
+        try:
+            c.execute("SELECT game_type,plays,wins FROM emoji_game_stats_tb WHERE user_id=%s ORDER BY game_type",(uid,))
+            labels={'dardos':'🎯 Dardos','boliche':'🎳 Boliche','aliados':'🤝 Aliados'}
+            for kind,plays,wins in c.fetchall():
+                if plays: out.append((labels.get(kind,kind.title()),stars(1+4*float(wins)/max(1,plays)),f'{wins}/{plays} victorias'))
+        except Exception: conn.rollback()
+    finally:_put_connection(conn)
+    return out
+
 def _render(uid: int, viewer: int):
     r = _profile(uid)
     if not r:
@@ -275,7 +311,7 @@ def _render(uid: int, viewer: int):
     finally: _put_connection(conn)
     title = (tname + (f" #{sn}/{st}" if sn else "")) if tname else "Sin equipar"
     season_icon, seasonal_border = profile_style()
-    border = CUSTOM_FRAME_BORDERS.get(frame_code, seasonal_border)
+    border = '━━━━━━━━━━━━━━━━━━'
 
     lines = [
         border,
@@ -283,11 +319,21 @@ def _render(uid: int, viewer: int):
         border,
         f"🏷️ {title}",
         f"🎖️ {badge_name or 'Sin insignia equipada'}",
-        f"🖼️ {frame_name or 'Marco de temporada'}",
         f"💰 {saldo:,} PiPesos",
         f"📚 {counts.get('titulo',0)} títulos · 🎁 cosméticos de cajas",
-        f"✨ {counts.get('cos_marco',0)} marcos · 🎖️ {counts.get('cos_insignia',0)} insignias",
+        f"🎖️ {counts.get('cos_insignia',0)} insignias",
     ]
+    conn=_get_connection(); active_badges=[]
+    try:
+        c=conn.cursor(); c.execute("SELECT badge FROM community_badges_tb WHERE user_id=%s AND (expires_at IS NULL OR expires_at>NOW()) ORDER BY earned_at DESC LIMIT 3",(uid,)); active_badges=[r[0] for r in c.fetchall()]
+    except Exception: conn.rollback()
+    finally:_put_connection(conn)
+    if active_badges:
+        lines += ['', '🏅 INSIGNIAS DE LA SEMANA'] + [f'• {x}' for x in active_badges]
+    ratings=_ratings(uid)
+    if ratings:
+        lines += ['', '📊 RATINGS']
+        lines += [f'{label}: {st} · {detail}' for label,st,detail in ratings]
     for label, val in [
         ("Rol", rol), ("Experiencia", exp), ("Gustos", gustos),
         ("Vínculo", formal_link or rel), ("Sobre mí", bio), ("Frase", frase), ("Límites", limites),
@@ -318,7 +364,7 @@ async def send_profile_editor(update: Update, context: ContextTypes.DEFAULT_TYPE
         "🎭 Rol · ⭐ experiencia · 💜 gustos\n"
         "🔗 vínculo · 🪪 sobre mí · 💬 frase\n"
         "🛡️ límites · 🔐 privacidad\n"
-        "🏷️ títulos · ✨ marcos e insignias",
+        "🏷️ títulos · 🔤 tipografía",
         reply_markup=_editor_markup(),
     )
 
@@ -386,6 +432,10 @@ async def profile_editor_callback(update: Update, context: ContextTypes.DEFAULT_
         return await q.edit_message_text("💞 VÍNCULOS\n\nLos vínculos ahora son consensuados y aparecen automáticamente en ambos perfiles. Usa /vinculo respondiendo a la persona o /vinculo @usuario. Formarlo cuesta 20,000 PiPesos solo si acepta. Para terminarlo usa /separarse; también cuesta 20,000 PiPesos y requiere confirmación.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Volver",callback_data="profile_editor")]]))
     if data == "profile_help_titles":
         return await q.edit_message_text("🏷️ TUS TÍTULOS\n\nAbre tu colección, toca el que quieras y equípalo.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏷️ Abrir mis títulos", callback_data="soc:title_owned")],[InlineKeyboardButton("⬅️ Volver",callback_data="profile_editor")]]))
+    if data == "profile_help_fonts":
+        from handlers.pipeso_extras import FONTS, FONT_LABELS
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton(f"🔤 {FONT_LABELS.get(f,f)}",callback_data=f"ex:font:{f}")] for f in FONTS]+[[InlineKeyboardButton("⬅️ Volver",callback_data="profile_editor")]])
+        return await q.edit_message_text("🔤 TIPOGRAFÍAS\n\nElige una. Cada cambio cuesta 5,000 PiPesos.",reply_markup=kb)
     if data == "profile_help_cosmetics":
         from handlers.profile_cosmetics import _home_text, _home_markup
         return await q.edit_message_text(_home_text(), reply_markup=_home_markup())
@@ -684,19 +734,19 @@ async def _build_profile_card(uid: int, viewer: int, context: ContextTypes.DEFAU
 
 
 async def perfil(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # /perfil SIEMPRE pertenece a quien ejecuta el comando. Responder a otra persona ya no cambia el objetivo.
-    target = update.effective_user.id
-    card, text = await _build_profile_card(target, target, context)
-    url = await _edit_profile_url(context)
-    markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏷️ Mis títulos", callback_data="soc:title_owned"), InlineKeyboardButton("🏛️ Bóveda", callback_data="rel:mine")],
-        [InlineKeyboardButton("✨ Mi vestidor / Tienda", url=url.replace("start=editar_perfil", "start=vestidor")), InlineKeyboardButton("📸 Mi foto", url=url)],
-        [InlineKeyboardButton("✏️ Editar mi perfil", url=url)],
+    # Perfil sencillo: sin marco generado. Conserva foto elegida + datos sociales + ratings.
+    target=update.effective_user.id
+    text=_render(target,target)
+    r=_profile(target); custom_photo=r[-1] if r else None
+    url=await _edit_profile_url(context)
+    markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏷️ Mis títulos",callback_data="soc:title_owned"),InlineKeyboardButton("🔤 Tipografía",url=url)],
+        [InlineKeyboardButton("📸 Cambiar imagen",url=url),InlineKeyboardButton("✏️ Editar perfil",url=url)],
     ])
-    if card:
-        caption = f"✨ Perfil de {update.effective_user.full_name}\n🎨 Marco: {_profile(target)[18] or 'Temporada'}\n🏛️ Reliquias, títulos y vínculo aparecen en la tarjeta."
-        return await update.effective_message.reply_photo(photo=card, caption=caption, reply_markup=markup)
-    await update.effective_message.reply_text(text, reply_markup=markup)
+    if custom_photo:
+        try: await update.effective_message.reply_photo(photo=custom_photo,caption=f"✨ Perfil de {update.effective_user.full_name}")
+        except Exception: pass
+    await update.effective_message.reply_text(text,reply_markup=markup)
 
 
 async def fotoperfil(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -10,6 +10,7 @@ from __future__ import annotations
 import random
 from telegram.ext import ContextTypes
 from src.database.database import _get_connection, _put_connection
+from handlers.community_activities import auto_can_post
 from src.utils.seasonal import current_season
 
 FACT_CHAT_ID = -1003290179217
@@ -168,11 +169,12 @@ def render_fact(fact) -> str:
     icon = random.choice(SEASON_OPEN.get(season, SEASON_OPEN["normal"]))
     intro = random.choice(INTRO)
     outro = random.choice(OUTRO)
-    return f"{icon} <b>{intro}</b>\n\n{body}\n\n{outro}\n\n📚 <i>Tema: {category.title()} · Información educativa.</i>"
+    return f"{icon} <b>{intro}</b>\n\n{body}\n\n{outro}\n\n📚 <i>Tema: {category.title()} · Información educativa.</i>\n\n#InfoPiBot"
 
 
 async def bdsm_fact_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
+        if not auto_can_post('fact'): return
         _, fact = _pick_fact()
         await context.bot.send_message(
             chat_id=FACT_CHAT_ID,

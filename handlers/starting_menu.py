@@ -29,7 +29,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_profile_editor(update, context)
         return
     if update.message.chat.type == "private" and context.args and context.args[0] == "vestidor":
-        await send_cosmetics_home(update, context)
+        await send_profile_editor(update, context)
         return
 
     # Solo mostrar menú si está en privado
@@ -54,12 +54,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def _commands_text():
     return (
         commands_intro() +
-        "\n\n🎮 *Juegos y casino*\n/jugar · /robar · /caza · /apostar · /aceptar · /cancelar · /tortugas · /tortuga · /rankingtortugas · /blackjack · /cancelarblackjack · /asesino · /dibujar · /matardibujo\n"
+        "\n\n🎮 *Juegos y casino*\n/jugar · /robar · /caza · /apostar · /aceptar · /cancelar · /dardos · /cancelardardos · /boliche · /cancelarboliche · /aliados · /cancelaraliados · /tortugas · /tortuga · /rankingtortugas · /blackjack · /cancelarblackjack · /asesino · /dibujar · /matardibujo\n"
         "\n⚔️ *Combates*\n/lucha · /aceptarlucha · /ataque\n"
         "\n💰 *Economía*\n/pipesos · /tienda · /inventario · /usar · /dar · /ver · /bankiu · /pagarbanco\n"
-        "\n👤 *Perfil y personalización*\n/perfil · /editarperfil · /privacidadperfil · /titulos · /mistitulos · /equipartitulo · /cosmeticos · /miscosmeticos · /tipografias\n"
-        "\n🎁 *Cajas, pociones y mercado*\n/cajas · /pociones · /nivel · /gifvictoria · /mercado · /vender · /comprarmercado · /empenar · /desempenar\n"
-        "\n🏆 *Rankings y actividades*\n/ranking · /ricospipesos · /quiz · /subasta · /puja · /cancelarsubasta\n💞 /vinculo · /separarse\n"
+        "\n👤 *Perfil y personalización*\n/perfil · /editarperfil · /privacidadperfil · /titulos · /mistitulos · /equipartitulo · /tipografias · /fotoperfil\n"
+        "\n🎁 *Cajas y celebraciones*\n/cajas · /gifvictoria\n"
+        "\n🏆 *Rankings y actividades*\n/ranking · /ricospipesos · /quiz · /rankingquiz · /preguntadia · /subasta · /puja · /cancelarsubasta\n💞 /vinculo · /separarse\n"
         "\n📺 *Servicios*\n/canales · /wiki · /buscar · /instrucciones · /comandos\n"
         "\n🧩 *Otros*\n/MiRol · /Suerte · /userid\n"
     )

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from src.database.database import vinculo_reward_amount, _get_connection, _put_connection
+from handlers.community_activities import auto_can_post, add_weekly_points
 
 QUIZ_CHAT_ID=-1003290179217
 QUIZ_THREAD_ID=435
@@ -21,14 +22,14 @@ def build_bank():
     for i,(term,definition) in enumerate(BASE):
         wrong=[BASE[(i+7)%n][0],BASE[(i+17)%n][0],BASE[(i+29)%n][0]]
         for v in range(5):
-            out.append({'id':f'def-{i}-{v}','type':'choice','q':f'{STEMS[v]}\n\n{definition}','answer':term,'options':[term]+wrong})
-        out.append({'id':f'tf-ok-{i}','type':'choice','q':f'Verdadero o falso:\n\n«{term}» puede describirse como: {definition}','answer':'Verdadero','options':['Verdadero','Falso']})
-        out.append({'id':f'tf-no-{i}','type':'choice','q':f'Verdadero o falso:\n\n«{term}» significa: {BASE[(i+13)%n][1]}','answer':'Falso','options':['Verdadero','Falso']})
+            out.append({'id':f'def-{i}-{v}','type':'choice','q':f'{STEMS[v]}\n\n{definition}','answer':term,'explanation':f'{term}: {definition}','options':[term]+wrong})
+        out.append({'id':f'tf-ok-{i}','type':'choice','q':f'Verdadero o falso:\n\n«{term}» puede describirse como: {definition}','answer':'Verdadero','explanation':f'Es verdadero porque {term} se refiere a: {definition}','options':['Verdadero','Falso']})
+        out.append({'id':f'tf-no-{i}','type':'choice','q':f'Verdadero o falso:\n\n«{term}» significa: {BASE[(i+13)%n][1]}','answer':'Falso','explanation':f'Es falso. {term} significa: {definition}','options':['Verdadero','Falso']})
     scenarios=[
       ('Alguien dice rojo durante una dinámica.','Detenerse inmediatamente'),('Una persona retira hoy algo que aceptó ayer.','Respetar la decisión actual'),('Aparece entumecimiento bajo una restricción.','Detener y revisar'),('Alguien está demasiado intoxicado para decidir con claridad.','Posponer'),('Surge dolor inesperado.','Pausar y comprobar'),('Quieren compartir una foto privada.','Pedir permiso específico'),('Los límites de dos personas no encajan.','Aceptar la incompatibilidad sin presionar'),('Alguien pide espacio como aftercare.','Respetar y adaptar el cuidado'),('Una persona no puede hablar durante la práctica.','Usar la señal no verbal acordada'),('Una persona experimentada dice que no necesita negociar.','Negociar igualmente')]
     bad=['Continuar porque ya había aceptado','Ignorarlo','Decidir por la otra persona']
     for i,(s,a) in enumerate(scenarios):
-        for v in range(30): out.append({'id':f'sc-{i}-{v}','type':'choice','q':f'🛡️ Caso práctico #{v+1}\n\n{s}\n\n¿Qué opción respeta mejor seguridad y consentimiento?','answer':a,'options':[a]+bad})
+        for v in range(30): out.append({'id':f'sc-{i}-{v}','type':'choice','q':f'🛡️ Caso práctico #{v+1}\n\n{s}\n\n¿Qué opción respeta mejor seguridad y consentimiento?','answer':a,'explanation':f"La opción correcta es «{a}» porque prioriza consentimiento, seguridad y comunicación ante esa situación.",'options':[a]+bad})
     for i,q in enumerate(OPEN):
         for v in range(10): out.append({'id':f'open-{i}-{v}','type':'open','q':f'💬 Debate #{v+1}\n\n{q}'})
     # Additional mixed rounds: same knowledge tested with different prompts/options; bank is built once in RAM.
@@ -45,6 +46,7 @@ def ensure_quiz_tables():
         c.execute("CREATE TABLE IF NOT EXISTS bdsm_quiz_rounds_tb (round_id BIGSERIAL PRIMARY KEY, question_key TEXT NOT NULL, question_text TEXT NOT NULL, answer_text TEXT, status TEXT NOT NULL DEFAULT 'open', winner_id BIGINT, chat_id BIGINT NOT NULL, thread_id BIGINT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), closed_at TIMESTAMPTZ)")
         c.execute("ALTER TABLE bdsm_quiz_rounds_tb ADD COLUMN IF NOT EXISTS options_json JSONB")
         c.execute("ALTER TABLE bdsm_quiz_rounds_tb ADD COLUMN IF NOT EXISTS eliminated_json JSONB NOT NULL DEFAULT '[]'::jsonb")
+        c.execute("ALTER TABLE bdsm_quiz_rounds_tb ADD COLUMN IF NOT EXISTS explanation_text TEXT")
         c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_bdsm_quiz_one_open ON bdsm_quiz_rounds_tb(chat_id,thread_id) WHERE status='open'")
         c.execute("CREATE TABLE IF NOT EXISTS bdsm_quiz_attempts_tb (round_id BIGINT NOT NULL REFERENCES bdsm_quiz_rounds_tb(round_id) ON DELETE CASCADE,user_id BIGINT NOT NULL,answer_text TEXT NOT NULL,correct BOOLEAN NOT NULL DEFAULT FALSE,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(round_id,user_id))")
         c.execute("CREATE TABLE IF NOT EXISTS bdsm_quiz_history_tb (question_key TEXT PRIMARY KEY,last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),uses INTEGER NOT NULL DEFAULT 1)")
@@ -79,23 +81,24 @@ def _create(q):
     try:
         c=conn.cursor(); c.execute("UPDATE bdsm_quiz_rounds_tb SET status='expired',closed_at=NOW() WHERE chat_id=%s AND thread_id=%s AND status='open'",(QUIZ_CHAT_ID,QUIZ_THREAD_ID))
         status='discussion' if q['type']=='open' else 'open'
-        c.execute('INSERT INTO bdsm_quiz_rounds_tb(question_key,question_text,answer_text,status,chat_id,thread_id) VALUES(%s,%s,%s,%s,%s,%s) RETURNING round_id',(q['id'],q['q'],q.get('answer'),status,QUIZ_CHAT_ID,QUIZ_THREAD_ID)); rid=c.fetchone()[0]
+        c.execute('INSERT INTO bdsm_quiz_rounds_tb(question_key,question_text,answer_text,explanation_text,status,chat_id,thread_id) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING round_id',(q['id'],q['q'],q.get('answer'),q.get('explanation'),status,QUIZ_CHAT_ID,QUIZ_THREAD_ID)); rid=c.fetchone()[0]
         c.execute('INSERT INTO bdsm_quiz_history_tb(question_key) VALUES(%s) ON CONFLICT(question_key) DO UPDATE SET last_used_at=NOW(),uses=bdsm_quiz_history_tb.uses+1',(q['id'],)); conn.commit(); return rid
     except Exception: conn.rollback(); raise
     finally: _put_connection(conn)
 
 async def quiz_tick(context: ContextTypes.DEFAULT_TYPE):
     try:
+        if not auto_can_post('quiz'): return
         q=_pick(); rid=_create(q)
         if q['type']=='open':
-            await context.bot.send_message(QUIZ_CHAT_ID,f"🖤 QUIZ BDSM · Ronda abierta\n\n{q['q']}\n\n💬 Sin respuesta única ni premio.",message_thread_id=QUIZ_THREAD_ID); return
+            await context.bot.send_message(QUIZ_CHAT_ID,f"🖤 QUIZ BDSM · Ronda abierta\n\n{q['q']}\n\n💬 Sin respuesta única ni premio.\n\n#QuizPiBot",message_thread_id=QUIZ_THREAD_ID); return
         opts=list(dict.fromkeys(q['options'])); random.shuffle(opts); context.application.bot_data.setdefault('bq_options',{})[rid]=opts
         conn=_get_connection()
         try:
             c=conn.cursor(); c.execute('UPDATE bdsm_quiz_rounds_tb SET options_json=%s::jsonb WHERE round_id=%s',(json.dumps(opts,ensure_ascii=False),rid)); conn.commit()
         finally:_put_connection(conn)
         kb=_quiz_keyboard(rid,opts)
-        await context.bot.send_message(QUIZ_CHAT_ID,f"🖤 QUIZ BDSM · 1 intento por persona\n\n{q['q']}\n\n🏆 Primera correcta: {QUIZ_REWARD:,} PiPesos",message_thread_id=QUIZ_THREAD_ID,reply_markup=kb)
+        await context.bot.send_message(QUIZ_CHAT_ID,f"🖤 QUIZ BDSM · 1 intento por persona\n\n{q['q']}\n\n🏆 Primera correcta: {QUIZ_REWARD:,} PiPesos\n⏳ Tienes hasta 30 minutos.\n\n#QuizPiBot",message_thread_id=QUIZ_THREAD_ID,reply_markup=kb)
     except Exception as e: print('[QUIZ]',e)
 
 async def quiz_callback(update: Update,context: ContextTypes.DEFAULT_TYPE):
@@ -106,10 +109,10 @@ async def quiz_callback(update: Update,context: ContextTypes.DEFAULT_TYPE):
     opts=context.application.bot_data.get('bq_options',{}).get(rid)
     uid=cq.from_user.id; conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("SELECT status,answer_text,options_json,created_at,eliminated_json FROM bdsm_quiz_rounds_tb WHERE round_id=%s FOR UPDATE",(rid,)); row=c.fetchone()
+        c=conn.cursor(); c.execute("SELECT status,answer_text,options_json,created_at,eliminated_json,explanation_text FROM bdsm_quiz_rounds_tb WHERE round_id=%s FOR UPDATE",(rid,)); row=c.fetchone()
         if not row or row[0]!='open': conn.rollback(); await cq.answer('La ronda ya terminó.',show_alert=True); return
-        if (datetime.now(timezone.utc)-row[3]).total_seconds()>900:
-            c.execute("UPDATE bdsm_quiz_rounds_tb SET status='expired',closed_at=NOW() WHERE round_id=%s AND status='open'",(rid,)); conn.commit(); await cq.answer('Esta ronda cerró después de 15 minutos.',show_alert=True); return
+        if (datetime.now(timezone.utc)-row[3]).total_seconds()>1800:
+            c.execute("UPDATE bdsm_quiz_rounds_tb SET status='expired',closed_at=NOW() WHERE round_id=%s AND status='open'",(rid,)); conn.commit(); await cq.answer('Esta ronda cerró después de 30 minutos.',show_alert=True); return
         if not opts: opts=row[2] if isinstance(row[2],list) else (json.loads(row[2]) if row[2] else None)
         if not opts or idx>=len(opts): conn.rollback(); await cq.answer('No pude recuperar las opciones de esta ronda.',show_alert=True); return
         context.application.bot_data.setdefault('bq_options',{})[rid]=opts
@@ -135,12 +138,12 @@ async def quiz_callback(update: Update,context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
     except Exception as e: conn.rollback(); print('[QUIZ callback]',e); await cq.answer('Error de base de datos.',show_alert=True); return
     finally: _put_connection(conn)
-    context.application.bot_data.get('bq_options',{}).pop(rid,None); await cq.answer('🏆 ¡Correcto!',show_alert=True)
-    try: await cq.edit_message_text(f"🏆 <b>¡CORRECTO!</b>\n\n{cq.from_user.mention_html()} ganó <b>{QUIZ_REWARD:,} PiPesos</b>.\nRespuesta: <b>{chosen}</b>",parse_mode='HTML')
+    context.application.bot_data.get('bq_options',{}).pop(rid,None); add_weekly_points(uid,quiz=1); await cq.answer('🏆 ¡Correcto!',show_alert=True)
+    try: await cq.edit_message_text(f"🏆 <b>¡CORRECTO!</b>\n\n{cq.from_user.mention_html()} ganó <b>{QUIZ_REWARD:,} PiPesos</b> y suma <b>1 punto</b>.\nRespuesta: <b>{chosen}</b>\n\n💡 <b>¿Por qué?</b>\n{row[5] or ('La respuesta correcta es '+str(chosen)+'.')}\n\n#QuizPiBot",parse_mode='HTML',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🏆 Ver ranking semanal',callback_data='cr:rank')]]))
     except Exception: pass
 
 async def quiz_manual(update: Update,context: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text(f'🧠 Quiz automático: General, tema {QUIZ_THREAD_ID}. Banco: {len(QUIZ_BANK):,} rondas. Sale cada hora.')
+    await update.effective_message.reply_text(f'🧠 Quiz automático: General, tema {QUIZ_THREAD_ID}. Banco: {len(QUIZ_BANK):,} rondas. Sale de forma coordinada para no chocar con Diccionario, Información ni la Pregunta del Día.')
 
 async def quiz_now(update: Update,context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text('🧠 Enviando ronda de prueba a General…'); await quiz_tick(context)

@@ -78,7 +78,8 @@ async def apostar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"🎲 {user_username or user_nombre} ha creado una apuesta de {cantidad} PiPesos.\n"
-        "Cualquier jugador puede escribir /aceptar para unirse en los próximos 60 segundos."
+        "Cualquier jugador puede aceptar durante los próximos 60 segundos.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Aceptar apuesta", callback_data="aceptar_apuesta")]])
     )
 
     # 📌 Auto-cancelación en 60 segundos
@@ -483,6 +484,19 @@ async def detectar_dado(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=resultado,
             message_thread_id=thread_id
         )
+
+async def aceptar_apuesta_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Botón equivalente a /aceptar sin duplicar la lógica económica."""
+    q=update.callback_query
+    await q.answer()
+    class _MsgProxy:
+        def __init__(self,msg):
+            self._msg=msg; self.message_thread_id=getattr(msg,'message_thread_id',None)
+        async def reply_text(self,*a,**kw): return await self._msg.reply_text(*a,**kw)
+    class _UpdateProxy:
+        def __init__(self,real):
+            self.effective_chat=real.effective_chat; self.effective_user=real.effective_user; self.message=_MsgProxy(real.callback_query.message)
+    return await aceptar(_UpdateProxy(update),context)
 
 async def reiniciar_apuesta_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Safely reset an accepted wager before either player has rolled."""

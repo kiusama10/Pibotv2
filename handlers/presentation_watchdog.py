@@ -144,6 +144,12 @@ def _finish_removal(chat_id, user_id, ok):
         _put_connection(conn)
 
 
+
+async def _delete_notice_job(context: ContextTypes.DEFAULT_TYPE):
+    data=context.job.data or {}
+    try: await context.bot.delete_message(chat_id=data['chat_id'],message_id=data['message_id'])
+    except Exception: pass
+
 async def presentation_watchdog_job(context: ContextTypes.DEFAULT_TYPE):
     for chat_id,user_id in _claim_overdue():
         ok = False
@@ -152,6 +158,11 @@ async def presentation_watchdog_job(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
             await context.bot.unban_chat_member(chat_id=chat_id, user_id=user_id, only_if_banned=True)
             ok = True
+            try:
+                notice=await context.bot.send_message(chat_id=chat_id,text=f'🚪 PiBot retiró al usuario {user_id} por no completar su presentación a tiempo.')
+                context.job_queue.run_once(_delete_notice_job, when=120, data={'chat_id':chat_id,'message_id':notice.message_id}, name=f'presentation_notice_{chat_id}_{notice.message_id}')
+            except Exception as exc:
+                print(f'[PRESENTACION AVISO] {exc}')
         except Exception as exc:
             print(f"[PRESENTACION] No pude retirar a {user_id}: {exc}")
         _finish_removal(chat_id,user_id,ok)
