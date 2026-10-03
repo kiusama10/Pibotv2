@@ -687,7 +687,7 @@ def main() -> None:
         group=5
     )
     app.add_handler(CallbackQueryHandler(quiz_callback, pattern="^bq:"), group=5)
-    app.add_handler(CallbackQueryHandler(extras_callback, pattern="^ex:(box|font):"), group=5)
+    app.add_handler(CallbackQueryHandler(extras_callback, pattern="^ex:(box|font|fontpage):|^ex:fontnoop$"), group=5)
     app.add_handler(CallbackQueryHandler(victory_toggle_callback, pattern="^vg:toggle:"), group=5)
     app.add_handler(CallbackQueryHandler(victory_callback, pattern="^vg:(gif|text|games|preview|remove)$"), group=5)
     app.add_handler(CallbackQueryHandler(casino_pvp_callback, pattern="^(turtle|bj):"), group=5)
