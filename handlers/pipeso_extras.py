@@ -4,24 +4,55 @@ from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from src.database.database import _get_connection,_put_connection
+from src.utils.seasonal import current_season
 
 SEASON_BOX_NAMES={
-    "normal": {"mini":"📦 Caja Misteriosa","pro":"🖤 Caja Nocturna","elite":"👑 Caja Imperial"},
-    "halloween": {"mini":"🎃 Caja Calabaza","pro":"🦇 Caja Noche de Brujas","elite":"👑 Caja Emperador Oscuro"},
-    "dia_muertos": {"mini":"💀 Caja Cempasúchil","pro":"🌼 Caja del Mictlán","elite":"👑 Caja Alma Eterna"},
-    "navidad": {"mini":"🎁 Caja Invernal","pro":"❄️ Caja Noche Nevada","elite":"👑 Caja Krampus"},
-    "san_valentin": {"mini":"💌 Caja Corazón","pro":"🖤 Caja Pasión","elite":"👑 Caja Vínculo Eterno"},
+    "normal": {"epic":"💜 Caja Épica","legendary":"🌟 Caja Legendaria"},
+    "halloween": {"epic":"🎃 Cofre Épico de Halloween","legendary":"🦇 Cofre Legendario de Halloween"},
+    "dia_muertos": {"epic":"🌼 Cofre Épico del Mictlán","legendary":"💀 Cofre Legendario de las Ánimas"},
+    "navidad": {"epic":"❄️ Cofre Épico Invernal","legendary":"🎄 Cofre Legendario de Navidad"},
+    "san_valentin": {"epic":"💘 Cofre Épico del Corazón","legendary":"👑 Cofre Legendario del Vínculo"},
 }
-BOX_PRICES={"mini":5000,"pro":15000,"elite":40000}
+# Se conservan los precios de las dos cajas superiores del sistema anterior.
+BOX_PRICES={"epic":15000,"legendary":40000}
 def current_boxes():
     names=SEASON_BOX_NAMES.get(current_season(),SEASON_BOX_NAMES["normal"])
-    return {k:(BOX_PRICES[k],names[k]) for k in ("mini","pro","elite")}
+    return {k:(BOX_PRICES[k],names[k]) for k in ("epic","legendary")}
 
 POTIONS={"money1":(5000,60,1.25,"🪙 Elixir de Fortuna x1.25"),"money3":(12000,180,1.25,"🪙 Elixir de Fortuna x1.25"),"xp1":(5000,60,1.50,"✨ Elixir de Experiencia x1.50"),"xp3":(12000,180,1.50,"✨ Elixir de Experiencia x1.50")}
-_BASE_TITLES=["Collar de Medianoche","Dominante de Acero","Sumisión de Seda","Switch del Eclipse","Guardián del Aftercare","Dueño del Silencio","Reina del Protocolo","Consentimiento Sagrado","Cuerda Carmesí","Mirada Dominante","Entrega Absoluta","Señor del Shibari","Dama del Collar","Príncipe del Aftercare","Musa Sumisa","Dominio Nocturno"]
-_TITLE_A=["Guardián","Reina","Rey","Dama","Señor","Príncipe","Princesa","Soberano","Soberana","Maestro","Maestra","Alma"]
-_TITLE_B=["del Eclipse","de Medianoche","de Obsidiana","Carmesí","del Aftercare","del Protocolo","de las Cadenas","del Consenso","de la Luna","del Caos","de Terciopelo","del Santuario"]
-BDSM_TITLES=list(dict.fromkeys(_BASE_TITLES+[f"{a} {b}" for a in _TITLE_A for b in _TITLE_B]))  # 150+ títulos posibles en cajas
+_GENERAL_TITLES=[
+    "Leyenda del Clan","Rey del Caos","Reina del Caos","Señor de la Noche","Dama de la Noche",
+    "Dueño del After","Mente Maestra","Corazón de Acero","Alma Rebelde","Último en Pie",
+    "Emperador de la Traición","Emperatriz de la Traición","Tirano del Dado","Diosa de la Suerte",
+    "Señor de los PiPesos","Magnate del Clan","Coleccionista Supremo","Fantasma del Chat","Insomne Oficial",
+    "Rey del Meme","Reina del Meme","Drama Premium","Caos Certificado","Problema Favorito","Mala Influencia",
+    "Santo del Desmadre","Villano con Encanto","Héroe por Accidente","NPC Legendario","Jefe Secreto",
+    "Boss Final","Plot Twist Viviente","Main Character","Antiheroína","Antihéroe","Rompecorazones",
+    "Corazón Blindado","Amor de Medianoche","Tentación Oficial","Mirada Peligrosa","Sonrisa Criminal",
+    "Ángel Caído","Demonio Elegante","Vampiro de Medianoche","Bruja del Eclipse","Hechicero del Caos",
+    "Guardián del Eclipse","Heredero de Obsidiana","Corona Carmesí","Luna Negra","Sol de Medianoche",
+    "Fénix Eterno","Dragón Dorado","Lobo de Plata","Cuervo Real","Serpiente de Jade","Kitsune Celestial",
+    "Samurái del Chat","Ronin Digital","Pirata del Clan","Capitán del Caos","Comandante Supremo",
+    "Maestro del Juego","Reina del Casino","Rey del Casino","Amo del Blackjack","Señora de la Ruleta",
+    "Francotirador de Dardos","Rey del Boliche","Domador de Tortugas","Asesino Fantasma","Detective del Clan",
+    "Sabio del Quiz","Enciclopedia Humana","Respuesta Final","Cerebro Galáctico","Dato Inútil Supremo",
+    "DJ de Medianoche","Rockstar del Clan","Alma Ochentera","Metal de Corazón","Pop Star Secreta",
+    "Dueño del Playlist","Himno Viviente","Nota Prohibida","Ritmo Salvaje","Leyenda del Karaoke",
+    "Guardián del Consentimiento","Maestro del Protocolo","Reina del Aftercare","Switch del Eclipse",
+    "Collar de Medianoche","Cuerda Carmesí","Dominio Nocturno","Entrega de Obsidiana","Límite Sagrado",
+    "Rey del Silencio","Reina del Protocolo","Guardián de la Confianza","Señor del Shibari","Dama del Collar",
+    "One Winged Angel","Cowboy del Caos","Aerial Legend","Best Bout Machine","Rainmaker del Clan",
+    "Campeón Sin Corona","Icono del Main Event","Fenómeno del Ring","Rebel Heart","Final Boss del Ring",
+]
+_SEASON_TITLES={
+    "halloween":["Rey Calabaza","Reina Calabaza","Conde de Halloween","Condesa de Halloween","Señor del Cementerio","Dama del Cementerio","Fantasma VIP","Bruja Escarlata","Hechicero de Medianoche","Dueño de la Cripta","Reina de las Sombras","Pesadilla del Clan","Cazador de Fantasmas","Alma en Pena Premium","Monstruo Favorito","Vampiro Carmesí","Hijo de la Noche","Hija de la Noche","Guardián de la Cripta","Corona Maldita"],
+    "dia_muertos":["Guardián del Mictlán","Reina Cempasúchil","Rey Cempasúchil","Alma Eterna","Calavera de Oro","Catrina Imperial","Catrín de Medianoche","Señor de las Ánimas","Dama de las Ánimas","Memoria Eterna"],
+    "navidad":["Rey del Invierno","Reina del Invierno","Krampus VIP","Estrella Invernal","Guardián de la Nieve","Milagro de Medianoche","Espíritu Navideño","Corona de Hielo","Duende Legendario","Noche Eterna"],
+    "san_valentin":["Cupido Rebelde","Corazón Legendario","Amor Caótico","Flechazo Mortal","Dueño de Corazones","Reina de Corazones","Romance de Medianoche","Tentación de Febrero","Corazón de Obsidiana","Vínculo Eterno"],
+}
+def title_pool():
+    return list(dict.fromkeys(_GENERAL_TITLES + _SEASON_TITLES.get(current_season(),[])))
+BDSM_TITLES=_GENERAL_TITLES  # compatibilidad con cualquier import anterior
 
 FONT_BASES=["normal","bold","italic","script","double","mono","smallcaps","circled"]
 FONT_DECORATORS=[
@@ -159,14 +190,31 @@ async def pociones(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
 async def cajas(update:Update,context:ContextTypes.DEFAULT_TYPE):
     kb=[[InlineKeyboardButton(f"{name} · {price:,} PiPesos",callback_data=f'ex:box:{code}')] for code,(price,name) in current_boxes().items()]
-    await update.effective_message.reply_text(f"🎁 CAJAS DE {current_season().replace('_',' ').upper()}\n\nPueden contener cualquiera de las más de 100 tipografías, más de 100 títulos y premios de PiPesos. Si sale un coleccionable que ya tienes, PiBot lo convierte en 2,000 PiPesos.",reply_markup=InlineKeyboardMarkup(kb))
+    season=current_season().replace('_',' ').upper()
+    await update.effective_message.reply_text(
+        f"🎁 CAJAS · {season}\n\n"
+        "💜 Épica: premios comunes, raros y hasta ÉPICOS.\n"
+        "🌟 Legendaria: puede soltar todo lo anterior y premios LEGENDARIOS.\n\n"
+        "Dentro pueden salir PiPesos, títulos y tipografías coleccionables. "
+        "Los títulos mezclan juegos, música, fantasía, humor, comunidad, temporada y algunos BDSM para que no salga siempre lo mismo. "
+        "Si repites un coleccionable, recibes 2,000 PiPesos.",
+        reply_markup=InlineKeyboardMarkup(kb))
 
 def _roll_box(code):
-    tier={'mini':0,'pro':1,'elite':2}[code]; x=random.random()
-    if x < .34: return 'title',random.choice(BDSM_TITLES),random.choice(BDSM_TITLES)
-    if x < .60: 
-        f=random.choice(FONTS); return 'font',f,f'Tipografía {f}'
-    money=random.choice(([1000,2000,3000],[3000,5000,8000],[8000,12000,20000])[tier]); return 'money',str(money),f'{money:,} PiPesos'
+    # Dos cajas únicamente: la Épica llega hasta épico; la Legendaria añade legendario.
+    x=random.random()
+    if code=='epic':
+        rarity=random.choices(['comun','raro','epico'],weights=[52,33,15],k=1)[0]
+        money_by_rarity={'comun':[2000,3000,4000],'raro':[5000,7000,9000],'epico':[12000,15000,18000]}
+    else:
+        rarity=random.choices(['comun','raro','epico','legendario'],weights=[36,31,23,10],k=1)[0]
+        money_by_rarity={'comun':[4000,6000,8000],'raro':[9000,12000,15000],'epico':[18000,22000,28000],'legendario':[35000,45000,60000]}
+    kind=random.choices(['title','font','money'],weights=[38,34,28],k=1)[0]
+    if kind=='title':
+        val=random.choice(title_pool()); return 'title',val,f'{val} · {rarity.upper()}'
+    if kind=='font':
+        f=random.choice(FONTS); return 'font',f,f'Tipografía {FONT_LABELS.get(f,f)} · {rarity.upper()}'
+    money=random.choice(money_by_rarity[rarity]); return 'money',str(money),f'{money:,} PiPesos · {rarity.upper()}'
 
 async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; p=q.data.split(':'); uid=q.from_user.id
