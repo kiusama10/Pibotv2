@@ -39,14 +39,18 @@ def ensure_member_activity_table():
 
 
 def _is_real_user_message(msg):
-    if not msg or not msg.text:
+    if not msg:
         return False
-    # Activity here means conversation written by the member, not bot commands.
-    if msg.text.startswith("/"):
-        return False
+    # Count genuine member participation: text and user-sent media.
+    # Commands and Telegram service messages do not count.
     if msg.new_chat_members or msg.left_chat_member:
         return False
-    return True
+    if msg.text and msg.text.startswith("/"):
+        return False
+    return bool(
+        msg.text or msg.photo or msg.video or msg.animation or msg.sticker or
+        msg.voice or msg.audio or msg.document or msg.video_note
+    )
 
 
 async def member_activity_observer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -148,6 +152,7 @@ async def _show(message,chat_id:int,page:int,edit=True):
     pages=max(1,(len(rows)+PAGE_SIZE-1)//PAGE_SIZE); page=max(0,min(page,pages-1))
     part=rows[page*PAGE_SIZE:(page+1)*PAGE_SIZE]
     kb=[[InlineKeyboardButton(_label(name,count,last),callback_data=f"act:k:{chat_id}:{uid}:{page}")] for uid,name,count,last in part]
+    kb.append([InlineKeyboardButton("👻 Menos actividad", callback_data=f"act:p:{chat_id}:0")])
     nav=[]
     if page>0: nav.append(InlineKeyboardButton("◀️",callback_data=f"act:p:{chat_id}:{page-1}"))
     nav.append(InlineKeyboardButton(f"{page+1}/{pages}",callback_data="act:no"))

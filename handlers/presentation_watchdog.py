@@ -37,6 +37,7 @@ def ensure_presentation_tables():
                 )
             """)
             cur.execute("ALTER TABLE presentation_watchdog_tb ADD COLUMN IF NOT EXISTS verification_phrase TEXT")
+            cur.execute("ALTER TABLE presentation_watchdog_tb ADD COLUMN IF NOT EXISTS prompt_message_id BIGINT")
             cur.execute("""CREATE TABLE IF NOT EXISTS presentation_settings_tb (
                 chat_id BIGINT PRIMARY KEY,
                 enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -94,7 +95,8 @@ def _create_pending_if_new(chat_id: int, user_id: int) -> bool:
                 VALUES (%s,%s,NOW() + (%s || ' minutes')::interval,'pending',%s)
                 ON CONFLICT (chat_id,user_id) DO UPDATE SET
                     joined_at=NOW(), deadline_at=EXCLUDED.deadline_at, status='pending',
-                    presented_at=NULL, removed_at=NULL, verification_phrase=EXCLUDED.verification_phrase
+                    presented_at=NULL, removed_at=NULL, verification_phrase=EXCLUDED.verification_phrase,
+                    prompt_message_id=NULL
             """, (chat_id, user_id, TIMEOUT_MINUTES, _new_phrase()))
         conn.commit(); return True
     except Exception:
@@ -129,6 +131,41 @@ def _get_phrase(chat_id: int, user_id: int):
     finally: _put_connection(conn)
 
 
+def _set_prompt_message_id(chat_id: int, user_id: int, message_id: int):
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE presentation_watchdog_tb SET prompt_message_id=%s WHERE chat_id=%s AND user_id=%s AND status='pending'", (message_id, chat_id, user_id))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        _put_connection(conn)
+
+
+def _get_prompt_message_id(chat_id: int, user_id: int):
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT prompt_message_id FROM presentation_watchdog_tb WHERE chat_id=%s AND user_id=%s", (chat_id, user_id))
+            row = cur.fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
+    finally:
+        _put_connection(conn)
+
+
+async def _delete_pibot_prompt(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int):
+    message_id = _get_prompt_message_id(chat_id, user_id)
+    if not message_id:
+        return
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception:
+        pass
+
+
 async def _send_voice_prompt(context: ContextTypes.DEFAULT_TYPE):
     data=context.job.data or {}; chat_id=data.get('chat_id'); user_id=data.get('user_id')
     if not chat_id or not user_id or not _presentation_enabled(chat_id): return
@@ -136,10 +173,11 @@ async def _send_voice_prompt(context: ContextTypes.DEFAULT_TYPE):
     if not phrase: return
     label=visible_user(user_id=user_id)
     try:
-        await context.bot.send_message(chat_id=chat_id, text=(
-            f"🎙️ {label}, para completar tu presentación envíala como nota de voz siguiendo los datos indicados por Rose.\n\n"
-            f"Al final di esta frase:\n«{phrase}»\n\nTienes {TIMEOUT_MINUTES} minutos desde tu entrada."
+        sent = await context.bot.send_message(chat_id=chat_id, text=(
+            f"🎙️ {label}, para completar tu presentación envía esta frase por nota de voz:\n\n"
+            f"«{phrase}»\n\nTienes {TIMEOUT_MINUTES} minutos desde tu entrada."
         ))
+        _set_prompt_message_id(chat_id, user_id, sent.message_id)
     except Exception as exc: print(f"[PRESENTACION VOZ] {exc}")
 
 
@@ -187,6 +225,7 @@ async def detect_presentation_message(update: Update, context: ContextTypes.DEFA
         await msg.reply_text(f"🎙️ {visible_user(user=user)}, la nota reenviada no cuenta como presentación. Envía una nota de voz nueva.")
         return
     if mark_presented(chat.id,user.id):
+        await _delete_pibot_prompt(context, chat.id, user.id)
         try:
             from handlers.dante import record_system_event
             record_system_event(chat.id,user.id,'presentation_completed',{'voice':True})
@@ -245,6 +284,7 @@ async def presentation_watchdog_job(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
             await context.bot.unban_chat_member(chat_id=chat_id, user_id=user_id, only_if_banned=True)
             ok = True
+            await _delete_pibot_prompt(context, chat_id, user_id)
             try:
                 notice=await context.bot.send_message(chat_id=chat_id,text=f'🚪 PiBot retiró a {visible_user(user_id=user_id)} por no completar su presentación a tiempo.')
                 context.job_queue.run_once(_delete_notice_job, when=120, data={'chat_id':chat_id,'message_id':notice.message_id}, name=f'presentation_notice_{chat_id}_{notice.message_id}')
