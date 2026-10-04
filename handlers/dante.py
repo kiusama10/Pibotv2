@@ -12,7 +12,50 @@ from src.database.database import _get_connection, _put_connection
 from src.config import KIU_ROOT_ID, KIU_ROOT_USERNAME
 from src.utils.display_name import visible_user
 
-DANTE_VERSION = "1.0.0"
+DANTE_VERSION = "1.0.1"
+
+
+
+def _main_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔎 Personas", callback_data="dante:people:0"), InlineKeyboardButton("👁 Vigilados", callback_data="dante:watched:0")],
+        [InlineKeyboardButton("📁 Casos", callback_data="dante:cases"), InlineKeyboardButton("🔗 Comparar", callback_data="dante:compare:0")],
+        [InlineKeyboardButton("📊 Estado", callback_data="dante:estado"), InlineKeyboardButton("❓ Ayuda", callback_data="dante:ayuda")],
+    ])
+
+def _person_label(username, name):
+    return (f"@{username}" if username else (name or "Usuario"))[:38]
+
+def _people_rows(page=0, watched=False):
+    page=max(0,int(page)); off=page*8
+    if watched:
+        sql="""SELECT i.chat_id,i.user_id,i.username,i.display_name,i.last_seen FROM dante_identity_tb i JOIN dante_watch_tb w ON w.chat_id=i.chat_id AND w.user_id=i.user_id AND w.enabled=TRUE ORDER BY i.last_seen DESC LIMIT 9 OFFSET %s"""
+    else:
+        sql="""SELECT chat_id,user_id,username,display_name,last_seen FROM dante_identity_tb ORDER BY last_seen DESC LIMIT 9 OFFSET %s"""
+    return _db(sql,(off,),True)
+
+def _people_keyboard(page=0, watched=False, prefix="people"):
+    rows=_people_rows(page, watched); shown=rows[:8]; kb=[]
+    for cid,uid,un,name,last in shown:
+        kb.append([InlineKeyboardButton(_person_label(un,name),callback_data=f"dante:person:{cid}:{uid}")])
+    nav=[]
+    if page>0: nav.append(InlineKeyboardButton("◀️",callback_data=f"dante:{prefix}:{page-1}"))
+    if len(rows)>8: nav.append(InlineKeyboardButton("▶️",callback_data=f"dante:{prefix}:{page+1}"))
+    if nav: kb.append(nav)
+    kb.append([InlineKeyboardButton("🏠 Menú",callback_data="dante:menu")])
+    return InlineKeyboardMarkup(kb), len(shown)
+
+def _person_data(chat_id,user_id):
+    r=_db("SELECT username,display_name,first_seen,last_seen FROM dante_identity_tb WHERE chat_id=%s AND user_id=%s",(chat_id,user_id),True)
+    return r[0] if r else None
+
+def _person_keyboard(chat_id,user_id):
+    watched=_is_watched(chat_id,user_id)
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Historial",callback_data=f"dante:history:{chat_id}:{user_id}"), InlineKeyboardButton("👁 Dejar de vigilar" if watched else "👁 Vigilar",callback_data=f"dante:watch:{chat_id}:{user_id}")],
+        [InlineKeyboardButton("📁 Añadir a caso",callback_data=f"dante:addcase:{chat_id}:{user_id}"), InlineKeyboardButton("🔗 Comparar",callback_data=f"dante:cmpfirst:{chat_id}:{user_id}:0")],
+        [InlineKeyboardButton("◀️ Personas",callback_data="dante:people:0"), InlineKeyboardButton("🏠 Menú",callback_data="dante:menu")],
+    ])
 
 def _is_dante_owner(user):
     if not user: return False
@@ -188,8 +231,7 @@ async def dante_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception: pass
         return
     if not sub:
-        kb=InlineKeyboardMarkup([[InlineKeyboardButton("Estado",callback_data="dante:estado"),InlineKeyboardButton("Casos",callback_data="dante:casos")],[InlineKeyboardButton("Ayuda",callback_data="dante:ayuda")]])
-        await msg.reply_text("🕵️ DANTE 1.0.0\nPanel privado. DANTE observa y conserva; nunca modera.",reply_markup=kb); return
+        await msg.reply_text(f"🕷️ DANTE {DANTE_VERSION}\nElige una opción. No necesitas saber @usuarios ni IDs.",reply_markup=_main_keyboard()); return
     if sub=="estado":
         age=int(time.monotonic()-_started); last=_last_event.isoformat() if _last_event else "sin eventos desde este arranque"
         counts=_db("SELECT (SELECT COUNT(*) FROM dante_identity_tb),(SELECT COUNT(*) FROM dante_events_tb),(SELECT COUNT(*) FROM dante_cases_tb)",fetch=True)[0]
@@ -254,13 +296,104 @@ async def dante_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; user=update.effective_user
     if not q or not _is_dante_owner(user): return
     await q.answer()
-    action=(q.data or '').split(':',1)[-1]
-    if action=='estado':
-        counts=_db("SELECT (SELECT COUNT(*) FROM dante_identity_tb),(SELECT COUNT(*) FROM dante_events_tb),(SELECT COUNT(*) FROM dante_cases_tb)",fetch=True)[0]
-        text=f"🕵️ DANTE {DANTE_VERSION} · ACTIVO\nIdentidades: {counts[0]} · Eventos: {counts[1]} · Casos: {counts[2]}\nModeración automática: NINGUNA"
-    elif action=='casos':
-        rows=_db("SELECT case_code,title,status FROM dante_cases_tb ORDER BY id DESC LIMIT 10",fetch=True); text="🗃️ Casos\n"+("\n".join(f"• {c} · {t} · {st}" for c,t,st in rows) if rows else "Sin casos.")
-    else:
-        text="DANTE: /dante buscar, /dante comparar, /dante caso, /dante nota, /dante exportar, /dante estado. En grupo, por respuesta: /dante vigilar, /dante caso CASO-001, /dante evidencia CASO-001."
-    try: await q.edit_message_text(text,reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Estado",callback_data="dante:estado"),InlineKeyboardButton("Casos",callback_data="dante:casos")],[InlineKeyboardButton("Ayuda",callback_data="dante:ayuda")]]))
-    except Exception: pass
+    parts=(q.data or '').split(':')
+    action=parts[1] if len(parts)>1 else 'menu'
+    try:
+        if action=='menu':
+            await q.edit_message_text(f"🕷️ DANTE {DANTE_VERSION}\nElige una opción. No necesitas saber @usuarios ni IDs.",reply_markup=_main_keyboard()); return
+        if action in ('people','watched'):
+            page=int(parts[2]) if len(parts)>2 else 0; watched=action=='watched'
+            kb,n=_people_keyboard(page,watched,action)
+            title="👁 Vigilados" if watched else "🔎 Personas conocidas por DANTE"
+            text=title+"\nToca una persona para abrir su ficha."+("\n\nNo hay usuarios en esta sección." if n==0 else "")
+            await q.edit_message_text(text,reply_markup=kb); return
+        if action=='person':
+            cid,uid=int(parts[2]),int(parts[3]); d=_person_data(cid,uid)
+            if not d: await q.answer("Ya no encuentro ese registro.",show_alert=True); return
+            un,name,first,last=d; label=_person_label(un,name)
+            await q.edit_message_text(f"👤 {label}\nPrimera vez observada: {first:%Y-%m-%d %H:%M}\nÚltima vez observada: {last:%Y-%m-%d %H:%M}\n\n¿Qué quieres revisar?",reply_markup=_person_keyboard(cid,uid)); return
+        if action=='history':
+            cid,uid=int(parts[2]),int(parts[3]); d=_person_data(cid,uid)
+            aliases=_db("SELECT username,display_name,seen_at FROM dante_alias_tb WHERE chat_id=%s AND user_id=%s ORDER BY seen_at DESC LIMIT 12",(cid,uid),True)
+            label=_person_label(d[0],d[1]) if d else 'Usuario'; lines=[]
+            for un,name,seen in aliases:
+                x=_person_label(un,name)
+                if x not in [a for a,_ in lines]: lines.append((x,seen))
+            text=f"📋 Historial · {label}\n"+("\n".join(f"• {x} · {t:%Y-%m-%d %H:%M}" for x,t in lines) if lines else "Sin cambios de identidad registrados.")
+            await q.edit_message_text(text,reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Volver",callback_data=f"dante:person:{cid}:{uid}")]])); return
+        if action=='watch':
+            cid,uid=int(parts[2]),int(parts[3]); _db("INSERT INTO dante_watch_tb(chat_id,user_id,enabled) VALUES(%s,%s,TRUE) ON CONFLICT(chat_id,user_id) DO UPDATE SET enabled=NOT dante_watch_tb.enabled",(cid,uid))
+            state=_is_watched(cid,uid); await q.answer("Vigilancia activada" if state else "Vigilancia desactivada",show_alert=True)
+            d=_person_data(cid,uid); label=_person_label(d[0],d[1]) if d else 'Usuario'
+            await q.edit_message_text(f"👤 {label}\nVigilancia: {'ACTIVA' if state else 'desactivada'}\nDANTE solo observa; no modera.",reply_markup=_person_keyboard(cid,uid)); return
+        if action=='addcase':
+            cid,uid=int(parts[2]),int(parts[3]); rows=_db("SELECT case_code,title FROM dante_cases_tb WHERE status='open' ORDER BY id DESC LIMIT 12",fetch=True)
+            kb=[[InlineKeyboardButton(f"{c} · {(t or 'Sin título')[:24]}",callback_data=f"dante:caseadd:{cid}:{uid}:{c}")] for c,t in rows]
+            kb.append([InlineKeyboardButton("◀️ Volver",callback_data=f"dante:person:{cid}:{uid}")])
+            await q.edit_message_text("📁 Elige el caso al que quieres añadir esta persona." if rows else "📁 No tienes casos abiertos. Crea uno con /dante caso nombre y después aparecerá aquí.",reply_markup=InlineKeyboardMarkup(kb)); return
+        if action=='caseadd':
+            cid,uid,code=int(parts[2]),int(parts[3]),parts[4]; r=_db("SELECT id FROM dante_cases_tb WHERE case_code=%s AND status='open'",(code,),True)
+            if r: _db("INSERT INTO dante_case_members_tb(case_id,chat_id,user_id) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING",(r[0][0],cid,uid)); await q.answer(f"Añadido a {code}",show_alert=True)
+            await q.edit_message_text(f"📁 Persona añadida a {code}.\nEsto registra una relación para investigar; no implica identidad ni culpabilidad.",reply_markup=_person_keyboard(cid,uid)); return
+        if action in ('compare','cmpfirst'):
+            if action=='cmpfirst': first_cid,first_uid,page=int(parts[2]),int(parts[3]),int(parts[4])
+            else:
+                first_cid=first_uid=None; page=int(parts[2]) if len(parts)>2 else 0
+            rows=_people_rows(page,False); shown=rows[:8]; kb=[]
+            for cid,uid,un,name,last in shown:
+                if first_uid==uid and first_cid==cid: continue
+                cb=f"dante:cmpdo:{first_cid}:{first_uid}:{cid}:{uid}" if first_uid is not None else f"dante:cmpfirst:{cid}:{uid}:0"
+                kb.append([InlineKeyboardButton(_person_label(un,name),callback_data=cb)])
+            nav=[]
+            if page>0:
+                cb=f"dante:cmpfirst:{first_cid}:{first_uid}:{page-1}" if first_uid is not None else f"dante:compare:{page-1}"; nav.append(InlineKeyboardButton("◀️",callback_data=cb))
+            if len(rows)>8:
+                cb=f"dante:cmpfirst:{first_cid}:{first_uid}:{page+1}" if first_uid is not None else f"dante:compare:{page+1}"; nav.append(InlineKeyboardButton("▶️",callback_data=cb))
+            if nav: kb.append(nav)
+            kb.append([InlineKeyboardButton("🏠 Menú",callback_data="dante:menu")])
+            await q.edit_message_text("🔗 Elige la segunda persona." if first_uid is not None else "🔗 Elige la primera persona.",reply_markup=InlineKeyboardMarkup(kb)); return
+        if action=='cmpdo':
+            ac,au,bc,bu=map(int,parts[2:6]); a=_person_data(ac,au); b=_person_data(bc,bu)
+            aa=_db("SELECT COALESCE(username,''),COALESCE(display_name,'') FROM dante_alias_tb WHERE chat_id=%s AND user_id=%s",(ac,au),True); bb=_db("SELECT COALESCE(username,''),COALESCE(display_name,'') FROM dante_alias_tb WHERE chat_id=%s AND user_id=%s",(bc,bu),True)
+            shared=sorted(set(aa)&set(bb)); la=_person_label(a[0],a[1]) if a else 'Persona 1'; lb=_person_label(b[0],b[1]) if b else 'Persona 2'
+            detail="\n".join(f"• @{u}" if u else f"• {n}" for u,n in shared) if shared else "Sin coincidencias exactas de alias."
+            await q.edit_message_text(f"🧩 Comparación\n{la} ↔ {lb}\nCoincidencias exactas: {len(shared)}\n{detail}\n\nIdentidad común no demostrada.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Otra comparación",callback_data="dante:compare:0"),InlineKeyboardButton("🏠 Menú",callback_data="dante:menu")]])); return
+        if action in ('cases','casos'):
+            rows=_db("SELECT case_code,title,status FROM dante_cases_tb ORDER BY id DESC LIMIT 12",fetch=True)
+            kb=[[InlineKeyboardButton(f"{c} · {(t or 'Sin título')[:25]}",callback_data=f"dante:case:{c}")] for c,t,st in rows]
+            kb.append([InlineKeyboardButton("🏠 Menú",callback_data="dante:menu")])
+            await q.edit_message_text("📁 Casos\nToca uno para abrirlo." if rows else "📁 Todavía no hay casos.\nPara crear uno nuevo usa /dante caso nombre.",reply_markup=InlineKeyboardMarkup(kb)); return
+        if action=='case':
+            code=parts[2]; r=_db("SELECT id,title,status,created_at FROM dante_cases_tb WHERE case_code=%s",(code,),True)
+            if not r: await q.answer("Caso no encontrado",show_alert=True); return
+            cid,title,status,created=r[0]; nm=_db("SELECT COUNT(*) FROM dante_case_members_tb WHERE case_id=%s",(cid,),True)[0][0]; ne=_db("SELECT COUNT(*) FROM dante_evidence_tb WHERE case_id=%s",(cid,),True)[0][0]; nn=_db("SELECT COUNT(*) FROM dante_notes_tb WHERE case_id=%s",(cid,),True)[0][0]
+            kb=InlineKeyboardMarkup([[InlineKeyboardButton("👥 Personas",callback_data=f"dante:casemembers:{code}"),InlineKeyboardButton("🧾 Evidencias",callback_data=f"dante:caseevidence:{code}")],[InlineKeyboardButton("📝 Notas",callback_data=f"dante:casenotes:{code}"),InlineKeyboardButton("📤 Exportar",callback_data=f"dante:caseexport:{code}")],[InlineKeyboardButton("◀️ Casos",callback_data="dante:cases"),InlineKeyboardButton("🏠 Menú",callback_data="dante:menu")]])
+            await q.edit_message_text(f"📁 {code} · {title}\nEstado: {status}\nPersonas: {nm} · Evidencias: {ne} · Notas: {nn}",reply_markup=kb); return
+        if action in ('casemembers','caseevidence','casenotes'):
+            code=parts[2]; r=_db("SELECT id FROM dante_cases_tb WHERE case_code=%s",(code,),True); case_id=r[0][0] if r else None
+            if not case_id: return
+            if action=='casemembers':
+                rows=_db("SELECT m.chat_id,m.user_id,i.username,i.display_name,m.added_at FROM dante_case_members_tb m LEFT JOIN dante_identity_tb i ON i.chat_id=m.chat_id AND i.user_id=m.user_id WHERE m.case_id=%s ORDER BY m.added_at DESC LIMIT 20",(case_id,),True); text="👥 Personas · "+code+"\n"+("\n".join(f"• {_person_label(un,name)}" for _,_,un,name,_ in rows) if rows else "Sin personas asociadas.")
+            elif action=='caseevidence':
+                rows=_db("SELECT evidence_type,created_at,sha256 FROM dante_evidence_tb WHERE case_id=%s ORDER BY created_at DESC LIMIT 20",(case_id,),True); text="🧾 Evidencias · "+code+"\n"+("\n".join(f"• {typ} · {dt:%Y-%m-%d %H:%M}"+(f" · SHA {sha[:10]}…" if sha else "") for typ,dt,sha in rows) if rows else "Sin evidencias.")
+            else:
+                rows=_db("SELECT note,created_at FROM dante_notes_tb WHERE case_id=%s ORDER BY created_at DESC LIMIT 20",(case_id,),True); text="📝 Notas · "+code+"\n"+("\n".join(f"• {dt:%Y-%m-%d}: {note[:120]}" for note,dt in rows) if rows else "Sin notas.")+f"\n\nPara añadir una nota nueva: /dante nota {code} texto"
+            await q.edit_message_text(text,reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Volver",callback_data=f"dante:case:{code}")]])); return
+        if action=='caseexport':
+            code=parts[2]; cases=_db("SELECT id,case_code,title,status,created_at,closed_at FROM dante_cases_tb WHERE case_code=%s",(code,),True)
+            if not cases: return
+            c=cases[0]; notes=_db("SELECT note,created_at FROM dante_notes_tb WHERE case_id=%s ORDER BY created_at",(c[0],),True); members=_db("SELECT chat_id,user_id,added_at FROM dante_case_members_tb WHERE case_id=%s",(c[0],),True); evidence=_db("SELECT chat_id,user_id,message_id,evidence_type,sha256,file_unique_id,caption,source,created_at FROM dante_evidence_tb WHERE case_id=%s ORDER BY created_at",(c[0],),True)
+            payload={'dante_version':DANTE_VERSION,'case':{'code':c[1],'title':c[2],'status':c[3],'created_at':c[4].isoformat(),'closed_at':c[5].isoformat() if c[5] else None},'members':members,'notes':[(n,t.isoformat()) for n,t in notes],'evidence':evidence}; raw=json.dumps(payload,ensure_ascii=False,indent=2,default=str).encode(); sha=hashlib.sha256(raw).hexdigest(); path=f"/tmp/{code}.json"; open(path,'wb').write(raw)
+            with open(path,'rb') as fh: await context.bot.send_document(user.id,fh,filename=f"{code}.json",caption=f"📤 {code} · SHA-256: {sha}")
+            try: os.remove(path)
+            except OSError: pass
+            await q.answer("Exportación enviada",show_alert=True); return
+        if action=='estado':
+            counts=_db("SELECT (SELECT COUNT(*) FROM dante_identity_tb),(SELECT COUNT(*) FROM dante_events_tb),(SELECT COUNT(*) FROM dante_cases_tb)",fetch=True)[0]
+            await q.edit_message_text(f"📊 DANTE {DANTE_VERSION} · ACTIVO\nIdentidades: {counts[0]}\nEventos: {counts[1]}\nCasos: {counts[2]}\nModeración automática: NINGUNA",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menú",callback_data="dante:menu")]])); return
+        if action=='ayuda':
+            await q.edit_message_text("❓ DANTE\nUsa los botones para elegir personas, vigilarlas, compararlas y trabajar con casos. Ya no necesitas memorizar @usuarios ni IDs.\n\nLos comandos escritos siguen disponibles como atajos. Para registrar evidencia desde el grupo todavía debes responder al mensaje que quieres conservar.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menú",callback_data="dante:menu")]])); return
+    except Exception as exc:
+        print(f"[DANTE CALLBACK] {type(exc).__name__}: {exc}")
+        try: await q.answer("DANTE no pudo completar esa acción.",show_alert=True)
+        except Exception: pass
