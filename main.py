@@ -537,9 +537,12 @@ def main() -> None:
 
     # Group -2: Auto-register users on any message (silent, never blocks)
     app.add_handler(MessageHandler(filters.ALL, auto_registrar), group=-2)
-    # Participation is throttled to one point/minute/user and flushed in batches.
+    # Permanent written-message activity registry. Keep it in its own PTB group:
+    # only one matching handler runs per group, so sharing -3 with track_activity
+    # prevented this observer from ever receiving messages.
+    app.add_handler(MessageHandler(filters.ALL, member_activity_observer), group=-6)
+    # Existing participation/ranking tracker remains unchanged.
     app.add_handler(MessageHandler(filters.ALL, track_activity), group=-3)
-    app.add_handler(MessageHandler(filters.ALL, member_activity_observer), group=-3)
 
     # Group -1: Community blocking filter (runs first, can stop others)
     app.add_handler(MessageHandler(filters.ALL, bloquear_comunidad), group=-1)
