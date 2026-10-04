@@ -20,6 +20,11 @@ setInterval(async()=>{if(view){try{const r=await fetch('/pibot-api-v3/draw?game=
 class H(BaseHTTPRequestHandler):
  def _send(self,code,body,ctype='application/json'):
   b=body.encode();self.send_response(code);self.send_header('content-type',ctype);self.send_header('content-length',len(b));self.send_header('cache-control','no-store, no-cache, must-revalidate, max-age=0');self.send_header('pragma','no-cache');self.end_headers();self.wfile.write(b)
+ def do_HEAD(self):
+  u=urlparse(self.path)
+  if u.path=='/health':
+   self.send_response(200);self.send_header('content-type','application/json');self.send_header('content-length','0');self.send_header('cache-control','no-store, no-cache, must-revalidate, max-age=0');self.send_header('pragma','no-cache');self.end_headers();return
+  self.send_response(404);self.send_header('content-length','0');self.end_headers()
  def do_GET(self):
   u=urlparse(self.path)
   if u.path in ('/pibot-canvas-v4','/pibot-canvas-v3','/draw'): return self._send(200,HTML,'text/html; charset=utf-8')
