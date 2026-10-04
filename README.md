@@ -1,86 +1,180 @@
-# PiBot 2.0
+# PiBot 2.0 + DANTE 1.0
 
-Bot de Telegram para gestión de comunidades BDSM con economía virtual, gamificación, tienda de ítems y sistema de castigos.
+Bot de Telegram para gestión, economía, juegos y administración de comunidades, con sistema privado de registro e investigación DANTE.
 
-## Características
+## Sistemas principales
 
-- **Economía Virtual** — Los usuarios ganan y gastan PiPesos a través de actividades y transacciones.
-- **Tienda e Inventario** — Sistema de compra y uso de ítems (collar, látigo, fusta, galleta, bola mordaza, sorpresa).
-- **Juegos y Casino** — Apuestas entre usuarios, dados, robos y juegos diarios.
-- **Sistema de Combate** — Peleas por turnos con dados, HP y apuestas.
-- **Recompensas Automáticas** — Gana PiPesos por publicar en temas específicos.
-- **Sistema de Castigos** — Los DOM pueden confinar usuarios al "rincón del castigo".
-- **Roles Internos** — Sistema de 3 niveles: Usuario (1), Admin (2), BotMaster (3).
-- **Multi-Comunidad** — Soporte para múltiples comunidades con configuraciones independientes.
+### PiBot
 
-## Stack Tecnológico
+- Economía virtual con PiPesos
+- Tienda, inventario, regalos y títulos
+- Juegos y casino
+- Peleas y apuestas
+- Perfiles
+- Eventos y recompensas
+- Subastas
+- Sistemas multimedia
+- Moderación y herramientas administrativas
+- Persistencia mediante PostgreSQL
+
+### DANTE 1.0
+
+DANTE es un módulo independiente de registro e investigación.
+
+Permite:
+
+- Historial de nombres y usernames observados
+- Registro de entradas, salidas y reapariciones
+- Historial de cambios de identidad
+- Vigilancia de cuentas
+- Búsqueda histórica
+- Comparación de cuentas
+- Casos y expedientes
+- Registro de evidencia
+- SHA-256 para integridad de archivos
+- Líneas temporales
+- Registro de interacciones observables
+- Análisis de coincidencias y filtraciones
+- Exportación de casos
+- Panel privado
+- Estado y diagnóstico
+
+DANTE trabaja únicamente con información que PiBot puede observar legítimamente.
+
+DANTE no banea, expulsa, silencia, restringe, acepta ni rechaza usuarios automáticamente.
+
+Las decisiones de moderación corresponden al BotMaster.
+
+## Presentaciones
+
+PiBot incorpora verificación opcional de presentaciones mediante nota de voz.
+
+Flujo:
+
+1. Rose publica la bienvenida.
+2. PiBot espera el tiempo configurado.
+3. PiBot proporciona una frase aleatoria para esa entrada.
+4. El usuario realiza su presentación mediante nota de voz.
+5. PiBot utiliza el sistema existente de control de presentaciones.
+
+El sistema completo puede activarse o desactivarse:
+
+```text
+/presentaciones on
+/presentaciones off
+/presentaciones estado
+```
+
+DANTE es independiente del sistema de presentaciones. Si Presentaciones está OFF y DANTE está ON, DANTE continúa registrando los eventos disponibles normalmente.
+
+## Identificación de usuarios
+
+PiBot utiliza internamente el Telegram `user_id` para mantener una identidad estable.
+
+En mensajes normales:
+
+- Si existe username → `@username`
+- Si no existe username → nombre de Telegram
+- El ID numérico no se utiliza como sustituto visible del nombre
+
+Los IDs pueden conservarse internamente y en documentación técnica cuando sean necesarios.
+
+## Menciones
+
+`/todos`
+
+Menciona a los usuarios conocidos por PiBot en el grupo.
+
+`/todos mensaje`
+
+Realiza las menciones acompañadas del mensaje indicado.
+
+## DANTE
+
+Comandos principales:
+
+```text
+/dante
+/dante buscar
+/dante comparar
+/dante vigilar
+/dante nota
+/dante caso
+/dante evidencia
+/dante exportar
+/dante estado
+```
+
+Las funciones sensibles de DANTE están restringidas al usuario autorizado y su información se entrega por privado.
+
+## Rendimiento
+
+DANTE está diseñado para permanecer aislado del funcionamiento principal de PiBot.
+
+Incluye:
+
+- consultas PostgreSQL indexadas
+- caché de identidad
+- deduplicación de eventos
+- procesamiento selectivo
+- paginación
+- persistencia
+- aislamiento de errores
+
+Un fallo de DANTE no debería detener PiBot.
+
+## Stack tecnológico
 
 | Componente | Tecnología |
 |---|---|
 | Framework | python-telegram-bot 22.5 |
-| Base de Datos | PostgreSQL (psycopg2-binary) |
+| Base de datos | PostgreSQL |
 | Lenguaje | Python 3.11+ |
-| Deployment | Railway |
+| Deployment | Render |
+| DANTE | 1.0.0 |
 
-## Variables de Entorno
+## Variables de entorno
 
-| Variable | Requerida | Descripción |
-|---|---|---|
-| `BOT_TOKEN` | Sí | Token de Telegram de @BotFather |
-| `DATABASE_URL` | Sí | URL de PostgreSQL (Railway lo provee automáticamente) |
-| `BOT_USERNAME` | Sí | Username del bot sin @ (para deep links) |
-| `BOTMASTER_IDS` | Sí | IDs de usuario separados por coma para rol BotMaster |
+Variables principales existentes:
 
-## Comandos
+```text
+BOT_TOKEN
+DATABASE_URL
+BOT_USERNAME
+BOTMASTER_IDS
+```
 
-| Comando | Descripción | Permisos |
-|---|---|---|
-| `/start` | Menú principal (solo privado) | Todos |
-| `/ver` | Ver saldo de PiPesos | Todos |
-| `/dar <cant> @user` | Transferir PiPesos | Todos |
-| `/tienda` | Abrir tienda (solo privado) | Todos |
-| `/inventario` | Ver inventario (solo privado) | Todos |
-| `/usar <item> @user` | Usar ítem en otro usuario | Todos |
-| `/apostar <cant>` | Crear apuesta (tema juegos) | Todos |
-| `/aceptar` | Aceptar apuesta | Todos |
-| `/cancelar` | Cancelar apuesta | Todos |
-| `/jugar` | Dado diario (max 5/día) | Todos |
-| `/robar @user` | Intentar robar (max 3/día) | Todos |
-| `/lucha @user <cant>` | Retar a combate | Todos |
-| `/aceptarlucha` | Aceptar reto de combate | Todos |
-| `/NumAzar N1 N2` | Número aleatorio | Todos |
-| `/regalar <cant> @user` | Regalar PiPesos | Admin+ |
-| `/quitar <cant>` | Quitar PiPesos | Admin+ |
-| `/castigar @user` | Confinar al rincón | DOM |
-| `/perdonar @user` | Liberar del rincón | DOM |
-| `/AsignarRol @user [1\|2\|3]` | Cambiar rol de usuario | BotMaster |
-| `/Suerte @user [1\|2\|3]` | Cambiar suerte de usuario (prob. robo) | BotMaster |
-| `/MiRol` | Ver tu rol actual | Todos |
+Variables añadidas:
 
-## Instalación Local
+```text
+DANTE_ENABLED=true
+PRESENTATION_PROMPT_DELAY_SECONDS=8
+```
+
+`DANTE_ENABLED` permite desactivar DANTE sin detener PiBot.
+
+`PRESENTATION_PROMPT_DELAY_SECONDS` controla cuánto espera PiBot después de una entrada antes de enviar la verificación de presentación, permitiendo que Rose publique primero su bienvenida.
+
+## Seguridad
+
+No publiques en el repositorio:
+
+- `BOT_TOKEN`
+- `DATABASE_URL` con credenciales
+- contraseñas
+- claves privadas
+- archivos `.env` de producción
+
+Utiliza las variables privadas de Render para estos valores.
+
+## Ejecución
 
 ```bash
-git clone https://github.com/aleisnthere31/Pibotv2.git
-cd PiBot2.0
-python -m venv .venv
-.venv\Scripts\activate  # Windows
 pip install -r requirements.txt
-```
-
-Crea un archivo `.env`:
-```
-BOT_TOKEN=tu_token_aquí
-DATABASE_URL=postgresql://user:pass@host:5432/dbname
-BOT_USERNAME=tu_bot_username
-BOTMASTER_IDS=123456789
-```
-
-```bash
 python main.py
 ```
 
-## Documentación
+## Versiones
 
-- [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md) — Guía de despliegue en Railway
-- [CHANGELOG.md](CHANGELOG.md) — Historial de cambios
-- [Agents.md](Agents.md) — Documentación técnica completa para agentes AI
+- PiBot: 2.0
+- DANTE: 1.0.0
