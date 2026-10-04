@@ -278,9 +278,9 @@ async def regalar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def userid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show the caller's Telegram user ID."""
-    user = update.effective_user
-    await update.message.reply_text(f"Tu ID de Telegram es: {user.id}")
+    """Show the caller using PiBot's human-facing identity rule."""
+    from src.utils.display_name import visible_user
+    await update.message.reply_text(f"Tu usuario visible es: {visible_user(user=update.effective_user)}")
 
 
 #endregion
