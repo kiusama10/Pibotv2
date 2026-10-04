@@ -78,6 +78,7 @@ from handlers.welcoming import nuevo_usuario, mensaje_de_presentaciones
 from handlers.emoji_party_games import dardos, boliche, aliados, cancelar_emoji_juego, emoji_game_callback
 from handlers.dante import ensure_dante_tables, dante_observer, dante_command, dante_callback
 from handlers.everyone import todos
+from handlers.activity_admin import actividad, actividad_callback, ensure_member_activity_table, member_activity_observer
 from handlers.community_activities import ensure_community_tables, daily_question_job, daily_answer_handler, weekly_awards_job, ranking_callback, ranking_command, pregunta_dia_info
 
 # Constants
@@ -493,6 +494,7 @@ def main() -> None:
     ensure_extras_tables()
     ensure_assassin_tables()
     ensure_community_tables()
+    ensure_member_activity_table()
     
     print("[INIT] Restarting active combats...")
     restart_all_combats()
@@ -537,6 +539,7 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.ALL, auto_registrar), group=-2)
     # Participation is throttled to one point/minute/user and flushed in batches.
     app.add_handler(MessageHandler(filters.ALL, track_activity), group=-3)
+    app.add_handler(MessageHandler(filters.ALL, member_activity_observer), group=-3)
 
     # Group -1: Community blocking filter (runs first, can stop others)
     app.add_handler(MessageHandler(filters.ALL, bloquear_comunidad), group=-1)
@@ -546,6 +549,7 @@ def main() -> None:
     app.add_handler(CommandHandler("dante", dante_command), group=0)
     app.add_handler(CommandHandler("presentaciones", presentaciones_command), group=0)
     app.add_handler(CommandHandler("todos", todos), group=0)
+    app.add_handler(CommandHandler("actividad", actividad), group=0)
     app.add_handler(CommandHandler("comandos", comandos), group=0)
     app.add_handler(CommandHandler(["bienvenida", "saludar"], saludar), group=0)
     app.add_handler(CommandHandler("castigar", castigar), group=0)
@@ -694,6 +698,7 @@ def main() -> None:
         group=5
     )
     app.add_handler(CallbackQueryHandler(dante_callback, pattern="^dante:"), group=5)
+    app.add_handler(CallbackQueryHandler(actividad_callback, pattern="^act:"), group=5)
     app.add_handler(CallbackQueryHandler(social_callback, pattern="^soc:"), group=5)
     app.add_handler(CallbackQueryHandler(vinculo_callback, pattern="^vin:"), group=5)
     app.add_handler(
