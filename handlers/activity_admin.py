@@ -39,9 +39,13 @@ def ensure_member_activity_table():
 
 
 def _is_real_user_message(msg):
-    if not msg: return False
-    # Service membership events are observations, not a message written by the member.
-    if msg.new_chat_members or msg.left_chat_member: return False
+    if not msg or not msg.text:
+        return False
+    # Activity here means conversation written by the member, not bot commands.
+    if msg.text.startswith("/"):
+        return False
+    if msg.new_chat_members or msg.left_chat_member:
+        return False
     return True
 
 
