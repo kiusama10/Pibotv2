@@ -1,0 +1,45 @@
+PIBOT + DANTE 1.0.0 — CAMBIOS
+
+BASE
+- El PiBot existente se conserva; cambios localizados en integración, presentación e identidad visible.
+- DANTE usa tablas dante_* independientes.
+- DANTE_ENABLED permite desactivar DANTE desde entorno sin apagar PiBot.
+
+DANTE
+- Historial observado por chat/user_id, aliases y cambios de nombre/username.
+- Cache de identidad de 5 minutos: mensajes normales con identidad sin cambios no hacen consultas DANTE repetidas.
+- Eventos de entrada/salida/cambio con claves deduplicables.
+- Watchlist privada, búsqueda histórica, comparación explicable, casos, notas, evidencia con SHA-256 (hasta 20 MB para hashing), exportación JSON con SHA-256, estado y panel privado.
+- Solo KIU_ROOT_ID (o fallback KIU_ROOT_USERNAME si no hay ID configurado) accede a DANTE.
+- Resultados sensibles solo por privado. En grupo solo se permiten acciones por reply que se confirman por PV.
+- DANTE no ejecuta bans, kicks, mutes, restricciones ni acepta/rechaza solicitudes.
+- Error de inicialización de DANTE queda aislado para que PiBot continúe.
+
+PRESENTACIONES
+- Mantiene el watchdog existente de 30 minutos y su misma función de retiro.
+- Interruptor persistente: /presentaciones on|off|estado.
+- OFF cancela pendientes para evitar retiros tardíos; DANTE sigue independiente.
+- Rose sigue siendo la bienvenida. PiBot espera PRESENTATION_PROMPT_DELAY_SECONDS (8 por defecto) antes de enviar el reto de voz.
+- Cada entrada/reentrada genera frase nueva.
+- Solo nota de voz nueva completa la presentación; audio/documento/texto no la completa.
+- Reenvíos marcados por Telegram se rechazan.
+- Mensajes de retiro muestran @username o nombre, nunca un user_id suelto.
+
+/todos
+- /todos y /todos texto usan miembros observados por PiBot/DANTE en ese chat.
+- Usa @username; si no existe, mención Telegram con nombre visible.
+- Divide mensajes para respetar tamaño.
+
+IDENTIDAD VISIBLE
+- Helper central visible_user(): @username si existe; si no, nombre.
+- /userid ya no imprime el número como identidad visible.
+
+LIMITACIÓN REAL DE TELEGRAM
+- Telegram Bot API no entrega una transcripción de notas de voz. Sin añadir un servicio externo de speech-to-text, PiBot puede exigir una nota de voz fresca y asignar una frase, pero no puede comprobar automáticamente las palabras exactas pronunciadas. No se añadió un detector externo para evitar dependencia, latencia, coste y falsos positivos.
+- El orden Rose→PiBot se implementa con retraso configurable porque un bot no debe depender de recibir el mensaje de otro bot. Ajusta PRESENTATION_PROMPT_DELAY_SECONDS si Rose tarda más en tu grupo.
+
+VALIDACIÓN LOCAL
+- python -m py_compile: OK para archivos modificados.
+- AST de todos los .py: OK (50 archivos).
+- compileall: OK.
+- Import/runtime completo no pudo ejecutarse en este entorno porque las dependencias no están instaladas y el entorno no tiene acceso de red para pip. Debe probarse en Render/staging con PostgreSQL/Telegram reales antes de producción.

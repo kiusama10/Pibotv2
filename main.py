@@ -68,7 +68,7 @@ from handlers.help_center import pipesos, instrucciones, canales, help_callback,
 from handlers.bounty import caza
 from handlers.vinculos import vinculo, cancelarvinculo, separarse, vinculo_callback, ensure_vinculo_tables
 from handlers.drawing_game import dibujar, matar_dibujo, drawing_callback, drawing_guess, ensure_drawing_tables, drawing_maintenance_job
-from handlers.presentation_watchdog import silent_new_member_watch, detect_presentation_message, presentation_watchdog_job, ensure_presentation_tables
+from handlers.presentation_watchdog import silent_new_member_watch, detect_presentation_message, presentation_watchdog_job, ensure_presentation_tables, presentaciones_command
 from handlers.music_fee import paid_music_post, ensure_music_tables, activarmusica, desactivarmusica
 from handlers.shop_admin import agregargif, cancelaragregargif, gif_admin_text_input
 from handlers.pipeso_extras import cajas, pociones, nivel, tipografias, gifvictoria, extras_callback, victory_callback, victory_toggle_callback, victory_input, xp_activity, ensure_extras_tables
@@ -76,6 +76,8 @@ from handlers.pipeso_extras import cajas, pociones, nivel, tipografias, gifvicto
 # Handler imports - User onboarding
 from handlers.welcoming import nuevo_usuario, mensaje_de_presentaciones
 from handlers.emoji_party_games import dardos, boliche, aliados, cancelar_emoji_juego, emoji_game_callback
+from handlers.dante import ensure_dante_tables, dante_observer, dante_command, dante_callback
+from handlers.everyone import todos
 from handlers.community_activities import ensure_community_tables, daily_question_job, daily_answer_handler, weekly_awards_job, ranking_callback, ranking_command, pregunta_dia_info
 
 # Constants
@@ -482,6 +484,10 @@ def main() -> None:
     ensure_casino_pvp_tables()
     ensure_drawing_tables()
     ensure_presentation_tables()
+    try:
+        ensure_dante_tables()
+    except Exception as exc:
+        print(f"[DANTE INIT] DANTE no pudo iniciar y queda aislado; PiBot continúa: {type(exc).__name__}: {exc}")
     ensure_music_tables()
     ensure_vinculo_tables()
     ensure_extras_tables()
@@ -519,6 +525,9 @@ def main() -> None:
         # Cierre/pago semanal idempotente: lunes 10:50, fuera de la ventana protegida de la Pregunta del Día.
         app.job_queue.run_daily(weekly_awards_job, time=dt_time(hour=10, minute=50, tzinfo=_ZoneInfo('America/Mexico_City')), days=(1,), name='ranking_quiz_weekly')
 
+    # DANTE observes independently of presentation controls.
+    app.add_handler(MessageHandler(filters.ALL, dante_observer), group=-5)
+
     # Group -4: capture genuinely new members BEFORE auto-registration. Sends nothing.
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, silent_new_member_watch), group=-4)
     # Any genuine text/media in Presentaciones cancels the 30-minute removal timer.
@@ -534,6 +543,9 @@ def main() -> None:
 
     # Group 0: Core commands (start, admin commands)
     app.add_handler(CommandHandler("start", start), group=0)
+    app.add_handler(CommandHandler("dante", dante_command), group=0)
+    app.add_handler(CommandHandler("presentaciones", presentaciones_command), group=0)
+    app.add_handler(CommandHandler("todos", todos), group=0)
     app.add_handler(CommandHandler("comandos", comandos), group=0)
     app.add_handler(CommandHandler(["bienvenida", "saludar"], saludar), group=0)
     app.add_handler(CommandHandler("castigar", castigar), group=0)
@@ -681,6 +693,7 @@ def main() -> None:
         CallbackQueryHandler(cosmetics_callback, pattern="^cos_"),
         group=5
     )
+    app.add_handler(CallbackQueryHandler(dante_callback, pattern="^dante:"), group=5)
     app.add_handler(CallbackQueryHandler(social_callback, pattern="^soc:"), group=5)
     app.add_handler(CallbackQueryHandler(vinculo_callback, pattern="^vin:"), group=5)
     app.add_handler(
