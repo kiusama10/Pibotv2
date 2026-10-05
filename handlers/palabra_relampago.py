@@ -170,7 +170,8 @@ async def _launch(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *, force: bo
     photo = _render(word)
     msg = await context.bot.send_photo(
         chat_id=chat_id, message_thread_id=thread, photo=photo,
-        caption="⚡ PALABRA RELÁMPAGO BDSM\n\nSé el primero en escribir exactamente la palabra o concepto que aparece en la imagen.\n\n💰 Premio: 1,500 PiPesos\n⏱️ Tienes 10 minutos."
+        caption="⚡ PALABRA RELÁMPAGO BDSM\n\nToca la imagen para revelarla y sé el primero en escribir la palabra o concepto. No necesitas responder ni mencionar la imagen.\n\n💰 Premio: 1,500 PiPesos\n⏱️ Tienes 10 minutos.",
+        has_spoiler=True,
     )
     _active[key] = {"answer": _norm(word), "shown": word, "started": started, "message_id": msg.message_id}
     context.job_queue.run_once(_expire, 600, data={"chat_id":chat_id,"thread":thread,"message_id":msg.message_id}, name=f"palabra:{chat_id}:{msg.message_id}")
@@ -200,8 +201,17 @@ async def palabra_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     if not msg or not msg.text or not update.effective_chat or update.effective_chat.type == "private":
         return
-    key = (update.effective_chat.id, msg.message_thread_id)
+    # Telegram puede entregar mensajes normales/replies del mismo tema con pequeñas
+    # diferencias en message_thread_id. Primero intentamos el tema exacto y, si no
+    # coincide, buscamos la única ronda activa de este chat. Así NO hace falta
+    # responder ni mencionar la imagen para acertar.
+    chat_id = update.effective_chat.id
+    key = (chat_id, msg.message_thread_id)
     game = _active.get(key)
+    if game is None:
+        matches = [(k, g) for k, g in _active.items() if k[0] == chat_id]
+        if len(matches) == 1:
+            key, game = matches[0]
     if not game or _norm(msg.text) != game["answer"]:
         return
     _active.pop(key, None)
