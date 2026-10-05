@@ -42,7 +42,7 @@ from handlers.starting_menu import start, comandos, menu_callback
 from handlers.tienda import tienda, tienda_callback
 from handlers.inventario import inventario, inventario_callback, usar
 from handlers.battles import lucha, ataque, aceptar_lucha, cancelar_lucha
-from handlers.roles import asignar_rol, ver_rol, suerte, hacer_botmaster, quitar_botmaster
+from handlers.roles import asignar_rol, ver_rol, suerte as suerte_admin_legacy, hacer_botmaster, quitar_botmaster
 
 # Handler imports - Games and rewards
 from handlers.theme_juegosYcasino import (
@@ -71,7 +71,7 @@ from handlers.drawing_game import dibujar, matar_dibujo, drawing_callback, drawi
 from handlers.presentation_watchdog import silent_new_member_watch, detect_presentation_message, presentation_watchdog_job, ensure_presentation_tables, presentaciones_command
 from handlers.music_fee import paid_music_post, ensure_music_tables, activarmusica, desactivarmusica
 from handlers.shop_admin import agregargif, cancelaragregargif, gif_admin_text_input
-from handlers.pipeso_extras import cajas, pociones, nivel, tipografias, gifvictoria, extras_callback, victory_callback, victory_toggle_callback, victory_input, xp_activity, ensure_extras_tables
+from handlers.pipeso_extras import cajas, pociones, nivel, tipografias, gifvictoria, quitargif, extras_callback, victory_callback, victory_toggle_callback, victory_input, xp_activity, ensure_extras_tables, suerte_diaria, baloncesto, challenge_points_command, ranking_retos, challenge_weekly_awards_job
 
 # Handler imports - User onboarding
 from handlers.welcoming import nuevo_usuario, mensaje_de_presentaciones
@@ -80,6 +80,7 @@ from handlers.dante import ensure_dante_tables, dante_observer, dante_command, d
 from handlers.everyone import todos
 from handlers.activity_admin import actividad, actividad_callback, ensure_member_activity_table, member_activity_observer
 from handlers.community_activities import ensure_community_tables, daily_question_job, daily_answer_handler, weekly_awards_job, ranking_callback, ranking_command, pregunta_dia_info
+from handlers.palabra_relampago import ensure_palabra_tables, palabra_hourly_job, palabra_guess, palabra_prueba, palabra_on, palabra_off
 
 # Constants
 RUTA_CASTIGADOS = PUNISHMENT_FILE
@@ -495,6 +496,7 @@ def main() -> None:
     ensure_assassin_tables()
     ensure_community_tables()
     ensure_member_activity_table()
+    ensure_palabra_tables()
     
     print("[INIT] Restarting active combats...")
     restart_all_combats()
@@ -520,12 +522,16 @@ def main() -> None:
         app.job_queue.run_repeating(dictionary_tick, interval=DICTIONARY_INTERVAL_SECONDS, first=1200, name="bdsm_dictionary_75m")
         app.job_queue.run_repeating(turtle_season_maintenance_job, interval=3600, first=45, name="turtle_monthly_awards")
         app.job_queue.run_repeating(assassin_cycle_job, interval=300, first=20, name="assassin_6h_cycle")
+        # Palabra Relámpago: una ronda al inicio de cada hora en el tema Juegos, si está activada.
+        _pnow=datetime.now(ZoneInfo("America/Mexico_City")); _pnext=(_pnow+timedelta(hours=1)).replace(minute=0,second=0,microsecond=0)
+        app.job_queue.run_repeating(palabra_hourly_job, interval=3600, first=max(1,(_pnext-_pnow).total_seconds()), name="palabra_relampago_hourly")
         # Pregunta del Día: 10:00 AM hora de México. El coordinador reserva su ventana para evitar choques.
         from datetime import time as dt_time
         from zoneinfo import ZoneInfo as _ZoneInfo
         app.job_queue.run_daily(daily_question_job, time=dt_time(hour=10, minute=0, tzinfo=_ZoneInfo('America/Mexico_City')), name='pregunta_del_dia_10mx')
         # Cierre/pago semanal idempotente: lunes 10:50, fuera de la ventana protegida de la Pregunta del Día.
         app.job_queue.run_daily(weekly_awards_job, time=dt_time(hour=10, minute=50, tzinfo=_ZoneInfo('America/Mexico_City')), days=(1,), name='ranking_quiz_weekly')
+        app.job_queue.run_daily(challenge_weekly_awards_job, time=dt_time(hour=0, minute=5, tzinfo=_ZoneInfo('America/Mexico_City')), days=(1,), name='ranking_retos_weekly')
 
     # DANTE observes independently of presentation controls.
     app.add_handler(MessageHandler(filters.ALL, dante_observer), group=-5)
@@ -583,7 +589,15 @@ def main() -> None:
     app.add_handler(CommandHandler("id", get_theme_id), group=2)
     app.add_handler(CommandHandler("AsignarRol", asignar_rol), group=2)
     app.add_handler(CommandHandler("MiRol", ver_rol), group=2)
-    app.add_handler(CommandHandler("Suerte", suerte), group=2)
+    app.add_handler(CommandHandler("suerte", suerte_diaria), group=2)
+    # Conserva el antiguo ajuste administrativo de roles bajo un nombre no conflictivo.
+    app.add_handler(CommandHandler("ajustarsuerte", suerte_admin_legacy), group=2)
+    app.add_handler(CommandHandler("baloncesto", baloncesto), group=2)
+    app.add_handler(CommandHandler("rankingretos", ranking_retos), group=2)
+    app.add_handler(CommandHandler("palabraprueba", palabra_prueba), group=2)
+    app.add_handler(CommandHandler("palabraon", palabra_on), group=2)
+    app.add_handler(CommandHandler("palabraoff", palabra_off), group=2)
+    app.add_handler(MessageHandler(filters.Regex(r"^/[+-]\d+(?:@\w+)?(?:\s|$)"), challenge_points_command), group=2)
     app.add_handler(CommandHandler("hacerbotmaster", hacer_botmaster), group=2)
     app.add_handler(CommandHandler("quitarbotmaster", quitar_botmaster), group=2)
     app.add_handler(CommandHandler("userid", userid), group=2)
@@ -616,6 +630,7 @@ def main() -> None:
     app.add_handler(CommandHandler("cajas", cajas), group=2)
     app.add_handler(CommandHandler("tipografias", tipografias), group=2)
     app.add_handler(CommandHandler("gifvictoria", gifvictoria), group=2)
+    app.add_handler(CommandHandler("quitargif", quitargif), group=2)
     app.add_handler(CommandHandler("caza", caza), group=2)
     app.add_handler(CommandHandler("vinculo", vinculo), group=2)
     app.add_handler(CommandHandler("cancelarvinculo", cancelarvinculo), group=2)
@@ -645,6 +660,8 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.PHOTO, profile_photo_input), group=2)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, drawing_guess), group=3)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, daily_answer_handler), group=4)
+    # Grupo separado para que no compita con Dibuja ni Pregunta del Día.
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, palabra_guess), group=7)
 
     # Paid music posts. Disabled safely until MUSIC_THREAD_ID is configured.
     app.add_handler(MessageHandler((filters.AUDIO | filters.VIDEO | filters.TEXT) & ~filters.COMMAND, paid_music_post), group=2)
@@ -709,7 +726,7 @@ def main() -> None:
         group=5
     )
     app.add_handler(CallbackQueryHandler(quiz_callback, pattern="^bq:"), group=5)
-    app.add_handler(CallbackQueryHandler(extras_callback, pattern="^ex:(box|font|fontpage):|^ex:fontnoop$"), group=5)
+    app.add_handler(CallbackQueryHandler(extras_callback, pattern="^ex:(box|font|fontpage|luck):|^ex:fontnoop$"), group=5)
     app.add_handler(CallbackQueryHandler(victory_toggle_callback, pattern="^vg:toggle:"), group=5)
     app.add_handler(CallbackQueryHandler(victory_callback, pattern="^vg:(gif|text|games|preview|remove)$"), group=5)
     app.add_handler(CallbackQueryHandler(casino_pvp_callback, pattern="^(turtle|bj):"), group=5)
