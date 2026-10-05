@@ -12,9 +12,61 @@ QUIZ_REWARD=1000
 BASE=[
 ('consentimiento','Acuerdo libre, informado, específico y reversible.'),('safeword','Palabra o señal acordada para pausar o detener.'),('aftercare','Cuidados acordados después de una dinámica.'),('negociación','Conversación previa sobre deseos, límites, riesgos y señales.'),('límite duro','Algo que una persona no acepta realizar.'),('límite blando','Algo explorable solo bajo condiciones específicas.'),('SSC','Seguro, Sensato y Consensuado.'),('RACK','Marco centrado en consentimiento informado y conciencia del riesgo.'),('dominante','Rol que asume control consensuado dentro de límites.'),('sumiso','Rol que cede control consensuadamente dentro de límites.'),('switch','Persona que puede disfrutar roles dominantes y sumisos.'),('brat','Estilo de sumisión con desafío juguetón consensuado.'),('pet play','Rol consensuado con rasgos o comportamiento de mascota.'),('power exchange','Intercambio consensuado de poder.'),('D/s','Dinámica de Dominación y sumisión consensuada.'),('check-in','Comprobación del bienestar durante o después de una dinámica.'),('subdrop','Bajón físico o emocional posible después de una dinámica intensa.'),('domdrop','Bajón físico o emocional posible en la parte dominante.'),('debrief','Conversación posterior para revisar qué funcionó y qué ajustar.'),('consentimiento reversible','El consentimiento puede retirarse en cualquier momento.'),('consentimiento específico','Aceptar una práctica no implica aceptar otras.'),('señal no verbal','Gesto u objeto acordado para comunicar pausa o detención.'),('semáforo','Verde continuar, amarillo comprobar/reducir y rojo detener.'),('privacidad','Derecho a decidir qué información personal se comparte.'),('autonomía','Capacidad de decidir sobre el propio cuerpo y participación.'),('coerción','Presión o amenaza que impide una decisión verdaderamente libre.'),('tijeras de seguridad','Herramienta de rescate útil para liberar cuerda rápidamente.'),('escucha activa','Escuchar, comprobar comprensión y no asumir.'),('top','Quien realiza una acción; no siempre equivale a dominante.'),('bottom','Quien recibe una acción; no siempre equivale a sumiso.'),('TPE','Intercambio amplio de poder consensuado; el consentimiento sigue siendo reversible.'),('vetting','Proceso de conocer y verificar a alguien antes de una dinámica de mayor riesgo.'),('green flag','Conducta positiva como respetar un no y hablar de riesgos.'),('red flag','Conducta que justifica cautela o alejarse.'),('renegociación','Modificar acuerdos consensuadamente cuando cambian circunstancias.'),('gradualidad','Empezar moderadamente y ajustar según respuesta y acuerdos.'),('feedback','Comentarios posteriores para ajustar futuras dinámicas.'),('rojo','En el sistema semáforo significa detener inmediatamente.'),('amarillo','Suele indicar bajar intensidad, pausar o comprobar.'),('verde','Suele indicar que se puede continuar según lo acordado.'),('plan de emergencia','Acuerdo previo sobre qué hacer si ocurre un incidente.'),('consentimiento granular','Aceptar o rechazar componentes concretos por separado.'),('fantasía','Una idea atractiva no implica querer realizarla.'),('contrato simbólico','Puede expresar acuerdos, pero no reemplaza consentimiento continuo ni ley.'),('aftercare individual','Los cuidados deben adaptarse a cada persona.'),('consentimiento de terceros','No se debe involucrar a personas ajenas sin permiso.'),('entumecimiento','Señal que puede indicar compresión y requiere detener/revisar.'),('dolor inesperado','Señal para pausar y revisar, no para asumir que es normal.'),('acuerdo explícito','Acuerdo comunicado claramente, no basado en suposiciones.'),('incompatibilidad','Deseos o límites no encajan; no obliga a nadie a ceder.'),
 ]
-OPEN=[
-'¿Qué diferencia ves entre confianza y consentimiento?','¿Por qué una safeword no sustituye una buena negociación?','¿Cómo debería reaccionar alguien responsable cuando recibe un no?','¿Por qué los límites pueden cambiar con el tiempo?','¿Qué hace que un buen aftercare sea diferente para cada persona?','¿Cómo respetarías la privacidad al contar una experiencia compartida?','¿Qué diferencia hay entre fantasía y querer llevar algo a la práctica?','¿Por qué tener experiencia no da permiso para ignorar límites?','¿Qué señales te hacen pensar que alguien negocia responsablemente?','¿Cómo puede una comunidad ayudar a detectar malas prácticas?'
+BASE += [
+('PRICK','Personal Responsibility, Informed Consensual Kink: marco que enfatiza responsabilidad personal, información y consentimiento.'),
+('CNC','Consensual Non-Consent: fantasía o dinámica previamente negociada que sigue dependiendo de consentimiento real y límites.'),
+('24/7','Acuerdo de dinámica que puede extenderse a la vida cotidiana; no significa consentimiento ilimitado.'),
+('service submission','Sumisión orientada al servicio acordado, cuyas tareas y alcance dependen de cada dinámica.'),
+('collar','Objeto que puede tener significado simbólico dentro de una relación o dinámica; su significado debe acordarse.'),
+('munch','Reunión social informal de personas interesadas en kink/BDSM, normalmente sin prácticas.'),
+('scene','Periodo o contexto acordado en el que se desarrolla una dinámica o práctica.'),
+('drop','Bajón físico o emocional que algunas personas pueden experimentar después de una experiencia intensa.'),
+('vetting comunitario','Búsqueda prudente de referencias e información antes de confiar en alguien, sin sustituir la negociación propia.'),
+('riesgo informado','Comprender riesgos relevantes antes de decidir si se acepta una práctica.'),
+('reducción de riesgos','Medidas destinadas a disminuir probabilidad o gravedad de daños sin afirmar que el riesgo desaparece.'),
+('consentimiento entusiasta','Forma de describir una participación clara y voluntaria; el silencio o la presión no equivalen a entusiasmo.'),
+('consentimiento continuo','El consentimiento se comprueba y respeta durante toda la interacción, no solo al principio.'),
+('consentimiento informado','Decisión tomada con información suficiente sobre lo que se propone y sus riesgos relevantes.'),
+('capacidad para consentir','Capacidad de comprender y decidir libremente; puede verse afectada por intoxicación o estados de conciencia alterados.'),
+('acuerdo de privacidad','Pacto sobre qué información, imágenes o detalles pueden compartirse y con quién.'),
+('señal de seguridad','Señal verbal o no verbal acordada para comunicar pausa, ajuste o detención.'),
+('palabra verde','En algunos sistemas semáforo comunica que la intensidad actual está bien; su significado se acuerda antes.'),
+('palabra amarilla','En algunos sistemas semáforo pide bajar intensidad, pausar o comprobar el estado.'),
+('palabra roja','En algunos sistemas semáforo indica detener la actividad de inmediato.'),
+('negociación previa','Conversación anterior a la dinámica para aclarar prácticas, límites, señales, riesgos y cuidados.'),
+('renegociación en frío','Revisión de acuerdos fuera del momento intenso, cuando las personas pueden valorar cambios con calma.'),
+('aftercare diferido','Seguimiento o cuidado que se realiza horas o días después si las personas lo necesitan.'),
+('autocuidado posterior','Medidas personales de descanso, hidratación, alimentación o regulación acordes a las necesidades propias.'),
+('debriefing','Conversación posterior para revisar la experiencia, aclarar sensaciones y decidir ajustes futuros.'),
+('trigger','Estímulo que puede provocar una reacción emocional intensa; conocerlo puede ayudar a negociar cuidados.'),
+('check-in verbal','Pregunta o frase acordada para comprobar bienestar y consentimiento durante una dinámica.'),
+('check-in no verbal','Comprobación mediante gestos o señales cuando hablar no es práctico.'),
+('responsabilidad dominante','Deber de respetar acuerdos, observar el estado de la otra persona y detenerse cuando corresponde; el rol no elimina responsabilidad.'),
+('agencia sumisa','Capacidad de la persona sumisa para decidir, negociar, retirar consentimiento y conservar autonomía.'),
+('protocolo alto','Conjunto más formal de reglas o rituales acordados; no es obligatorio ni universal.'),
+('protocolo bajo','Forma más flexible o informal de aplicar acuerdos y rituales dentro de una dinámica.'),
+('ritual','Acción simbólica repetida por acuerdo dentro de una dinámica o relación.'),
+('brat tamer','Etiqueta comunitaria para quien disfruta responder al desafío juguetón de un brat dentro de acuerdos consensuados.'),
+('caregiver/little','Dinámica de roles consensuada basada en cuidado y una presentación de rol; entre adultos no implica incapacidad real para consentir.'),
+('pet play','Juego de rol consensuado inspirado en comportamientos o identidades de mascota.'),
+('primal play','Estilo de juego de rol centrado en instinto, persecución o energía física, sujeto a límites y negociación.'),
+('impact play','Categoría de prácticas basadas en impactos; requiere conocer zonas, intensidad, herramientas y riesgos.'),
+('bondage','Restricción consensuada del movimiento; el método y los riesgos dependen de la técnica utilizada.'),
+('shibari','Término asociado a formas japonesas de atadura con cuerda; la práctica requiere aprendizaje técnico y atención a riesgos.'),
+('suspensión','Bondage en el que parte o todo el peso corporal depende del sistema de cuerda; implica riesgos mayores y requiere formación específica.'),
+('punto de presión','Zona donde una compresión puede afectar nervios o circulación y requiere especial cuidado.'),
+('circulación','Flujo sanguíneo que debe vigilarse en prácticas de restricción; cambios preocupantes requieren detener y revisar.'),
+('daño nervioso','Lesión posible por presión, postura o compresión; entumecimiento u otros síntomas requieren atención y no deben ignorarse.'),
+('tijeras de trauma','Herramienta de corte de seguridad que puede ayudar a retirar material rápidamente en una emergencia.'),
+('plan de salida','Acuerdo práctico sobre cómo detener una dinámica y qué hacer ante una situación inesperada.'),
+('compatibilidad','Coincidencia suficiente entre deseos, límites, comunicación y expectativas; no toda persona compatible socialmente lo es en una dinámica.'),
+('incompatibilidad de límites','Situación donde lo que una persona necesita cruza un límite de otra; no obliga a nadie a ceder.'),
+('NRE','New Relationship Energy: entusiasmo intenso de una relación nueva que puede influir en expectativas y decisiones.'),
+('metaconsentimiento','Conversación sobre cómo se comunicará y gestionará el consentimiento; no elimina el derecho a detenerse.'),
 ]
+
+OPEN=[]  # Los temas abiertos/debate automáticos se retiraron; el Quiz sigue siendo de conocimiento.
+
 STEMS=['¿Qué término corresponde a esta definición?','🧠 Adivina el concepto:','🔎 Identifica el término:','🎭 ¿De qué estamos hablando?','📚 Ronda de conocimiento:']
 
 def build_bank():
@@ -30,8 +82,6 @@ def build_bank():
     bad=['Continuar porque ya había aceptado','Ignorarlo','Decidir por la otra persona']
     for i,(s,a) in enumerate(scenarios):
         for v in range(30): out.append({'id':f'sc-{i}-{v}','type':'choice','q':f'🛡️ Caso práctico #{v+1}\n\n{s}\n\n¿Qué opción respeta mejor seguridad y consentimiento?','answer':a,'explanation':f"La opción correcta es «{a}» porque prioriza consentimiento, seguridad y comunicación ante esa situación.",'options':[a]+bad})
-    for i,q in enumerate(OPEN):
-        for v in range(10): out.append({'id':f'open-{i}-{v}','type':'open','q':f'💬 Debate #{v+1}\n\n{q}'})
     # Additional mixed rounds: same knowledge tested with different prompts/options; bank is built once in RAM.
     k=0; source=[x for x in out if x['type']=='choice']
     while len(out)<1100:
@@ -60,7 +110,7 @@ def _pick():
         c=conn.cursor(); c.execute('SELECT question_key FROM bdsm_quiz_history_tb ORDER BY last_used_at DESC LIMIT 850'); recent={r[0] for r in c.fetchall()}
     finally: _put_connection(conn)
     pool=[q for q in QUIZ_BANK if q['id'] not in recent] or QUIZ_BANK
-    typ='open' if random.random()<.12 else 'choice'; candidates=[q for q in pool if q['type']==typ]
+    candidates=[q for q in pool if q['type']=='choice']
     return random.choice(candidates or pool)
 
 def _strike(text):

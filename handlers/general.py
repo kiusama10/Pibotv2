@@ -39,37 +39,57 @@ def obtener_gif_aleatorio(nombre_producto):
 
 
 async def get_receptor(update: Update, context: ContextTypes.DEFAULT_TYPE, args_length=-1):
+    """Resolve a target from @username or from the replied message.
+
+    ``args_length`` is kept for compatibility with existing callers.  A negative
+    value means "prefer reply"; importantly, it never indexes an empty args list.
+    """
     if not update.message:
         return None
-    if len(context.args) == 0 and not update.message.reply_to_message:
-        return None
 
-    if len(context.args) >= args_length:
-        if not context.args[args_length - 1].startswith("@"):
-            await update.message.reply_text(
-                "⚠️ No es posible identificar al usuario sin un arroba, puede usar el comando respondiendo a uno de los mensajes del usuario al que desea enviarle los PiPesos"
-            )
-            return False
+    args = list(context.args or [])
 
-        mention = context.args[args_length - 1].lstrip("@")
-        user_id = get_id_user(mention)
-        if user_id is not None:
-            receptor = type("obj", (object,), {"id": int(user_id), "username": mention})
-        else:
-            receptor = None
-    elif update.message.reply_to_message:
+    # Reply is the safest source and must work even when there are other args
+    # (e.g. /usar baño as a reply).
+    if update.message.reply_to_message and (args_length is None or args_length <= 0):
         try:
             receptor = update.message.reply_to_message.from_user
-            if get_campo_usuario(receptor.id, "id_user") is None:
+            if receptor and get_campo_usuario(receptor.id, "id_user") is None:
                 nombre = normalizar_nombre(receptor.first_name or "", receptor.last_name or "")
                 if not nombre.strip():
                     nombre = receptor.username or f"user{receptor.id}"
                 insert_user(receptor.id, 0, receptor.username, nombre)
+            return receptor
         except Exception:
-            receptor = None
-    else:
-        receptor = None
-    return receptor
+            return None
+
+    if not args:
+        if update.message.reply_to_message:
+            return update.message.reply_to_message.from_user
+        return None
+
+    # Existing callers pass a 1-based argument position. Never index unless it
+    # actually exists; this fixes the /usar <item> reply IndexError.
+    idx = (args_length - 1) if args_length and args_length > 0 else (len(args) - 1)
+    if idx < 0 or idx >= len(args):
+        if update.message.reply_to_message:
+            return update.message.reply_to_message.from_user
+        return None
+
+    token = args[idx]
+    if not token.startswith("@"):
+        if update.message.reply_to_message:
+            return update.message.reply_to_message.from_user
+        await update.message.reply_text(
+            "⚠️ No es posible identificar al usuario sin un arroba; también puedes usar el comando respondiendo a uno de sus mensajes."
+        )
+        return False
+
+    mention = token.lstrip("@")
+    user_id = get_id_user(mention)
+    if user_id is None:
+        return None
+    return type("obj", (object,), {"id": int(user_id), "username": mention})
 
 
 #endregion

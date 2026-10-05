@@ -3,8 +3,9 @@ import math, random, time
 from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from src.database.database import _get_connection,_put_connection
+from src.database.database import _get_connection,_put_connection, get_id_user
 from src.utils.seasonal import current_season
+from src.utils.root_owner import ensure_root_identity
 
 SEASON_BOX_NAMES={
     "normal": {"epic":"💜 Caja Épica","legendary":"🌟 Caja Legendaria"},
@@ -128,6 +129,11 @@ def ensure_extras_tables():
         c.execute("""CREATE TABLE IF NOT EXISTS user_box_assets_tb(asset_id bigserial PRIMARY KEY,user_id bigint NOT NULL,asset_type text NOT NULL,asset_code text NOT NULL,asset_name text NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),UNIQUE(user_id,asset_type,asset_code))""")
         c.execute("""CREATE TABLE IF NOT EXISTS user_profile_style_tb(user_id bigint PRIMARY KEY,font_code text NOT NULL DEFAULT 'normal',updated_at timestamptz NOT NULL DEFAULT now())""")
         c.execute("""CREATE TABLE IF NOT EXISTS victory_gif_tb(user_id bigint PRIMARY KEY,file_id text NOT NULL,message text NOT NULL DEFAULT '🏆 {nombre} celebra su victoria.',enabled_games text[] NOT NULL DEFAULT ARRAY['all']::text[],created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now())""")
+        c.execute("""CREATE TABLE IF NOT EXISTS daily_luck_tb(user_id BIGINT NOT NULL,play_date DATE NOT NULL,choice SMALLINT,results_json TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(user_id,play_date))""")
+        c.execute("""CREATE TABLE IF NOT EXISTS daily_basketball_tb(user_id BIGINT NOT NULL,play_date DATE NOT NULL,plays INT NOT NULL DEFAULT 0,made INT NOT NULL DEFAULT 0,net BIGINT NOT NULL DEFAULT 0,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(user_id,play_date))""")
+        c.execute("""CREATE TABLE IF NOT EXISTS challenge_weekly_points_tb(week_start DATE NOT NULL,user_id BIGINT NOT NULL,points INT NOT NULL DEFAULT 0,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(week_start,user_id))""")
+        c.execute("""CREATE TABLE IF NOT EXISTS challenge_weekly_audit_tb(audit_id BIGSERIAL PRIMARY KEY,week_start DATE NOT NULL,target_id BIGINT NOT NULL,actor_id BIGINT NOT NULL,delta INT NOT NULL,before_points INT NOT NULL,after_points INT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+        c.execute("""CREATE TABLE IF NOT EXISTS challenge_weekly_payouts_tb(week_start DATE PRIMARY KEY,paid_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),first_id BIGINT,second_id BIGINT,third_id BIGINT)""")
         conn.commit()
     except Exception as e: conn.rollback(); print('[EXTRAS tables]',e)
     finally:_put_connection(conn)
@@ -189,16 +195,22 @@ async def pociones(update:Update,context:ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("🧪 POCIONES\n\nLos potenciadores de PiPesos solo afectan recompensas NUEVAS creadas por PiBot; nunca transferencias, mercado, préstamos o apuestas entre usuarios.",reply_markup=InlineKeyboardMarkup(kb))
 
 async def cajas(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    kb=[[InlineKeyboardButton(f"{name} · {price:,} PiPesos",callback_data=f'ex:box:{code}')] for code,(price,name) in current_boxes().items()]
+    """Open the boxes menu in private. Group use only redirects to PV."""
+    uid=update.effective_user.id
+    if update.effective_chat.type!='private':
+        try:
+            await context.bot.send_message(chat_id=uid,text='🎁 Me pediste tus cajas. Elige cuál quieres abrir:',reply_markup=_boxes_markup())
+        except Exception:
+            return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start y después vuelve a usar /cajas.')
+        return await update.effective_message.reply_text('📩 Te mandé tus cajas por privado.')
+    await update.effective_message.reply_text(_boxes_text(),reply_markup=_boxes_markup())
+
+def _boxes_markup():
+    return InlineKeyboardMarkup([[InlineKeyboardButton(f"{name} · {price:,} PiPesos",callback_data=f'ex:box:{code}')] for code,(price,name) in current_boxes().items()])
+
+def _boxes_text():
     season=current_season().replace('_',' ').upper()
-    await update.effective_message.reply_text(
-        f"🎁 CAJAS · {season}\n\n"
-        "💜 Épica: premios comunes, raros y hasta ÉPICOS.\n"
-        "🌟 Legendaria: puede soltar todo lo anterior y premios LEGENDARIOS.\n\n"
-        "Dentro pueden salir PiPesos, títulos y tipografías coleccionables. "
-        "Los títulos mezclan juegos, música, fantasía, humor, comunidad, temporada y algunos BDSM para que no salga siempre lo mismo. "
-        "Si repites un coleccionable, recibes 2,000 PiPesos.",
-        reply_markup=InlineKeyboardMarkup(kb))
+    return (f"🎁 CAJAS · {season}\n\n💜 Épica: premios comunes, raros y hasta ÉPICOS.\n🌟 Legendaria: puede soltar todo lo anterior y premios LEGENDARIOS.\n\nDentro pueden salir PiPesos, títulos y tipografías coleccionables. Si repites un coleccionable, recibes 2,000 PiPesos.")
 
 def _roll_box(code):
     # Dos cajas únicamente: la Épica llega hasta épico; la Legendaria añade legendario.
@@ -218,6 +230,23 @@ def _roll_box(code):
 
 async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; p=q.data.split(':'); uid=q.from_user.id
+    if p[1]=='luck':
+        import json
+        idx=int(p[2]); conn=_get_connection()
+        try:
+            c=conn.cursor(); c.execute(f"SELECT choice,results_json FROM daily_luck_tb WHERE user_id=%s AND play_date={_mx_day_sql()} FOR UPDATE",(uid,)); row=c.fetchone()
+            if not row: conn.rollback(); return await q.answer('Tu tirada de hoy ya no está disponible.',show_alert=True)
+            if row[0] is not None: conn.rollback(); return await q.answer('Ya elegiste hoy.',show_alert=True)
+            results=json.loads(row[1]); delta=int(results[idx])
+            if delta<0:
+                c.execute('SELECT saldo FROM usuarios_tb WHERE id_user=%s FOR UPDATE',(uid,)); rr=c.fetchone(); delta=-min(-delta,max(0,int(rr[0] if rr else 0)))
+            c.execute('UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s',(delta,uid)); c.execute(f"UPDATE daily_luck_tb SET choice=%s WHERE user_id=%s AND play_date={_mx_day_sql()}",(idx,uid)); conn.commit()
+        except Exception:
+            conn.rollback(); return await q.answer('No pude registrar tu elección.',show_alert=True)
+        finally:_put_connection(conn)
+        emojis=['🍀','🎲','🎁','💀']; reveal=' · '.join(f'{emojis[i]} {v:+,}' for i,v in enumerate(results))
+        await q.answer('¡Suerte decidida!',show_alert=True)
+        return await q.edit_message_text(f'🍀 Elegiste {emojis[idx]}…\n\n{delta:+,} PiPesos\n\nLos cuatro escondían:\n{reveal}\n\nVuelve mañana a tentar a la suerte. 😈')
     if p[1]=='fontnoop': return await q.answer()
     if p[1]=='fontpage':
         page=int(p[2]); return await q.edit_message_reply_markup(reply_markup=font_markup(page,'profile_editor',q.from_user.id))
@@ -268,6 +297,16 @@ async def font_callback(q,code):
         conn.rollback(); return await q.answer('No pude cambiar la tipografía.',show_alert=True)
     finally:_put_connection(conn)
     await q.answer(f'Tipografía equipada: {FONT_LABELS.get(code,code)}.',show_alert=True)
+
+
+async def quitargif(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id; conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("DELETE FROM victory_gif_tb WHERE user_id=%s",(uid,)); removed=c.rowcount; conn.commit()
+    except Exception:
+        conn.rollback(); return await update.effective_message.reply_text('⚠️ No pude quitar tu celebración.')
+    finally:_put_connection(conn)
+    await update.effective_message.reply_text('🗑️ Tu GIF de victoria fue eliminado.' if removed else '🏆 No tenías un GIF de victoria configurado.')
 
 async def gifvictoria(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type!='private': return await update.effective_message.reply_text('🏆 Configura tu celebración por privado con PiBot.')
@@ -343,3 +382,137 @@ async def send_victory(context,uid,game,chat_id,thread_id=None,name=None):
     if not r or ('all' not in r[2] and game not in r[2]):return
     try: await context.bot.send_animation(chat_id,r[0],caption=r[1].replace('{nombre}',name or 'Jugador'),message_thread_id=thread_id)
     except Exception: pass
+
+
+# ==================== DAILY LUCK / BASKETBALL / WEEKLY CHALLENGES ====================
+def _mx_day_sql():
+    return "(NOW() AT TIME ZONE 'America/Mexico_City')::date"
+
+def _luck_results():
+    # Exactly one normal, one bad, one very bad and one very good result.
+    values=[random.randint(1000,5000), -random.randint(1000,4500), -random.randint(5000,12000), random.randint(10000,25000)]
+    random.shuffle(values)
+    return values
+
+async def suerte_diaria(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id; conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute(f"SELECT choice,results_json FROM daily_luck_tb WHERE user_id=%s AND play_date={_mx_day_sql()}",(uid,)); old=c.fetchone()
+        if old:
+            return await update.effective_message.reply_text('🍀 Ya tentaste a la suerte hoy. Vuelve mañana para elegir otra vez.')
+        import json
+        results=_luck_results(); c.execute(f"INSERT INTO daily_luck_tb(user_id,play_date,results_json) VALUES(%s,{_mx_day_sql()},%s)",(uid,json.dumps(results))); conn.commit()
+    except Exception:
+        conn.rollback(); return await update.effective_message.reply_text('⚠️ No pude preparar tu suerte de hoy. Inténtalo de nuevo.')
+    finally:_put_connection(conn)
+    emojis=['🍀','🎲','🎁','💀']; kb=InlineKeyboardMarkup([[InlineKeyboardButton(emojis[i],callback_data=f'ex:luck:{i}') for i in range(4)]])
+    await update.effective_message.reply_text('🍀 SUERTE DEL DÍA\n\nHay cuatro opciones. Una es normal, una mala, una MUY mala y una MUY buena. 😈\nElige una; hoy solo tienes una oportunidad.',reply_markup=kb)
+
+async def baloncesto(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id; conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute(f"SELECT plays,made,net FROM daily_basketball_tb WHERE user_id=%s AND play_date={_mx_day_sql()} FOR UPDATE",(uid,)); row=c.fetchone()
+        plays,made,net=(row or (0,0,0))
+        if plays>=3:
+            conn.rollback(); return await update.effective_message.reply_text(f'🏀 Ya usaste tus 3 tiros de hoy.\nEncestados: {made}/3 · Balance: {net:+,} PiPesos')
+        # Reserve the attempt before awaiting Telegram, preventing double taps/commands.
+        if row: c.execute(f"UPDATE daily_basketball_tb SET plays=plays+1,updated_at=NOW() WHERE user_id=%s AND play_date={_mx_day_sql()}",(uid,))
+        else: c.execute(f"INSERT INTO daily_basketball_tb(user_id,play_date,plays) VALUES(%s,{_mx_day_sql()},1)",(uid,))
+        conn.commit()
+    except Exception:
+        conn.rollback(); return await update.effective_message.reply_text('⚠️ No pude preparar el tiro.')
+    finally:_put_connection(conn)
+    try:
+        dice=await context.bot.send_dice(chat_id=update.effective_chat.id,emoji='🏀',message_thread_id=getattr(update.effective_message,'message_thread_id',None)); value=dice.dice.value
+    except Exception:
+        # Give the reserved attempt back if Telegram itself could not send the dice.
+        conn=_get_connection()
+        try:
+            c=conn.cursor(); c.execute(f"UPDATE daily_basketball_tb SET plays=GREATEST(0,plays-1) WHERE user_id=%s AND play_date={_mx_day_sql()}",(uid,)); conn.commit()
+        finally:_put_connection(conn)
+        return await update.effective_message.reply_text('⚠️ Telegram no pudo lanzar el balón. Tu intento no fue consumido.')
+    rewards={1:-1000,2:-500,3:500,4:1500,5:3000}; delta=rewards.get(value,0); made_now=value>=4
+    conn=_get_connection()
+    try:
+        c=conn.cursor();
+        if delta<0:
+            c.execute("SELECT saldo FROM usuarios_tb WHERE id_user=%s FOR UPDATE",(uid,)); rr=c.fetchone(); actual=min(-delta,max(0,int(rr[0] if rr else 0))); delta=-actual
+        c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(delta,uid))
+        c.execute(f"UPDATE daily_basketball_tb SET made=made+%s,net=net+%s,updated_at=NOW() WHERE user_id=%s AND play_date={_mx_day_sql()} RETURNING plays,made,net",(1 if made_now else 0,delta,uid)); stats=c.fetchone(); conn.commit()
+    except Exception:
+        conn.rollback(); return await update.effective_message.reply_text('⚠️ El tiro salió, pero no pude registrar el resultado. No se modificó tu saldo.')
+    finally:_put_connection(conn)
+    label='🔥 ¡Tiro limpio!' if value==5 else ('🏀 ¡Encestaste!' if made_now else '💥 Fallaste el tiro.')
+    await update.effective_message.reply_text(f'{label}\nResultado: {delta:+,} PiPesos\nIntentos de hoy: {stats[0]}/3 · Encestados: {stats[1]} · Balance: {stats[2]:+,}')
+
+def _challenge_target(update,context):
+    m=update.effective_message
+    if m.reply_to_message and m.reply_to_message.from_user:
+        return m.reply_to_message.from_user.id
+    # This is handled by a Regex MessageHandler, so context.args is not
+    # guaranteed to be populated like it is for CommandHandler.
+    for token in (m.text or '').split()[1:]:
+        if token.startswith('@'):
+            return get_id_user(token[1:])
+    return None
+
+async def challenge_points_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    """Handle /+N and /-N. Root-only; target by reply or @username."""
+    if not ensure_root_identity(update.effective_user): return
+    text=(update.effective_message.text or '').strip(); import re
+    m=re.match(r'^/([+-])(\d+)(?:@\w+)?(?:\s|$)',text)
+    if not m: return
+    amount=int(m.group(2));
+    if amount<=0 or amount>1000: return await update.effective_message.reply_text('🏆 Usa una cantidad entre 1 y 1000 puntos.')
+    delta=amount if m.group(1)=='+' else -amount; target=_challenge_target(update,context)
+    if not target: return await update.effective_message.reply_text('🏆 Responde al mensaje de alguien o añade @usuario. Ejemplo: /+3 @usuario')
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT id_user FROM usuarios_tb WHERE id_user=%s",(target,))
+        if not c.fetchone(): conn.rollback(); return await update.effective_message.reply_text('🏆 Esa persona todavía no está registrada en PiBot.')
+        c.execute("SELECT date_trunc('week',NOW() AT TIME ZONE 'America/Mexico_City')::date"); ws=c.fetchone()[0]
+        c.execute("SELECT points FROM challenge_weekly_points_tb WHERE week_start=%s AND user_id=%s FOR UPDATE",(ws,target)); r=c.fetchone(); before=int(r[0]) if r else 0; after=max(0,before+delta); real=after-before
+        c.execute("INSERT INTO challenge_weekly_points_tb(week_start,user_id,points) VALUES(%s,%s,%s) ON CONFLICT(week_start,user_id) DO UPDATE SET points=EXCLUDED.points,updated_at=NOW()",(ws,target,after))
+        c.execute("INSERT INTO challenge_weekly_audit_tb(week_start,target_id,actor_id,delta,before_points,after_points) VALUES(%s,%s,%s,%s,%s,%s)",(ws,target,update.effective_user.id,real,before,after)); conn.commit()
+        c.execute("SELECT username,nombre FROM perfiles_tb WHERE id_user=%s",(target,)); rr=c.fetchone(); name=(('@'+rr[0]) if rr and rr[0] else (rr[1] if rr else str(target)))
+    except Exception:
+        conn.rollback(); return await update.effective_message.reply_text('⚠️ No pude actualizar el ranking de retos.')
+    finally:_put_connection(conn)
+    await update.effective_message.reply_text(f"🏆 {name} {real:+d} punto{'s' if abs(real)!=1 else ''} · Total semanal: {after}")
+
+async def ranking_retos(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT date_trunc('week',NOW() AT TIME ZONE 'America/Mexico_City')::date"); ws=c.fetchone()[0]
+        c.execute("""SELECT p.user_id,p.points,pr.username,pr.nombre FROM challenge_weekly_points_tb p LEFT JOIN perfiles_tb pr ON pr.id_user=p.user_id WHERE p.week_start=%s ORDER BY p.points DESC,p.updated_at ASC LIMIT 30""",(ws,)); rows=c.fetchall()
+    finally:_put_connection(conn)
+    if not rows:return await update.effective_message.reply_text('🏆 El ranking semanal de retos todavía está vacío.')
+    medals=['🥇','🥈','🥉']; lines=['🏆 RANKING SEMANAL DE RETOS','']
+    for i,(uid,pts,user,name) in enumerate(rows): lines.append(f"{medals[i] if i<3 else str(i+1)+'.'} {('@'+user) if user else (name or 'Usuario')} — {pts} puntos")
+    lines += ['','🎁 Premios: 20,000 · 12,000 · 8,000 PiPesos']
+    await update.effective_message.reply_text('\n'.join(lines))
+
+async def challenge_weekly_awards_job(context:ContextTypes.DEFAULT_TYPE):
+    """Idempotent payout for the previous Mexico-City week."""
+    conn=_get_connection(); winners=[]; ws=None
+    try:
+        c=conn.cursor(); c.execute("SELECT (date_trunc('week',NOW() AT TIME ZONE 'America/Mexico_City')::date - 7)"); ws=c.fetchone()[0]
+        c.execute("SELECT 1 FROM challenge_weekly_payouts_tb WHERE week_start=%s",(ws,))
+        if c.fetchone(): conn.rollback(); return
+        c.execute("SELECT user_id,points FROM challenge_weekly_points_tb WHERE week_start=%s AND points>0 ORDER BY points DESC,updated_at ASC LIMIT 3 FOR UPDATE",(ws,)); rows=c.fetchall(); prizes=[20000,12000,8000]
+        for i,row in enumerate(rows):
+            uid,pts=row; prize=prizes[i]; c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(prize,uid)); winners.append((uid,pts,prize))
+        ids=[w[0] for w in winners]+[None]*3; c.execute("INSERT INTO challenge_weekly_payouts_tb(week_start,first_id,second_id,third_id) VALUES(%s,%s,%s,%s)",(ws,ids[0],ids[1],ids[2])); conn.commit()
+    except Exception as e:
+        conn.rollback(); print('[RETOS WEEKLY]',e); return
+    finally:_put_connection(conn)
+    if not winners:return
+    lines=['🏆 RANKING SEMANAL DE RETOS · RESULTADOS','']; medals=['🥇','🥈','🥉']
+    conn=_get_connection()
+    try:
+        c=conn.cursor()
+        for i,(uid,pts,prize) in enumerate(winners):
+            c.execute("SELECT username,nombre FROM perfiles_tb WHERE id_user=%s",(uid,)); r=c.fetchone(); name=(('@'+r[0]) if r and r[0] else (r[1] if r else 'Usuario')); lines.append(f'{medals[i]} {name} — {pts} puntos · +{prize:,} PiPesos')
+    finally:_put_connection(conn)
+    try: await context.bot.send_message(chat_id=-1003290179217,message_thread_id=435,text='\n'.join(lines))
+    except Exception as e: print('[RETOS ANNOUNCE]',e)
