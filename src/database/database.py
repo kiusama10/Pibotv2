@@ -1729,8 +1729,21 @@ def dar_recompensa(id_user: int, cantidad: int) -> int:
 def get_catalog_items():
     conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("SELECT id_item,nombre,precio,COALESCE(categoria,'General') FROM items_tb ORDER BY id_item")
+        c=conn.cursor(); c.execute("CREATE TABLE IF NOT EXISTS hidden_shop_items_tb(id_item INTEGER PRIMARY KEY REFERENCES items_tb(id_item) ON DELETE CASCADE, hidden_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"); c.execute("SELECT i.id_item,i.nombre,i.precio,COALESCE(i.categoria,'General') FROM items_tb i LEFT JOIN hidden_shop_items_tb h ON h.id_item=i.id_item WHERE h.id_item IS NULL ORDER BY i.id_item")
         return c.fetchall()
+    finally:_put_connection(conn)
+
+
+def is_item_hidden(id_item:int) -> bool:
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("CREATE TABLE IF NOT EXISTS hidden_shop_items_tb(id_item INTEGER PRIMARY KEY REFERENCES items_tb(id_item) ON DELETE CASCADE, hidden_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"); c.execute("SELECT 1 FROM hidden_shop_items_tb WHERE id_item=%s",(id_item,)); return bool(c.fetchone())
+    finally:_put_connection(conn)
+
+def unhide_item(id_item:int) -> None:
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("CREATE TABLE IF NOT EXISTS hidden_shop_items_tb(id_item INTEGER PRIMARY KEY REFERENCES items_tb(id_item) ON DELETE CASCADE, hidden_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"); c.execute("DELETE FROM hidden_shop_items_tb WHERE id_item=%s",(id_item,)); conn.commit()
     finally:_put_connection(conn)
 
 def get_item_gifs(id_item:int):
