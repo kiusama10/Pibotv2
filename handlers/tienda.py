@@ -243,10 +243,12 @@ async def mostrar_item(id_item, descripcion, update: Update, context: ContextTyp
         f"💲 Precio: {item_precio} COP"
     )
 
-    botonera = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⬅️ Volver al catálogo", callback_data="volver_catalogo")],
-        [InlineKeyboardButton("🎞️ Ver GIF", callback_data=f"gif_preview_{id_item}"), InlineKeyboardButton("🛒 Comprar", callback_data=f"comprar_{id_item}")]
-    ])
+    filas = [[InlineKeyboardButton("⬅️ Volver al catálogo", callback_data="volver_catalogo")]]
+    if get_item_gifs(id_item):
+        filas.append([InlineKeyboardButton("🎞️ Ver GIF", callback_data=f"gif_preview_{id_item}"), InlineKeyboardButton("🛒 Comprar", callback_data=f"comprar_{id_item}")])
+    else:
+        filas.append([InlineKeyboardButton("🛒 Comprar", callback_data=f"comprar_{id_item}")])
+    botonera = InlineKeyboardMarkup(filas)
 
     # Imagen
     with open(ruta_absoluta_imagen, "rb") as img:

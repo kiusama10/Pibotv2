@@ -1,9 +1,9 @@
 from __future__ import annotations
-import math, random, time, asyncio
+import math, random, time
 from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from src.database.database import _get_connection,_put_connection, get_id_user
+from src.database.database import _get_connection,_put_connection, get_id_user, get_id_item, get_campo_item
 from src.utils.seasonal import current_season
 from src.utils.root_owner import ensure_root_identity
 
@@ -300,23 +300,30 @@ async def font_callback(q,code):
 
 
 async def quitargif(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    # /quitargif <artículo>: ROOT quita únicamente los GIF dinámicos del artículo.
-    # /quitargif sin argumento conserva el comportamiento existente del GIF de victoria.
+    # Con argumento: ROOT elimina únicamente los GIFs personalizados del artículo.
+    # Sin argumento: conserva exactamente el comportamiento anterior del GIF de victoria.
     if context.args:
         if not ensure_root_identity(update.effective_user):
             return await update.effective_message.reply_text('⛔ Este comando es exclusivo de Kiu.')
-        item_name=' '.join(context.args).strip(); conn=_get_connection()
+        nombre=' '.join(context.args).strip()
+        id_item=get_id_item(nombre)
+        if not id_item:
+            return await update.effective_message.reply_text(f'⚠️ No encontré el artículo «{nombre}».')
+        item_nombre=get_campo_item(id_item,'nombre') or nombre
+        conn=_get_connection()
         try:
-            c=conn.cursor(); c.execute("SELECT id_item,nombre FROM items_tb WHERE LOWER(nombre)=LOWER(%s) LIMIT 1",(item_name,)); item=c.fetchone()
-            if not item:
-                return await update.effective_message.reply_text(f'⚠️ No encontré el artículo “{item_name}”.')
-            c.execute("DELETE FROM item_gifs_tb WHERE id_item=%s",(item[0],)); removed=c.rowcount; conn.commit()
+            c=conn.cursor()
+            c.execute('DELETE FROM item_gifs_tb WHERE id_item=%s',(id_item,))
+            removed=c.rowcount
+            conn.commit()
         except Exception:
-            conn.rollback(); return await update.effective_message.reply_text('⚠️ No pude quitar el GIF del artículo. No se modificó nada más.')
-        finally:_put_connection(conn)
+            conn.rollback()
+            return await update.effective_message.reply_text('⚠️ No pude quitar los GIFs del artículo.')
+        finally:
+            _put_connection(conn)
         if removed:
-            return await update.effective_message.reply_text(f'🗑️ Quité {removed} GIF(s) personalizados de {item[1]}.\nEl artículo, precio, inventario y efecto siguen intactos.')
-        return await update.effective_message.reply_text(f'ℹ️ {item[1]} no tenía GIFs personalizados registrados.')
+            return await update.effective_message.reply_text(f'🗑️ Quité {removed} GIF(s) personalizado(s) de {item_nombre}. El artículo sigue intacto en la tienda.')
+        return await update.effective_message.reply_text(f'ℹ️ {item_nombre} no tenía GIFs personalizados registrados.')
 
     uid=update.effective_user.id; conn=_get_connection()
     try:
@@ -449,8 +456,6 @@ async def baloncesto(update:Update,context:ContextTypes.DEFAULT_TYPE):
             c=conn.cursor(); c.execute(f"UPDATE daily_basketball_tb SET plays=GREATEST(0,plays-1) WHERE user_id=%s AND play_date={_mx_day_sql()}",(uid,)); conn.commit()
         finally:_put_connection(conn)
         return await update.effective_message.reply_text('⚠️ Telegram no pudo lanzar el balón. Tu intento no fue consumido.')
-    # Esperar a que termine la animación del balón antes de revelar el resultado.
-    await asyncio.sleep(4.2)
     rewards={1:-1000,2:-500,3:500,4:1500,5:3000}; delta=rewards.get(value,0); made_now=value>=4
     conn=_get_connection()
     try:

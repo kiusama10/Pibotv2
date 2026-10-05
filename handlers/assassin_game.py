@@ -41,7 +41,7 @@ def ensure_assassin_tables():
           target_id BIGINT NOT NULL,guesser_id BIGINT NOT NULL,suspect_id BIGINT NOT NULL,
           correct BOOLEAN NOT NULL DEFAULT FALSE,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY(cycle_id,target_id,guesser_id))""")
-        c.execute("""CREATE TABLE IF NOT EXISTS assassin_players_tb(config_id BIGINT NOT NULL REFERENCES assassin_auto_tb(config_id) ON DELETE CASCADE,user_id BIGINT NOT NULL,nombre TEXT NOT NULL,joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(config_id,user_id))""")
+        c.execute("""CREATE TABLE IF NOT EXISTS assassin_auto_players_tb(config_id BIGINT NOT NULL REFERENCES assassin_auto_tb(config_id) ON DELETE CASCADE,user_id BIGINT NOT NULL,nombre TEXT NOT NULL,joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(config_id,user_id))""")
         c.execute("""CREATE TABLE IF NOT EXISTS assassin_hint_state_tb(cycle_id BIGINT NOT NULL REFERENCES assassin_cycles_tb(cycle_id) ON DELETE CASCADE,target_id BIGINT NOT NULL,killer_id BIGINT NOT NULL,hint_no INT NOT NULL DEFAULT 1,next_hint_at TIMESTAMPTZ NOT NULL DEFAULT NOW()+INTERVAL '15 minutes',active BOOLEAN NOT NULL DEFAULT TRUE,PRIMARY KEY(cycle_id,target_id))""")
         conn.commit()
     except Exception: conn.rollback(); raise
@@ -86,7 +86,7 @@ def _thread(update):
 def _alive_pool(c, config_id, chat_id):
     # Only people who explicitly joined THIS Assassin game can be selected,
     # receive missions, appear as targets or appear as suspects.
-    c.execute("""SELECT p.user_id,p.nombre FROM assassin_players_tb p
+    c.execute("""SELECT p.user_id,p.nombre FROM assassin_auto_players_tb p
       WHERE p.config_id=%s AND NOT EXISTS(
         SELECT 1 FROM assassin_deaths_tb d JOIN assassin_cycles_tb cy ON cy.cycle_id=d.cycle_id
         WHERE cy.config_id=%s AND d.target_id=p.user_id)
@@ -169,7 +169,7 @@ async def assassin_cycle_job(context:ContextTypes.DEFAULT_TYPE):
         c.execute("""SELECT h.cycle_id,h.target_id,h.killer_id,h.hint_no,a.chat_id,a.thread_id,p.nombre
           FROM assassin_hint_state_tb h JOIN assassin_cycles_tb cy ON cy.cycle_id=h.cycle_id
           JOIN assassin_auto_tb a ON a.config_id=cy.config_id
-          JOIN assassin_players_tb p ON p.config_id=cy.config_id AND p.user_id=h.killer_id
+          JOIN assassin_auto_players_tb p ON p.config_id=cy.config_id AND p.user_id=h.killer_id
           WHERE h.active=TRUE AND h.next_hint_at<=NOW()"""); due=c.fetchall()
     finally:_put_connection(conn)
     for cid in ids: await _run_cycle(context,cid)
@@ -192,8 +192,8 @@ async def assassin_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
             if not cfg: conn.rollback(); return await q.answer('Ese juego ya no existe.',show_alert=True)
             if action=='join':
                 name=('@'+q.from_user.username) if q.from_user.username else q.from_user.full_name
-                c.execute("INSERT INTO assassin_players_tb(config_id,user_id,nombre) VALUES(%s,%s,%s) ON CONFLICT(config_id,user_id) DO UPDATE SET nombre=EXCLUDED.nombre",(cid,q.from_user.id,name)); conn.commit(); return await q.answer('🔪 Ya estás dentro del juego.',show_alert=True)
-            c.execute("DELETE FROM assassin_players_tb WHERE config_id=%s AND user_id=%s",(cid,q.from_user.id)); conn.commit(); return await q.answer('🚪 Saliste del juego del Asesino.',show_alert=True)
+                c.execute("INSERT INTO assassin_auto_players_tb(config_id,user_id,nombre) VALUES(%s,%s,%s) ON CONFLICT(config_id,user_id) DO UPDATE SET nombre=EXCLUDED.nombre",(cid,q.from_user.id,name)); conn.commit(); return await q.answer('🔪 Ya estás dentro del juego.',show_alert=True)
+            c.execute("DELETE FROM assassin_auto_players_tb WHERE config_id=%s AND user_id=%s",(cid,q.from_user.id)); conn.commit(); return await q.answer('🚪 Saliste del juego del Asesino.',show_alert=True)
         except Exception:
             conn.rollback(); return await q.answer('No pude cambiar tu registro.',show_alert=True)
         finally:_put_connection(conn)
@@ -227,7 +227,7 @@ async def assassin_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
             if c.rowcount!=1: conn.rollback(); return await q.answer('Ya elegiste una víctima en este ciclo.',show_alert=True)
             c.execute("INSERT INTO assassin_deaths_tb(cycle_id,target_id,killer_id) VALUES(%s,%s,%s)",(cycle,target,killer))
             c.execute("INSERT INTO assassin_hint_state_tb(cycle_id,target_id,killer_id,hint_no,next_hint_at) VALUES(%s,%s,%s,1,NOW()+INTERVAL '15 minutes') ON CONFLICT(cycle_id,target_id) DO NOTHING",(cycle,target,killer))
-            c.execute("SELECT nombre FROM assassin_players_tb WHERE config_id=%s AND user_id=%s",(row[4],target)); rr=c.fetchone(); name=rr[0] if rr else str(target); conn.commit(); chat,thread=row[2],row[3]
+            c.execute("SELECT nombre FROM assassin_auto_players_tb WHERE config_id=%s AND user_id=%s",(row[4],target)); rr=c.fetchone(); name=rr[0] if rr else str(target); conn.commit(); chat,thread=row[2],row[3]
         except Exception: conn.rollback(); return await q.answer('No pude registrar la víctima.',show_alert=True)
         finally:_put_connection(conn)
         await q.answer('Víctima elegida. 😈',show_alert=True); await q.edit_message_text(f'🔪 Misión completada. Elegiste a {name}.')
@@ -235,7 +235,7 @@ async def assassin_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat,message_thread_id=thread,text=f'☠️ *{name} ha sido víctima del Asesino.*\n¿Quién habrá sido? 👀',parse_mode='Markdown',reply_markup=guess_kb)
         conn2=_get_connection()
         try:
-            cc=conn2.cursor(); cc.execute("SELECT nombre FROM assassin_players_tb WHERE config_id=%s AND user_id=%s",(row[4],killer)); kr=cc.fetchone(); kname=kr[0] if kr else str(killer)
+            cc=conn2.cursor(); cc.execute("SELECT nombre FROM assassin_auto_players_tb WHERE config_id=%s AND user_id=%s",(row[4],killer)); kr=cc.fetchone(); kname=kr[0] if kr else str(killer)
         finally:_put_connection(conn2)
         await context.bot.send_message(chat_id=chat,message_thread_id=thread,text=f'🕵️ PISTA #1 DEL ASESINO\n\n{_hint_for(kname,1)}\n\n⏳ Nueva pista en 15 minutos.\n\n#PistasAsesino')
         return
@@ -249,13 +249,13 @@ async def assassin_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
               WHERE d.cycle_id=%s AND d.target_id=%s""",(cycle,victim)); row=c.fetchone()
             if not row: conn.rollback(); return await q.answer('Esta acusación ya no está disponible.',show_alert=True)
             chat,thread,cid,_=row
-            c.execute("SELECT 1 FROM assassin_players_tb WHERE config_id=%s AND user_id=%s",(cid,guesser))
+            c.execute("SELECT 1 FROM assassin_auto_players_tb WHERE config_id=%s AND user_id=%s",(cid,guesser))
             if not c.fetchone(): conn.rollback(); return await q.answer('🔪 Solo los jugadores registrados pueden acusar.',show_alert=True)
             c.execute("SELECT 1 FROM assassin_deaths_tb d JOIN assassin_cycles_tb cy ON cy.cycle_id=d.cycle_id WHERE cy.config_id=%s AND d.target_id=%s LIMIT 1",(cid,guesser))
             if c.fetchone(): conn.rollback(); return await q.answer('☠️ Los muertos ya no pueden participar.',show_alert=True)
             c.execute("SELECT 1 FROM assassin_guesses_tb WHERE cycle_id=%s AND target_id=%s AND guesser_id=%s",(cycle,victim,guesser))
             if c.fetchone(): conn.rollback(); return await q.answer('Ya hiciste tu acusación para esta víctima.',show_alert=True)
-            c.execute("SELECT user_id,nombre FROM assassin_players_tb WHERE config_id=%s AND user_id<>%s ORDER BY joined_at ASC",(cid,victim)); suspects=c.fetchall()
+            c.execute("SELECT user_id,nombre FROM assassin_auto_players_tb WHERE config_id=%s AND user_id<>%s ORDER BY joined_at ASC",(cid,victim)); suspects=c.fetchall()
             conn.rollback()
         except Exception: conn.rollback(); return await q.answer('No pude abrir las sospechas.',show_alert=True)
         finally:_put_connection(conn)
@@ -281,8 +281,8 @@ async def assassin_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
             correct=(suspect==killer)
             c.execute("INSERT INTO assassin_guesses_tb(cycle_id,target_id,guesser_id,suspect_id,correct) VALUES(%s,%s,%s,%s,%s) ON CONFLICT(cycle_id,target_id,guesser_id) DO NOTHING",(cycle,victim,guesser,suspect,correct))
             if c.rowcount!=1: conn.rollback(); return await q.answer('Ya usaste tu acusación para esta víctima.',show_alert=True)
-            c.execute("SELECT nombre FROM assassin_players_tb WHERE config_id=%s AND user_id=%s",(cid,guesser)); gr=c.fetchone(); gname=gr[0] if gr else q.from_user.full_name
-            c.execute("SELECT nombre FROM assassin_players_tb WHERE config_id=%s AND user_id=%s",(cid,killer)); kr=c.fetchone(); kname=kr[0] if kr else str(killer)
+            c.execute("SELECT nombre FROM assassin_auto_players_tb WHERE config_id=%s AND user_id=%s",(cid,guesser)); gr=c.fetchone(); gname=gr[0] if gr else q.from_user.full_name
+            c.execute("SELECT nombre FROM assassin_auto_players_tb WHERE config_id=%s AND user_id=%s",(cid,killer)); kr=c.fetchone(); kname=kr[0] if kr else str(killer)
             if correct:
                 c.execute("UPDATE assassin_hint_state_tb SET active=FALSE WHERE cycle_id=%s AND target_id=%s",(cycle,victim))
                 c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(DETECTIVE_REWARD,guesser))
