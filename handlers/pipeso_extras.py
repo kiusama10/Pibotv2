@@ -300,7 +300,8 @@ async def font_callback(q,code):
 
 
 async def quitargif(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    # Con argumento: ROOT elimina únicamente los GIFs personalizados del artículo.
+    # Con argumento: ROOT retira el artículo del catálogo configurable sin borrar
+    # inventarios existentes. Luego /agregargif puede publicarlo de nuevo desde cero.
     # Sin argumento: conserva exactamente el comportamiento anterior del GIF de victoria.
     if context.args:
         if not ensure_root_identity(update.effective_user):
@@ -330,6 +331,8 @@ async def quitargif(update:Update,context:ContextTypes.DEFAULT_TYPE):
         conn=_get_connection()
         try:
             c=conn.cursor()
+            c.execute('CREATE TABLE IF NOT EXISTS hidden_shop_items_tb(id_item INTEGER PRIMARY KEY REFERENCES items_tb(id_item) ON DELETE CASCADE, hidden_at TIMESTAMPTZ NOT NULL DEFAULT NOW())')
+            c.execute('INSERT INTO hidden_shop_items_tb(id_item) VALUES(%s) ON CONFLICT(id_item) DO UPDATE SET hidden_at=NOW()',(id_item,))
             c.execute('DELETE FROM item_gifs_tb WHERE id_item=%s',(id_item,))
             removed=c.rowcount
             conn.commit()
@@ -338,9 +341,7 @@ async def quitargif(update:Update,context:ContextTypes.DEFAULT_TYPE):
             return await update.effective_message.reply_text('⚠️ No pude quitar los GIFs del artículo.')
         finally:
             _put_connection(conn)
-        if removed:
-            return await update.effective_message.reply_text(f'🗑️ Quité {removed} GIF(s) personalizado(s) de {item_nombre}. El artículo sigue intacto en la tienda.')
-        return await update.effective_message.reply_text(f'ℹ️ {item_nombre} no tenía GIFs personalizados registrados.')
+        return await update.effective_message.reply_text(f'🗑️ {item_nombre} fue retirado del catálogo. Los que ya lo tenían conservan su inventario. Ahora puedes volver a publicarlo desde cero con /agregargif.')
 
     uid=update.effective_user.id; conn=_get_connection()
     try:
@@ -468,7 +469,7 @@ async def baloncesto(update:Update,context:ContextTypes.DEFAULT_TYPE):
         dice=await context.bot.send_dice(chat_id=update.effective_chat.id,emoji='🏀',message_thread_id=getattr(update.effective_message,'message_thread_id',None)); value=dice.dice.value
         # La animación de 🏀 tarda unos segundos en Telegram. Esperamos antes de
         # revelar el premio para no spoilear el resultado visual.
-        await asyncio.sleep(4.2)
+        await asyncio.sleep(6.5)
     except Exception:
         # Give the reserved attempt back if Telegram itself could not send the dice.
         conn=_get_connection()
