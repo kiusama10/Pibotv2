@@ -18,7 +18,7 @@ from telegram.ext import ContextTypes
 
 from src.config import DATABASE_URL, COMUNIDADES, obtener_temas_por_comunidad
 from src.database.database import dar_recompensa, is_botmaster
-from src.utils.display_name import display_name_from_user
+from src.utils.display_name import visible_user
 
 REWARD = 1500
 TZ = ZoneInfo("America/Mexico_City")
@@ -220,7 +220,7 @@ async def palabra_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         conn.close()
     seconds = elapsed_ms / 1000
-    await msg.reply_text(f"⚡ ¡{display_name_from_user(update.effective_user)} fue el primero!\n🔎 {game['shown']}\n⏱️ {seconds:.1f} segundos\n💰 +{paid:,} PiPesos")
+    await msg.reply_text(f"⚡ ¡{visible_user(update.effective_user)} fue el primero!\n🔎 {game['shown']}\n⏱️ {seconds:.1f} segundos\n💰 +{paid:,} PiPesos")
 
 
 async def palabra_prueba(update: Update, context: ContextTypes.DEFAULT_TYPE):
