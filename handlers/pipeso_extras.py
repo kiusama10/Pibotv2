@@ -1,5 +1,5 @@
 from __future__ import annotations
-import math, random, time
+import math, random, time, asyncio, unicodedata
 from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -307,9 +307,26 @@ async def quitargif(update:Update,context:ContextTypes.DEFAULT_TYPE):
             return await update.effective_message.reply_text('⛔ Este comando es exclusivo de Kiu.')
         nombre=' '.join(context.args).strip()
         id_item=get_id_item(nombre)
+        # get_id_item conserva una normalización histórica que puede no encontrar
+        # nombres con acentos (ej. "Baño"). Si falla, resolvemos contra el catálogo
+        # existente sin modificar el artículo ni su nombre.
+        if not id_item:
+            def _plain(v):
+                v=unicodedata.normalize('NFKD', str(v or ''))
+                return ''.join(ch for ch in v if not unicodedata.combining(ch)).strip().casefold()
+            conn_lookup=_get_connection()
+            try:
+                cc=conn_lookup.cursor(); cc.execute('SELECT id_item,nombre FROM items_tb')
+                wanted=_plain(nombre)
+                hit=next(((iid,nm) for iid,nm in cc.fetchall() if _plain(nm)==wanted),None)
+                if hit: id_item,item_nombre=hit
+                else: item_nombre=None
+            finally:
+                _put_connection(conn_lookup)
+        else:
+            item_nombre=get_campo_item(id_item,'nombre') or nombre
         if not id_item:
             return await update.effective_message.reply_text(f'⚠️ No encontré el artículo «{nombre}».')
-        item_nombre=get_campo_item(id_item,'nombre') or nombre
         conn=_get_connection()
         try:
             c=conn.cursor()
@@ -449,6 +466,9 @@ async def baloncesto(update:Update,context:ContextTypes.DEFAULT_TYPE):
     finally:_put_connection(conn)
     try:
         dice=await context.bot.send_dice(chat_id=update.effective_chat.id,emoji='🏀',message_thread_id=getattr(update.effective_message,'message_thread_id',None)); value=dice.dice.value
+        # La animación de 🏀 tarda unos segundos en Telegram. Esperamos antes de
+        # revelar el premio para no spoilear el resultado visual.
+        await asyncio.sleep(4.2)
     except Exception:
         # Give the reserved attempt back if Telegram itself could not send the dice.
         conn=_get_connection()

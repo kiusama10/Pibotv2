@@ -6,7 +6,7 @@ from src.database.database import _get_connection,_put_connection
 from src.utils.root_owner import ensure_root_identity
 
 CYCLE_SECONDS=6*60*60
-HINT_SECONDS=15*60
+HINT_SECONDS=10*60
 DETECTIVE_REWARD=3000
 _seen_members=set()
 
@@ -42,7 +42,7 @@ def ensure_assassin_tables():
           correct BOOLEAN NOT NULL DEFAULT FALSE,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY(cycle_id,target_id,guesser_id))""")
         c.execute("""CREATE TABLE IF NOT EXISTS assassin_auto_players_tb(config_id BIGINT NOT NULL REFERENCES assassin_auto_tb(config_id) ON DELETE CASCADE,user_id BIGINT NOT NULL,nombre TEXT NOT NULL,joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(config_id,user_id))""")
-        c.execute("""CREATE TABLE IF NOT EXISTS assassin_hint_state_tb(cycle_id BIGINT NOT NULL REFERENCES assassin_cycles_tb(cycle_id) ON DELETE CASCADE,target_id BIGINT NOT NULL,killer_id BIGINT NOT NULL,hint_no INT NOT NULL DEFAULT 1,next_hint_at TIMESTAMPTZ NOT NULL DEFAULT NOW()+INTERVAL '15 minutes',active BOOLEAN NOT NULL DEFAULT TRUE,PRIMARY KEY(cycle_id,target_id))""")
+        c.execute("""CREATE TABLE IF NOT EXISTS assassin_hint_state_tb(cycle_id BIGINT NOT NULL REFERENCES assassin_cycles_tb(cycle_id) ON DELETE CASCADE,target_id BIGINT NOT NULL,killer_id BIGINT NOT NULL,hint_no INT NOT NULL DEFAULT 1,next_hint_at TIMESTAMPTZ NOT NULL DEFAULT NOW()+INTERVAL '10 minutes',active BOOLEAN NOT NULL DEFAULT TRUE,PRIMARY KEY(cycle_id,target_id))""")
         conn.commit()
     except Exception: conn.rollback(); raise
     finally:_put_connection(conn)
@@ -109,7 +109,7 @@ async def asesino(update:Update,context:ContextTypes.DEFAULT_TYPE):
     finally:_put_connection(conn)
     kb=InlineKeyboardMarkup([[InlineKeyboardButton('🙋 Unirme',callback_data=f'as:join:{cid}'),InlineKeyboardButton('🚪 Salirme',callback_data=f'as:leave:{cid}')],[InlineKeyboardButton('▶️ Empezar juego',callback_data=f'as:auto_start:{cid}'),InlineKeyboardButton('🛑 Cancelar',callback_data=f'as:auto_cancel:{cid}')]])
     state='🟢 Activo' if active else '⚪ Detenido'
-    await update.effective_message.reply_text(f'🔪 *JUEGO DEL ASESINO*\n\n{state}\nPrimero regístrense con 🙋 Unirme. Solo quienes se registren participan, reciben mensajes privados y aparecen como objetivos/sospechosos.\n\n🕵️ Después de cada crimen habrá una pista nueva cada 15 minutos.',parse_mode='Markdown',reply_markup=kb)
+    await update.effective_message.reply_text(f'🔪 *JUEGO DEL ASESINO*\n\n{state}\nPrimero regístrense con 🙋 Unirme. Solo quienes se registren participan, reciben mensajes privados y aparecen como objetivos/sospechosos.\n\n🕵️ Después de cada crimen habrá una pista nueva cada 10 minutos.',parse_mode='Markdown',reply_markup=kb)
 
 
 async def reiniciarasesino(update:Update,context:ContextTypes.DEFAULT_TYPE):
@@ -178,7 +178,7 @@ async def assassin_cycle_job(context:ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=chat,message_thread_id=thread,text=f'🕵️ PISTA #{hno+1} DEL ASESINO\n\n{_hint_for(kname,hno+1)}\n\n#PistasAsesino')
             conn2=_get_connection()
             try:
-                cc=conn2.cursor(); cc.execute("UPDATE assassin_hint_state_tb SET hint_no=hint_no+1,next_hint_at=NOW()+INTERVAL '15 minutes' WHERE cycle_id=%s AND target_id=%s AND active=TRUE",(cycle,target)); conn2.commit()
+                cc=conn2.cursor(); cc.execute("UPDATE assassin_hint_state_tb SET hint_no=hint_no+1,next_hint_at=NOW()+INTERVAL '10 minutes' WHERE cycle_id=%s AND target_id=%s AND active=TRUE",(cycle,target)); conn2.commit()
             finally:_put_connection(conn2)
         except Exception as e: print('[ASESINO PISTA]',e)
 
@@ -226,7 +226,7 @@ async def assassin_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
             c.execute("INSERT INTO assassin_choices_tb(cycle_id,killer_id,target_id) VALUES(%s,%s,%s) ON CONFLICT(cycle_id,killer_id) DO NOTHING",(cycle,killer,target))
             if c.rowcount!=1: conn.rollback(); return await q.answer('Ya elegiste una víctima en este ciclo.',show_alert=True)
             c.execute("INSERT INTO assassin_deaths_tb(cycle_id,target_id,killer_id) VALUES(%s,%s,%s)",(cycle,target,killer))
-            c.execute("INSERT INTO assassin_hint_state_tb(cycle_id,target_id,killer_id,hint_no,next_hint_at) VALUES(%s,%s,%s,1,NOW()+INTERVAL '15 minutes') ON CONFLICT(cycle_id,target_id) DO NOTHING",(cycle,target,killer))
+            c.execute("INSERT INTO assassin_hint_state_tb(cycle_id,target_id,killer_id,hint_no,next_hint_at) VALUES(%s,%s,%s,1,NOW()+INTERVAL '10 minutes') ON CONFLICT(cycle_id,target_id) DO NOTHING",(cycle,target,killer))
             c.execute("SELECT nombre FROM assassin_auto_players_tb WHERE config_id=%s AND user_id=%s",(row[4],target)); rr=c.fetchone(); name=rr[0] if rr else str(target); conn.commit(); chat,thread=row[2],row[3]
         except Exception: conn.rollback(); return await q.answer('No pude registrar la víctima.',show_alert=True)
         finally:_put_connection(conn)
@@ -237,7 +237,7 @@ async def assassin_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         try:
             cc=conn2.cursor(); cc.execute("SELECT nombre FROM assassin_auto_players_tb WHERE config_id=%s AND user_id=%s",(row[4],killer)); kr=cc.fetchone(); kname=kr[0] if kr else str(killer)
         finally:_put_connection(conn2)
-        await context.bot.send_message(chat_id=chat,message_thread_id=thread,text=f'🕵️ PISTA #1 DEL ASESINO\n\n{_hint_for(kname,1)}\n\n⏳ Nueva pista en 15 minutos.\n\n#PistasAsesino')
+        await context.bot.send_message(chat_id=chat,message_thread_id=thread,text=f'🕵️ PISTA #1 DEL ASESINO\n\n{_hint_for(kname,1)}\n\n⏳ Nueva pista en 10 minutos.\n\n#PistasAsesino')
         return
 
     if action=='guess_start':
