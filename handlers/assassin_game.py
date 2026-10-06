@@ -218,8 +218,13 @@ async def assassin_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         cid=int(p[2]); conn=_get_connection()
         try:
             c=conn.cursor()
-            if action=='auto_start': c.execute("UPDATE assassin_auto_tb SET active=TRUE,next_cycle_at=NOW() WHERE config_id=%s",(cid,))
-            else: c.execute("UPDATE assassin_auto_tb SET active=FALSE,next_cycle_at=NULL WHERE config_id=%s",(cid,))
+            if action=='auto_start':
+                # Empezar desde el panel significa una partida nueva: los registrados
+                # vuelven a estar vivos. Las tablas hijas se limpian por CASCADE.
+                c.execute("DELETE FROM assassin_cycles_tb WHERE config_id=%s",(cid,))
+                c.execute("UPDATE assassin_auto_tb SET active=TRUE,next_cycle_at=NOW() WHERE config_id=%s",(cid,))
+            else:
+                c.execute("UPDATE assassin_auto_tb SET active=FALSE,next_cycle_at=NULL WHERE config_id=%s",(cid,))
             conn.commit()
         except Exception: conn.rollback(); return await q.answer('No pude cambiar el estado.',show_alert=True)
         finally:_put_connection(conn)

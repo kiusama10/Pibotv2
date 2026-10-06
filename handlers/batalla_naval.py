@@ -68,6 +68,25 @@ def _board_text(ships, shots_against=None, hide=False):
     return '\n'.join(lines)
 
 
+def _battle_text(g, last_line=None):
+    # Public view: both players' ATTACK boards. Ship positions always stay private.
+    name1=visible_user(user_id=g['creator_id'])
+    name2=visible_user(user_id=g['opponent_id'])
+    shots1=g.get('shots1') or {}
+    shots2=g.get('shots2') or {}
+    parts=['🚢 BATALLA NAVAL']
+    if last_line:
+        parts += ['', last_line]
+    parts += [
+        '', f'⚓ {name1} → {name2}', _board_text([],shots1,True),
+        '', f'⚓ {name2} → {name1}', _board_text([],shots2,True),
+        '', f'🎯 Turno de {visible_user(user_id=g["turn_id"])}',
+        f'💰 Pozo: {g["bet"]*2:,} PiPesos',
+        '', 'Elige una coordenada:'
+    ]
+    return '\n'.join(parts)
+
+
 def _attack_keyboard(game_id, shots):
     rows=[]
     for r in range(1,7):
@@ -138,8 +157,9 @@ async def _start_if_ready(context,gid):
     try:
         c=conn.cursor(); c.execute("UPDATE naval_games_tb SET status='active',turn_id=%s WHERE game_id=%s AND status='placing' AND ready1=TRUE AND ready2=TRUE",(first,gid)); conn.commit()
     finally:_put_connection(conn)
-    name=visible_user(user_id=first); shots={}
-    await context.bot.send_message(chat_id=g['chat_id'],message_thread_id=g['thread_id'],text=f'🚢 ¡BATALLA NAVAL INICIADA!\n\n⚔️ {visible_user(user_id=g["creator_id"])} vs {visible_user(user_id=g["opponent_id"])}\n💰 Pozo: {g["bet"]*2:,} PiPesos\n\n🎯 Turno de {name}\n\n{_board_text([],shots,True)}\n\nElige una coordenada para disparar:',reply_markup=_attack_keyboard(gid,shots))
+    ng=_get_game(gid)
+    first_slot=1 if first==ng['creator_id'] else 2
+    await context.bot.send_message(chat_id=g['chat_id'],message_thread_id=g['thread_id'],text=_battle_text(ng),reply_markup=_attack_keyboard(gid,ng[f'shots{first_slot}'] or {}))
 
 
 async def naval_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
@@ -243,9 +263,47 @@ async def naval_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             text=f'🏆 ¡FLOTA DESTRUIDA!\n\n{visible_user(user_id=uid)} hundió todos los barcos de {visible_user(user_id=other)}.\n💰 Gana el pozo de {g["bet"]*2:,} PiPesos.\n\nÚltimo disparo: {cell} · {result}'
             await q.edit_message_text(text)
             await send_victory(context,uid,'naval',g['chat_id'],g['thread_id'],visible_user(user_id=uid)); return
-        # New turn: show the NEXT player's own attack history.
+        # New turn: keep BOTH public attack boards visible; buttons belong to the next shooter's history.
         ng=_get_game(gid); next_slot=1 if other==ng['creator_id'] else 2; nextshots=ng[f'shots{next_slot}'] or {}
-        await q.edit_message_text(f'🚢 BATALLA NAVAL\n\n💣 {visible_user(user_id=uid)} disparó a {cell}: {result}\n\n🎯 Turno de {visible_user(user_id=other)}\n\n{_board_text([],nextshots,True)}\n\nElige una coordenada:',reply_markup=_attack_keyboard(gid,nextshots))
+        await q.edit_message_text(_battle_text(ng,f'💣 {visible_user(user_id=uid)} disparó a {cell}: {result}'),reply_markup=_attack_keyboard(gid,nextshots))
+
+
+async def cancelar_naval(update:Update, context:ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type=='private':
+        return await update.effective_message.reply_text('🚢 Cancela la Batalla Naval desde el grupo donde se está jugando.')
+    uid=update.effective_user.id; chat=update.effective_chat.id; thread=getattr(update.effective_message,'message_thread_id',None)
+    conn=_get_connection(); refund=None
+    try:
+        c=conn.cursor()
+        c.execute("""SELECT game_id,creator_id,opponent_id,bet,status FROM naval_games_tb
+          WHERE chat_id=%s AND COALESCE(thread_id,0)=COALESCE(%s,0)
+            AND status IN ('open','placing','active') AND (creator_id=%s OR opponent_id=%s)
+          ORDER BY game_id DESC LIMIT 1 FOR UPDATE""",(chat,thread,uid,uid))
+        row=c.fetchone()
+        if not row:
+            conn.rollback(); return await update.effective_message.reply_text('🚢 No tienes una Batalla Naval pendiente o activa aquí.')
+        gid,creator,opponent,bet,status=row
+        # Claim cancellation first. This makes repeated /cancelarnaval calls idempotent.
+        c.execute("UPDATE naval_games_tb SET status='cancelled',finished_at=now() WHERE game_id=%s AND status=%s",(gid,status))
+        if c.rowcount!=1:
+            conn.rollback(); return await update.effective_message.reply_text('🚢 Esa batalla ya cambió de estado.')
+        conn.commit()
+        if status in ('placing','active') and opponent:
+            refund=(creator,opponent,bet)
+    except Exception:
+        conn.rollback(); raise
+    finally:_put_connection(conn)
+    if refund:
+        from src.database.database import reembolsar_apuesta_doble
+        if not reembolsar_apuesta_doble(*refund):
+            # Restore active state so money is never silently stranded; user can retry cancellation.
+            conn=_get_connection()
+            try:
+                c=conn.cursor(); c.execute("UPDATE naval_games_tb SET status=%s,finished_at=NULL WHERE game_id=%s AND status='cancelled'",(status,gid)); conn.commit()
+            finally:_put_connection(conn)
+            return await update.effective_message.reply_text('⚠️ No pude devolver la apuesta. La batalla sigue activa; intenta /cancelarnaval otra vez.')
+        return await update.effective_message.reply_text(f'🚢 Batalla Naval cancelada. Se devolvieron {bet:,} PiPesos a cada jugador.')
+    await update.effective_message.reply_text('🚢 Reto de Batalla Naval cancelado.')
 
 
 async def ranking_naval(update:Update, context:ContextTypes.DEFAULT_TYPE):

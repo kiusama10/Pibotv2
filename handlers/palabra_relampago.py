@@ -77,6 +77,15 @@ def ensure_palabra_tables() -> None:
                     last_win TIMESTAMPTZ,
                     PRIMARY KEY(chat_id,user_id)
                 )""")
+                c.execute("""CREATE TABLE IF NOT EXISTS palabra_relampago_active_tb(
+                    chat_id BIGINT NOT NULL,
+                    thread_id BIGINT NOT NULL DEFAULT 0,
+                    answer TEXT NOT NULL,
+                    shown TEXT NOT NULL,
+                    started_at TIMESTAMPTZ NOT NULL,
+                    message_id BIGINT NOT NULL,
+                    PRIMARY KEY(chat_id,thread_id)
+                )""")
     finally:
         conn.close()
 
@@ -174,6 +183,16 @@ async def _launch(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *, force: bo
         has_spoiler=True,
     )
     _active[key] = {"answer": _norm(word), "shown": word, "started": started, "message_id": msg.message_id}
+    conn = _db()
+    try:
+        with conn:
+            with conn.cursor() as c:
+                c.execute("""INSERT INTO palabra_relampago_active_tb(chat_id,thread_id,answer,shown,started_at,message_id)
+                    VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(chat_id,thread_id) DO UPDATE SET
+                    answer=EXCLUDED.answer,shown=EXCLUDED.shown,started_at=EXCLUDED.started_at,message_id=EXCLUDED.message_id""",
+                    (chat_id, int(thread or 0), _norm(word), word, started, msg.message_id))
+    finally:
+        conn.close()
     context.job_queue.run_once(_expire, 600, data={"chat_id":chat_id,"thread":thread,"message_id":msg.message_id}, name=f"palabra:{chat_id}:{msg.message_id}")
     return True
 
@@ -185,6 +204,14 @@ async def _expire(context: ContextTypes.DEFAULT_TYPE):
     if not game or game["message_id"] != data["message_id"]:
         return
     _active.pop(key, None)
+    conn = _db()
+    try:
+        with conn:
+            with conn.cursor() as c:
+                c.execute("DELETE FROM palabra_relampago_active_tb WHERE chat_id=%s AND thread_id=%s AND message_id=%s",
+                          (key[0], int(key[1] or 0), game["message_id"]))
+    finally:
+        conn.close()
     await context.bot.send_message(chat_id=key[0], message_thread_id=key[1], text=f"⌛ Se acabó el tiempo. La palabra era: {game['shown']}.")
 
 
@@ -206,14 +233,35 @@ async def palabra_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # coincide, buscamos la única ronda activa de este chat. Así NO hace falta
     # responder ni mencionar la imagen para acertar.
     chat_id = update.effective_chat.id
-    key = (chat_id, msg.message_thread_id)
-    game = _active.get(key)
-    if game is None:
-        matches = [(k, g) for k, g in _active.items() if k[0] == chat_id]
-        if len(matches) == 1:
-            key, game = matches[0]
-    if not game or _norm(msg.text) != game["answer"]:
+    thread_id = int(msg.message_thread_id or 0)
+    guess = _norm(msg.text)
+
+    # Reclamo atómico desde PostgreSQL: sobrevive reinicios y garantiza un solo ganador.
+    conn = _db()
+    claimed = None
+    claimed_thread = thread_id
+    try:
+        with conn:
+            with conn.cursor() as c:
+                c.execute("""SELECT thread_id,answer,shown,started_at,message_id
+                    FROM palabra_relampago_active_tb WHERE chat_id=%s ORDER BY started_at DESC""", (chat_id,))
+                rows = c.fetchall()
+                row = next((r for r in rows if int(r[0]) == thread_id), None)
+                if row is None and len(rows) == 1:
+                    row = rows[0]
+                if row and guess == row[1]:
+                    claimed_thread = int(row[0])
+                    c.execute("""DELETE FROM palabra_relampago_active_tb
+                        WHERE chat_id=%s AND thread_id=%s AND answer=%s AND message_id=%s
+                        RETURNING shown,started_at,message_id""",
+                        (chat_id, claimed_thread, guess, int(row[4])))
+                    claimed = c.fetchone()
+    finally:
+        conn.close()
+    if not claimed:
         return
+    key = (chat_id, None if claimed_thread == 0 else claimed_thread)
+    game = {"answer": guess, "shown": claimed[0], "started": claimed[1], "message_id": int(claimed[2])}
     _active.pop(key, None)
     elapsed_ms = max(0, int((datetime.now(TZ)-game["started"]).total_seconds()*1000))
     paid = dar_recompensa(update.effective_user.id, REWARD)
