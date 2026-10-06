@@ -82,6 +82,7 @@ from handlers.activity_admin import actividad, actividad_callback, ensure_member
 from handlers.community_activities import ensure_community_tables, daily_question_job, daily_answer_handler, weekly_awards_job, ranking_callback, ranking_command, pregunta_dia_info
 from handlers.palabra_relampago import ensure_palabra_tables, palabra_hourly_job, palabra_guess, palabra_prueba, palabra_on, palabra_off
 from handlers.batalla_naval import batalla_naval, cancelar_naval, naval_callback, ranking_naval, ensure_naval_tables
+from handlers.gato import gato, cancelar_gato, ranking_gato, gato_callback, ensure_gato_tables
 
 # Constants
 RUTA_CASTIGADOS = PUNISHMENT_FILE
@@ -499,6 +500,7 @@ def main() -> None:
     ensure_member_activity_table()
     ensure_palabra_tables()
     ensure_naval_tables()
+    ensure_gato_tables()
     
     print("[INIT] Restarting active combats...")
     restart_all_combats()
@@ -598,6 +600,9 @@ def main() -> None:
     app.add_handler(CommandHandler("batallanaval", batalla_naval), group=2)
     app.add_handler(CommandHandler("rankingnaval", ranking_naval), group=2)
     app.add_handler(CommandHandler("cancelarnaval", cancelar_naval), group=2)
+    app.add_handler(CommandHandler("gato", gato), group=2)
+    app.add_handler(CommandHandler("cancelargato", cancelar_gato), group=2)
+    app.add_handler(CommandHandler("rankinggato", ranking_gato), group=2)
     app.add_handler(CommandHandler("rankingretos", ranking_retos), group=2)
     app.add_handler(CommandHandler("palabraprueba", palabra_prueba), group=2)
     app.add_handler(CommandHandler("palabraon", palabra_on), group=2)
@@ -737,6 +742,7 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(casino_pvp_callback, pattern="^(turtle|bj):"), group=5)
     app.add_handler(CallbackQueryHandler(assassin_callback, pattern="^as:"), group=5)
     app.add_handler(CallbackQueryHandler(naval_callback, pattern="^nv:"), group=5)
+    app.add_handler(CallbackQueryHandler(gato_callback, pattern="^gt:"), group=5)
     app.add_handler(CallbackQueryHandler(emoji_game_callback, pattern="^eg:"), group=5)
     app.add_handler(CallbackQueryHandler(ranking_callback, pattern="^cr:rank$"), group=5)
     app.add_handler(CallbackQueryHandler(drawing_callback, pattern="^draw:"), group=5)
