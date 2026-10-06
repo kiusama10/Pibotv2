@@ -81,7 +81,7 @@ from handlers.everyone import todos
 from handlers.activity_admin import actividad, actividad_callback, ensure_member_activity_table, member_activity_observer
 from handlers.community_activities import ensure_community_tables, daily_question_job, daily_answer_handler, weekly_awards_job, ranking_callback, ranking_command, pregunta_dia_info
 from handlers.palabra_relampago import ensure_palabra_tables, palabra_hourly_job, palabra_guess, palabra_prueba, palabra_on, palabra_off
-from handlers.batalla_naval import batalla_naval, naval_callback, ranking_naval, ensure_naval_tables
+from handlers.batalla_naval import batalla_naval, cancelar_naval, naval_callback, ranking_naval, ensure_naval_tables
 
 # Constants
 RUTA_CASTIGADOS = PUNISHMENT_FILE
@@ -597,6 +597,7 @@ def main() -> None:
     app.add_handler(CommandHandler("baloncesto", baloncesto), group=2)
     app.add_handler(CommandHandler("batallanaval", batalla_naval), group=2)
     app.add_handler(CommandHandler("rankingnaval", ranking_naval), group=2)
+    app.add_handler(CommandHandler("cancelarnaval", cancelar_naval), group=2)
     app.add_handler(CommandHandler("rankingretos", ranking_retos), group=2)
     app.add_handler(CommandHandler("palabraprueba", palabra_prueba), group=2)
     app.add_handler(CommandHandler("palabraon", palabra_on), group=2)
