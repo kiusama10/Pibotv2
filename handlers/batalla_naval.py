@@ -6,9 +6,9 @@ from src.database.database import _get_connection, _put_connection, reservar_apu
 from src.utils.display_name import visible_user
 from handlers.pipeso_extras import send_victory
 
-SIZE=6
-SHIP_SIZES=(3,2,2)
-LETTERS='ABCDEF'
+SIZE=4
+SHIP_SIZES=(2,1,1)
+LETTERS='ABCD'
 
 
 def ensure_naval_tables():
@@ -55,8 +55,8 @@ def _new_board():
 def _board_text(ships, shots_against=None, hide=False):
     shots_against=shots_against or {}
     occ={x for ship in ships for x in ship}
-    lines=['    A  B  C  D  E  F']
-    for r in range(1,7):
+    lines=['    A  B  C  D']
+    for r in range(1,SIZE+1):
         row=[]
         for col in LETTERS:
             cell=f'{col}{r}'
@@ -89,7 +89,7 @@ def _battle_text(g, last_line=None):
 
 def _attack_keyboard(game_id, shots):
     rows=[]
-    for r in range(1,7):
+    for r in range(1,SIZE+1):
         row=[]
         for col in LETTERS:
             cell=f'{col}{r}'
@@ -104,7 +104,47 @@ def _open_keyboard(game_id):
 
 
 def _ready_keyboard(game_id):
-    return InlineKeyboardMarkup([[InlineKeyboardButton('🎲 Recolocar barcos',callback_data=f'nv:r:{game_id}')],[InlineKeyboardButton('✅ Listo para combatir',callback_data=f'nv:y:{game_id}')]])
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton('🎲 Aleatorio',callback_data=f'nv:r:{game_id}'), InlineKeyboardButton('🛠 Acomodar',callback_data=f'nv:m:{game_id}')],
+        [InlineKeyboardButton('✅ Listo para combatir',callback_data=f'nv:y:{game_id}')]
+    ])
+
+
+def _manual_keyboard(game_id, ships):
+    occupied={x for ship in ships for x in ship}
+    rows=[]
+    for r in range(1,SIZE+1):
+        row=[]
+        for col in LETTERS:
+            cell=f'{col}{r}'
+            row.append(InlineKeyboardButton('🚢' if cell in occupied else cell,callback_data=f'nv:p:{game_id}:{cell}'))
+        rows.append(row)
+    rows.append([InlineKeyboardButton('🔄 Reiniciar',callback_data=f'nv:m:{game_id}'),InlineKeyboardButton('🎲 Aleatorio',callback_data=f'nv:r:{game_id}')])
+    if sorted(len(x) for x in ships)==[1,1,2]: rows.append([InlineKeyboardButton('✅ Listo para combatir',callback_data=f'nv:y:{game_id}')])
+    return InlineKeyboardMarkup(rows)
+
+
+def _manual_help(ships):
+    sizes=sorted(len(x) for x in ships)
+    if not ships:return '🛠 Primero elige la primera casilla del barco de 2.'
+    if sizes==[1]:return '🛠 Ahora toca una casilla pegada (arriba, abajo o a un lado) para completar el barco de 2.'
+    if sizes==[2]:return '🛠 Coloca el primer barco de 1 casilla.'
+    if sizes==[1,2]:return '🛠 Coloca el último barco de 1 casilla.'
+    return '✅ Tu flota está completa. Puedes confirmar o volver a acomodarla.'
+
+
+def _manual_add(ships, cell):
+    occupied={x for ship in ships for x in ship}
+    if cell in occupied:return None
+    if not ships:return [[cell]]
+    if len(ships)==1 and len(ships[0])==1:
+        a=ships[0][0]; ac,ar=a[0],int(a[1:]); cc,cr=cell[0],int(cell[1:])
+        if abs(ord(ac)-ord(cc))+abs(ar-cr)!=1:return None
+        return [[a,cell]]
+    if sorted(len(x) for x in ships) in ([2],[1,2]):
+        if len(ships)>=3:return None
+        return ships+[[cell]]
+    return None
 
 
 def _get_game(gid, lock=False):
@@ -141,7 +181,7 @@ async def batalla_naval(update:Update, context:ContextTypes.DEFAULT_TYPE):
         conn.rollback(); raise
     finally:_put_connection(conn)
     name=visible_user(user=update.effective_user)
-    await update.effective_message.reply_text(f'🚢 BATALLA NAVAL · RETO ABIERTO\n\n⚓ {name} busca rival.\n💰 Apuesta: {bet:,} PiPesos por jugador\n🏆 Pozo: {bet*2:,} PiPesos\n🗺️ Tablero 6×6 · 3 barcos\n\nEl primero que acepte entra a la batalla.',reply_markup=_open_keyboard(gid))
+    await update.effective_message.reply_text(f'🚢 BATALLA NAVAL · RETO ABIERTO\n\n⚓ {name} busca rival.\n💰 Apuesta: {bet:,} PiPesos por jugador\n🏆 Pozo: {bet*2:,} PiPesos\n🗺️ Tablero 4×4 · 3 barcos\n\nEl primero que acepte entra a la batalla.',reply_markup=_open_keyboard(gid))
 
 
 async def _send_setup(context, gid, uid, ships):
@@ -208,7 +248,7 @@ async def naval_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             return await q.edit_message_text('⚠️ No pude enviar el tablero privado a ambos. Los PiPesos fueron devueltos. Ambos deben abrir el PV de PiBot con /start.')
         await q.edit_message_text(f'🚢 ¡RETO ACEPTADO!\n\n{visible_user(user_id=g["creator_id"])} vs {visible_user(user=q.from_user)}\n💰 {g["bet"]:,} PiPesos cada uno ya están reservados.\n📩 Les envié su flota por privado. Cuando ambos pulsen Listo, comienza la batalla.')
         return
-    if action in ('r','y'):
+    if action in ('r','m','p','y'):
         if g['status']!='placing' or uid not in (g['creator_id'],g['opponent_id']):return await q.answer('No puedes modificar esta flota.',show_alert=True)
         slot=1 if uid==g['creator_id'] else 2
         if (g['ready1'] if slot==1 else g['ready2']):return await q.answer('Ya confirmaste tu flota.',show_alert=True)
@@ -217,7 +257,23 @@ async def naval_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             try:
                 c=conn.cursor(); c.execute(f"UPDATE naval_games_tb SET board{slot}=%s WHERE game_id=%s AND status='placing'",(json.dumps(ships),gid)); conn.commit()
             finally:_put_connection(conn)
-            return await q.edit_message_text('🚢 COLOCA TU FLOTA\n\n'+_board_text(ships)+'\n\n🎲 Nueva distribución. Puedes volver a cambiarla o confirmar.',reply_markup=_ready_keyboard(gid))
+            return await q.edit_message_text('🚢 COLOCA TU FLOTA\n\n'+_board_text(ships)+'\n\n🎲 Nueva distribución. Puedes volver a cambiarla, acomodarla tú o confirmar.',reply_markup=_ready_keyboard(gid))
+        if action=='m':
+            ships=[]; conn=_get_connection()
+            try:
+                c=conn.cursor(); c.execute(f"UPDATE naval_games_tb SET board{slot}=%s WHERE game_id=%s AND status='placing'",(json.dumps(ships),gid)); conn.commit()
+            finally:_put_connection(conn)
+            return await q.edit_message_text('🚢 ACOMODA TU FLOTA\n\n'+_board_text(ships)+'\n\n'+_manual_help(ships),reply_markup=_manual_keyboard(gid,ships))
+        if action=='p' and len(p)>=4:
+            ships=g[f'board{slot}'] or []; newships=_manual_add(ships,p[3].upper())
+            if newships is None:return await q.answer('Esa casilla no sirve ahí. El barco de 2 debe quedar unido y no puedes encimar barcos.',show_alert=True)
+            conn=_get_connection()
+            try:
+                c=conn.cursor(); c.execute(f"UPDATE naval_games_tb SET board{slot}=%s WHERE game_id=%s AND status='placing'",(json.dumps(newships),gid)); conn.commit()
+            finally:_put_connection(conn)
+            return await q.edit_message_text('🚢 ACOMODA TU FLOTA\n\n'+_board_text(newships)+'\n\n'+_manual_help(newships),reply_markup=_manual_keyboard(gid,newships))
+        ships=g[f'board{slot}'] or []
+        if sorted(len(x) for x in ships)!=[1,1,2]:return await q.answer('Primero completa tus 3 barcos.',show_alert=True)
         conn=_get_connection()
         try:
             c=conn.cursor(); c.execute(f"UPDATE naval_games_tb SET ready{slot}=TRUE WHERE game_id=%s AND status='placing'",(gid,)); conn.commit()
