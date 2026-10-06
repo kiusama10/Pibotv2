@@ -361,7 +361,7 @@ async def gifvictoria(update:Update,context:ContextTypes.DEFAULT_TYPE):
     kb=InlineKeyboardMarkup([[InlineKeyboardButton('🎞️ Subir/cambiar GIF',callback_data='vg:gif'),InlineKeyboardButton('💬 Cambiar texto',callback_data='vg:text')],[InlineKeyboardButton('🎮 Elegir juegos',callback_data='vg:games'),InlineKeyboardButton('👁 Vista previa',callback_data='vg:preview')],[InlineKeyboardButton('🗑️ Quitar celebración',callback_data='vg:remove')]])
     await update.effective_message.reply_text(f"🏆 TU CELEBRACIÓN DE VICTORIA\n\nEstado: {'✅ configurada' if r else '❌ sin configurar'}\nJuegos: {', '.join(games)}\nPrecio de {'cambio' if r else 'primera configuración'}: {price:,} PiPesos\n\nTodo se configura aquí con botones.",reply_markup=kb)
 
-GAMES=[('all','🌐 Todos'),('lucha','⚔️ Lucha'),('dibujo','🎨 Dibujo'),('tortugas','🐢 Tortugas'),('blackjack','🃏 Blackjack'),('dardos','🎯 Dardos'),('boliche','🎳 Boliche'),('aliados','🤝 Aliados')]
+GAMES=[('all','🌐 Todos'),('lucha','⚔️ Lucha'),('dibujo','🎨 Dibujo'),('tortugas','🐢 Tortugas'),('blackjack','🃏 Blackjack'),('dardos','🎯 Dardos'),('boliche','🎳 Boliche'),('aliados','🤝 Aliados'),('naval','🚢 Batalla Naval')]
 async def victory_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; uid=q.from_user.id; action=q.data.split(':')[1]
     if q.message.chat.type!='private': return await q.answer('Ábrelo por privado.',show_alert=True)

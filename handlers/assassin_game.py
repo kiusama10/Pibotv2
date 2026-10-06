@@ -107,9 +107,13 @@ async def asesino(update:Update,context:ContextTypes.DEFAULT_TYPE):
         conn.commit()
     except Exception: conn.rollback(); return await update.effective_message.reply_text('⚠️ No pude abrir el control del Asesino.')
     finally:_put_connection(conn)
-    kb=InlineKeyboardMarkup([[InlineKeyboardButton('🙋 Unirme',callback_data=f'as:join:{cid}'),InlineKeyboardButton('🚪 Salirme',callback_data=f'as:leave:{cid}')],[InlineKeyboardButton('▶️ Empezar juego',callback_data=f'as:auto_start:{cid}'),InlineKeyboardButton('🛑 Cancelar',callback_data=f'as:auto_cancel:{cid}')]])
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT COUNT(*) FROM assassin_auto_players_tb WHERE config_id=%s",(cid,)); registered=int(c.fetchone()[0])
+    finally:_put_connection(conn)
+    kb=InlineKeyboardMarkup([[InlineKeyboardButton(f'🙋 Unirme ({registered})',callback_data=f'as:join:{cid}'),InlineKeyboardButton('🚪 Salirme',callback_data=f'as:leave:{cid}')],[InlineKeyboardButton('▶️ Empezar juego',callback_data=f'as:auto_start:{cid}'),InlineKeyboardButton('🛑 Cancelar',callback_data=f'as:auto_cancel:{cid}')]])
     state='🟢 Activo' if active else '⚪ Detenido'
-    await update.effective_message.reply_text(f'🔪 *JUEGO DEL ASESINO*\n\n{state}\nPrimero regístrense con 🙋 Unirme. Solo quienes se registren participan, reciben mensajes privados y aparecen como objetivos/sospechosos.\n\n🕵️ Después de cada crimen habrá una pista nueva cada 10 minutos.',parse_mode='Markdown',reply_markup=kb)
+    await update.effective_message.reply_text(f'🔪 *JUEGO DEL ASESINO*\n\n{state}\nPrimero regístrense con 🙋 Unirme. Solo quienes se registren participan, reciben mensajes privados y aparecen como objetivos/sospechosos.\n\n👥 *Jugadores registrados: {registered}*\n\n🕵️ Después de cada crimen habrá una pista nueva cada 10 minutos.',parse_mode='Markdown',reply_markup=kb)
 
 
 async def reiniciarasesino(update:Update,context:ContextTypes.DEFAULT_TYPE):
@@ -192,8 +196,19 @@ async def assassin_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
             if not cfg: conn.rollback(); return await q.answer('Ese juego ya no existe.',show_alert=True)
             if action=='join':
                 name=('@'+q.from_user.username) if q.from_user.username else q.from_user.full_name
-                c.execute("INSERT INTO assassin_auto_players_tb(config_id,user_id,nombre) VALUES(%s,%s,%s) ON CONFLICT(config_id,user_id) DO UPDATE SET nombre=EXCLUDED.nombre",(cid,q.from_user.id,name)); conn.commit(); return await q.answer('🔪 Ya estás dentro del juego.',show_alert=True)
-            c.execute("DELETE FROM assassin_auto_players_tb WHERE config_id=%s AND user_id=%s",(cid,q.from_user.id)); conn.commit(); return await q.answer('🚪 Saliste del juego del Asesino.',show_alert=True)
+                c.execute("INSERT INTO assassin_auto_players_tb(config_id,user_id,nombre) VALUES(%s,%s,%s) ON CONFLICT(config_id,user_id) DO UPDATE SET nombre=EXCLUDED.nombre",(cid,q.from_user.id,name))
+                answer='🔪 Ya estás dentro del juego.'
+            else:
+                c.execute("DELETE FROM assassin_auto_players_tb WHERE config_id=%s AND user_id=%s",(cid,q.from_user.id)); answer='🚪 Saliste del juego del Asesino.'
+            c.execute("SELECT a.active,COUNT(p.user_id) FROM assassin_auto_tb a LEFT JOIN assassin_auto_players_tb p ON p.config_id=a.config_id WHERE a.config_id=%s GROUP BY a.active",(cid,)); panel=c.fetchone(); conn.commit()
+            active,registered=(bool(panel[0]),int(panel[1])) if panel else (False,0)
+            state='🟢 Activo' if active else '⚪ Detenido'
+            kb=InlineKeyboardMarkup([[InlineKeyboardButton(f'🙋 Unirme ({registered})',callback_data=f'as:join:{cid}'),InlineKeyboardButton('🚪 Salirme',callback_data=f'as:leave:{cid}')],[InlineKeyboardButton('▶️ Empezar juego',callback_data=f'as:auto_start:{cid}'),InlineKeyboardButton('🛑 Cancelar',callback_data=f'as:auto_cancel:{cid}')]])
+            text=f'🔪 *JUEGO DEL ASESINO*\n\n{state}\nPrimero regístrense con 🙋 Unirme. Solo quienes se registren participan, reciben mensajes privados y aparecen como objetivos/sospechosos.\n\n👥 *Jugadores registrados: {registered}*\n\n🕵️ Después de cada crimen habrá una pista nueva cada 10 minutos.'
+            await q.answer(answer,show_alert=True)
+            try: await q.edit_message_text(text,parse_mode='Markdown',reply_markup=kb)
+            except Exception: pass
+            return
         except Exception:
             conn.rollback(); return await q.answer('No pude cambiar tu registro.',show_alert=True)
         finally:_put_connection(conn)
