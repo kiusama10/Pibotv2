@@ -1,6 +1,8 @@
 import json, os
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+from urllib.request import Request as UrlRequest, urlopen
+from urllib.error import HTTPError, URLError
 from handlers.drawing_game import canvas_get, canvas_append, canvas_meta, canvas_change_word, canvas_chat
 
 HTML=r'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>PiBot Canvas v3</title><style>
@@ -17,9 +19,31 @@ document.getElementById('change').onclick=async()=>{if(view)return;status.textCo
 setInterval(async()=>{if(view){try{const r=await fetch('/pibot-api-v3/draw?game='+encodeURIComponent(game)+'&token='+encodeURIComponent(token)+'&t='+Date.now(),{cache:'no-store'});if(r.ok){const a=await r.json();ctx.clearRect(0,0,cv.width,cv.height);for(const s of a){if(s.t==='clear')ctx.clearRect(0,0,cv.width,cv.height);else if(s.t==='s')paint(s)}}}catch(_){}return}if(!pending.length)return;const b=pending.splice(0);try{const r=await fetch('/pibot-api-v3/draw?game='+encodeURIComponent(game)+'&token='+encodeURIComponent(token),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b),cache:'no-store'});if(!r.ok)pending.unshift(...b)}catch(_){pending.unshift(...b)}},180);})();
 </script></body></html>'''
 
+SAOCB_INTERNAL_URL=os.getenv("SAOCB_INTERNAL_URL","http://127.0.0.1:8091").rstrip("/")
+
+def _is_saocb_path(path):
+ return path.startswith(("/api/","/game/","/admin/","/telegram/admin/","/telegram/control-webhook"))
+
 class H(BaseHTTPRequestHandler):
  def _send(self,code,body,ctype='application/json'):
   b=body.encode();self.send_response(code);self.send_header('content-type',ctype);self.send_header('content-length',len(b));self.send_header('cache-control','no-store, no-cache, must-revalidate, max-age=0');self.send_header('pragma','no-cache');self.end_headers();self.wfile.write(b)
+ def _proxy_saocb(self):
+  try:
+   n=min(int(self.headers.get('content-length','0') or 0),2_000_000)
+   body=self.rfile.read(n) if n else None
+   headers={}
+   for k in ('content-type','x-api-secret','x-saocb-secret','x-telegram-user-id','x-pibot-secret','authorization','x-request-id'):
+    v=self.headers.get(k)
+    if v: headers[k]=v
+   req=UrlRequest(SAOCB_INTERNAL_URL+self.path,data=body,headers=headers,method=self.command)
+   try:
+    r=urlopen(req,timeout=30); code=r.status; data=r.read(); ctype=r.headers.get('content-type','application/json')
+   except HTTPError as e:
+    code=e.code; data=e.read(); ctype=e.headers.get('content-type','application/json')
+   self.send_response(code); self.send_header('content-type',ctype); self.send_header('content-length',str(len(data))); self.send_header('cache-control','no-store'); self.end_headers(); self.wfile.write(data)
+  except Exception as e:
+   data=json.dumps({'error':'saocb unavailable','detail':type(e).__name__}).encode(); self.send_response(503); self.send_header('content-type','application/json'); self.send_header('content-length',str(len(data))); self.end_headers(); self.wfile.write(data)
+
  def do_HEAD(self):
   u=urlparse(self.path)
   if u.path=='/health':
@@ -27,6 +51,7 @@ class H(BaseHTTPRequestHandler):
   self.send_response(404);self.send_header('content-length','0');self.end_headers()
  def do_GET(self):
   u=urlparse(self.path)
+  if _is_saocb_path(u.path): return self._proxy_saocb()
   if u.path in ('/pibot-canvas-v4','/pibot-canvas-v3','/draw'): return self._send(200,HTML,'text/html; charset=utf-8')
   if u.path=='/health': return self._send(200,'{"ok":true}')
   if u.path in ('/pibot-api-v3/draw','/api/draw'):
@@ -38,6 +63,7 @@ class H(BaseHTTPRequestHandler):
   self._send(404,'{"error":"not found"}')
  def do_POST(self):
   u=urlparse(self.path);q=parse_qs(u.query)
+  if _is_saocb_path(u.path): return self._proxy_saocb()
   if u.path in ('/pibot-api-v3/change','/api/change'):
    d=canvas_change_word(q.get('game',[''])[0],q.get('token',[''])[0]);return self._send(200 if d is not None else 403,json.dumps(d if d is not None else {'error':'forbidden'}))
   if u.path not in ('/pibot-api-v3/draw','/api/draw'):return self._send(404,'{}')

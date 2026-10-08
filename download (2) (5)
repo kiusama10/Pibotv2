@@ -1,0 +1,23 @@
+# Replit configuration for PiBot2.0
+language = "python3"
+run = "python main.py"
+
+[nix]
+channel = "stable-23_11"
+
+[packager]
+pm = "pip3"
+index = "https://pypi.org/simple"
+packages = [
+    "aiogram==3.22.0",
+    "python-telegram-bot==22.5",
+    "aiofiles==24.1.0",
+    "aiohttp==3.12.15",
+    "pydantic==2.11.10",
+    "python-dotenv==1.0.0",
+    "APScheduler==3.10.4",
+]
+
+[[ports]]
+localPort = 5000
+externalPort = 80

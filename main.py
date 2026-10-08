@@ -768,9 +768,14 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.ALL, filtro_castigo), group=6)
 
     # Start the bot
-    print("🤖 PiBot listo. Iniciando servidor web y guardia de instancia...")
+    print("🤖 PiBot listo. Iniciando SAO-CB, servidor web y guardia de instancia...")
     import threading, time
-    threading.Thread(target=run_server, daemon=True).start()
+    def _run_saocb_internal():
+        import uvicorn
+        uvicorn.run("saocb_app:app", host="127.0.0.1", port=8091, log_level="warning")
+    threading.Thread(target=_run_saocb_internal, daemon=True, name="saocb-api").start()
+    time.sleep(0.5)
+    threading.Thread(target=run_server, daemon=True, name="pibot-web").start()
     while not acquire_single_poller_lock():
         print("[INSTANCE] Otra instancia de PiBot ya posee el polling. Esta copia queda en espera segura.")
         time.sleep(15)
