@@ -534,10 +534,11 @@ async def original_api_probe(path:str, request:Request):
     # therefore exposed as one aggregate state surface instead of fabricated data.
     import re as _re
     _user_aggregate = _re.fullmatch(r'user/([^/]+)', path)
-    # RealDriver::start is the first online boot request. Its success callback
-    # reads post, ptoken and prealtime; server_time is optional in the client.
-    if path=='start':
-        response=legacy_envelope({'post':False,'ptoken':'','prealtime':False},200)
+    # Retail boot route recovered from the client: master/start.
+    # Keep the old 'start' alias for backward compatibility with earlier SAO-CB builds.
+    # RealDriver's success callback consumes post, ptoken and prealtime; server_time is also present.
+    if path in ('master/start','start'):
+        response=legacy_envelope({'post':False,'ptoken':'','prealtime':False,'server_time':int(time.time())},200)
     elif _user_aggregate and _user_aggregate.group(1) not in ('register','comment','characters','equipment','current-party','cleared-quests','last-quest','world','area','quest'):
         route_user=str(_user_aggregate.group(1))
         if route_user not in ('{0}',): gu=route_user
