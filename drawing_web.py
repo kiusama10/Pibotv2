@@ -31,6 +31,11 @@ class H(BaseHTTPRequestHandler):
   try:
    n=min(int(self.headers.get('content-length','0') or 0),2_000_000)
    body=self.rfile.read(n) if n else None
+   # Diagnostico temporal SAO-CB: confirma en Render cualquier llegada real del cliente.
+   # No imprime Authorization ni secretos.
+   ua=self.headers.get('user-agent','')
+   ctype=self.headers.get('content-type','')
+   print(f"[SAO-HTTP-IN] {self.command} {self.path} bytes={n} ua={ua[:180]!r} content_type={ctype[:100]!r}", flush=True)
    headers={}
    for k in ('content-type','accept','accept-language','user-agent','x-api-secret','x-saocb-secret','x-telegram-user-id','x-pibot-secret','authorization','x-request-id'):
     v=self.headers.get(k)
