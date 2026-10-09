@@ -502,12 +502,19 @@ def legacy_user_from_request(request:Request, body):
 def legacy_envelope(result=None,status=200):
     return {'status':status,'result':result if result is not None else {}}
 
+@app.api_route('/api', methods=['GET','POST','HEAD'])
+@app.api_route('/api/', methods=['GET','POST','HEAD'])
+async def legacy_api_root():
+    # Stable public base probe. Keeping this alive also makes Render/base-URL
+    # checks distinguishable from an application 404.
+    return {'status':200,'result':{'ok':True,'service':'SAO-CB','adapter':'legacy'}}
+
 @app.api_route('/api/{path:path}', methods=['GET','POST','PUT','PATCH','DELETE'])
 async def original_api_probe(path:str, request:Request):
     raw=await request.body()
     try: body=json.loads(raw.decode('utf-8')) if raw else {}
     except Exception: body={'raw_hex':raw[:2048].hex(),'size':len(raw)}
-    headers={k:v for k,v in request.headers.items() if k.lower() in ('content-type','user-agent','authorization','x-requested-with','x-saocb-user','x-request-id')}
+    headers={k:v for k,v in request.headers.items() if k.lower() in ('content-type','accept','accept-language','user-agent','authorization','x-requested-with','x-saocb-user','x-user-id','x-request-id')}
     with db() as c:
         c.execute('CREATE TABLE IF NOT EXISTS client_probe(id INTEGER PRIMARY KEY AUTOINCREMENT,method TEXT,path TEXT,body TEXT,headers TEXT,created_at INTEGER)')
         c.execute('INSERT INTO client_probe(method,path,body,headers,created_at) VALUES(?,?,?,?,?)',(request.method,path,json.dumps(body,ensure_ascii=False),json.dumps(headers,ensure_ascii=False),int(time.time())))
@@ -641,6 +648,29 @@ async def original_api_probe(path:str, request:Request):
             response=legacy_envelope(result,200)
     elif path=='lottery/active-list':
         response=legacy_envelope({'lotteries':[]},200)
+    # Boot-safe compatibility surfaces.  These are all retail route names recovered
+    # from the client.  Returning typed empty collections lets the old client reach
+    # its parser without turning an unimplemented optional feed into HTTP failure.
+    elif path=='tutorial/all':
+        response=legacy_envelope({'tutorials':[],'released_function':[]},200)
+    elif path=='tutorial/evaluation-enabled':
+        response=legacy_envelope({'enabled':False},200)
+    elif path=='user/all-quests':
+        response=legacy_envelope({'quests':[]},200)
+    elif path=='user/played-direction':
+        response=legacy_envelope({'played_directions':[]},200)
+    elif path=='user/diamond-shop/filter':
+        response=legacy_envelope({'items':[],'diamonds':[]},200)
+    elif path in ('quest/playable/filter','quest/playable/friend/filter'):
+        response=legacy_envelope({'quests':[]},200)
+    elif path=='quest/supporter':
+        response=legacy_envelope({'supporters':[]},200)
+    elif path=='quest/detail':
+        response=legacy_envelope({'quest':{}},200)
+    elif path=='event/all':
+        response=legacy_envelope({'events':[]},200)
+    elif path in ('mission/daily','mission/daily/all','mission/normal','mission/normal/all'):
+        response=legacy_envelope({'missions':[]},200)
     if response is None: response={'status':501,'error':'SAO-CB route captured','path':path}
     if rid:
         with db() as c:c.execute('INSERT OR IGNORE INTO legacy_idempotency(request_id,path,response_json,created_at) VALUES(?,?,?,?)',(str(rid),path,json.dumps(response),int(time.time())))

@@ -1,0 +1,7 @@
+SAO-CB RC3 - CONNECTION CANDIDATE - 2026-10-08
+
+- Public proxy now forwards HEAD for /api and all SAO-CB paths.
+- Public proxy preserves Content-Type, Accept, Accept-Language and User-Agent plus SAO-CB auth/request headers.
+- Legacy probe records Accept/Accept-Language/User-Agent for real-client diagnostics.
+- End-to-end local proxy test: GET /api = 200, HEAD /api = 200, POST /api/user/register = 200.
+- Existing RC2 boot compatibility and persistence retained.

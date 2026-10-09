@@ -1,0 +1,16 @@
+SAO-CB RC TEST - 2026-10-08
+
+Objetivo: prueba estable de cliente/servidor sin tocar sistemas existentes de PiBot.
+
+Cambios aditivos:
+1. /api y /api/ ahora responden 200 y sirven como comprobacion real de la base publica SAO-CB.
+2. drawing_web.py ahora reenvia tambien /api exacto al servicio interno; antes solo reenviaba /api/..., por lo que /api terminaba en 404 del servidor de PiBot.
+3. Se conserva el adaptador Legacy existente y la captura client_probe.
+4. Se agrega SAOCB_SMOKE_TEST.py para validar registro, tutorial, quest inicial y estado agregado.
+
+Validacion local realizada:
+- py_compile: saocb_app.py, drawing_web.py, main.py OK.
+- smoke test ASGI: 6/6 llamadas criticas OK.
+
+IMPORTANTE:
+Esto valida estabilidad del backend y corrige el enrutado de la base /api. No demuestra todavia que el cliente Android complete 16/16; esa prueba requiere ejecutar el cliente real contra el deploy.

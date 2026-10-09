@@ -22,7 +22,7 @@ setInterval(async()=>{if(view){try{const r=await fetch('/pibot-api-v3/draw?game=
 SAOCB_INTERNAL_URL=os.getenv("SAOCB_INTERNAL_URL","http://127.0.0.1:8091").rstrip("/")
 
 def _is_saocb_path(path):
- return path.startswith(("/api/","/game/","/admin/","/telegram/admin/","/telegram/control-webhook"))
+ return path == "/api" or path.startswith(("/api/","/game/","/admin/","/telegram/admin/","/telegram/control-webhook"))
 
 class H(BaseHTTPRequestHandler):
  def _send(self,code,body,ctype='application/json'):
@@ -32,7 +32,7 @@ class H(BaseHTTPRequestHandler):
    n=min(int(self.headers.get('content-length','0') or 0),2_000_000)
    body=self.rfile.read(n) if n else None
    headers={}
-   for k in ('content-type','x-api-secret','x-saocb-secret','x-telegram-user-id','x-pibot-secret','authorization','x-request-id'):
+   for k in ('content-type','accept','accept-language','user-agent','x-api-secret','x-saocb-secret','x-telegram-user-id','x-pibot-secret','authorization','x-request-id'):
     v=self.headers.get(k)
     if v: headers[k]=v
    req=UrlRequest(SAOCB_INTERNAL_URL+self.path,data=body,headers=headers,method=self.command)
@@ -46,6 +46,7 @@ class H(BaseHTTPRequestHandler):
 
  def do_HEAD(self):
   u=urlparse(self.path)
+  if _is_saocb_path(u.path): return self._proxy_saocb()
   if u.path=='/health':
    self.send_response(200);self.send_header('content-type','application/json');self.send_header('content-length','0');self.send_header('cache-control','no-store, no-cache, must-revalidate, max-age=0');self.send_header('pragma','no-cache');self.end_headers();return
   self.send_response(404);self.send_header('content-length','0');self.end_headers()
