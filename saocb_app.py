@@ -534,7 +534,11 @@ async def original_api_probe(path:str, request:Request):
     # therefore exposed as one aggregate state surface instead of fabricated data.
     import re as _re
     _user_aggregate = _re.fullmatch(r'user/([^/]+)', path)
-    if _user_aggregate and _user_aggregate.group(1) not in ('register','comment','characters','equipment','current-party','cleared-quests','last-quest','world','area','quest'):
+    # RealDriver::start is the first online boot request. Its success callback
+    # reads post, ptoken and prealtime; server_time is optional in the client.
+    if path=='start':
+        response=legacy_envelope({'post':False,'ptoken':'','prealtime':False},200)
+    elif _user_aggregate and _user_aggregate.group(1) not in ('register','comment','characters','equipment','current-party','cleared-quests','last-quest','world','area','quest'):
         route_user=str(_user_aggregate.group(1))
         if route_user not in ('{0}',): gu=route_user
         with db() as c:
