@@ -532,6 +532,17 @@ class RebornSavePull(BaseModel):
  game_user:str
  have_revision:int=Field(default=0,ge=0)
 
+class RebornScoutLegacyRequest(BaseModel):
+ device_id:str
+ device_token:str
+ game_user:str
+ legacy_path:str=''
+ legacy_query:str=''
+ legacy_method:str=''
+ legacy_content_type:str=''
+ legacy_body:str=''
+ legacy_body_b64:str=''
+
 def reborn_schema(c):
  c.executescript('''
  CREATE TABLE IF NOT EXISTS reborn_devices(
@@ -560,7 +571,32 @@ def reborn_schema(c):
    enabled INTEGER NOT NULL DEFAULT 0,
    metadata_json TEXT NOT NULL DEFAULT '{}'
  );
+ CREATE TABLE IF NOT EXISTS reborn_scout_calls(
+   id INTEGER PRIMARY KEY AUTOINCREMENT,
+   game_user TEXT NOT NULL,
+   legacy_path TEXT NOT NULL,
+   legacy_query TEXT NOT NULL DEFAULT '',
+   legacy_method TEXT NOT NULL DEFAULT '',
+   legacy_content_type TEXT NOT NULL DEFAULT '',
+   legacy_body TEXT NOT NULL DEFAULT '',
+   legacy_body_b64 TEXT NOT NULL DEFAULT '',
+   body_sha256 TEXT NOT NULL DEFAULT '',
+   created_at INTEGER NOT NULL
+ );
+ CREATE INDEX IF NOT EXISTS idx_reborn_scout_calls_user_time ON reborn_scout_calls(game_user,created_at DESC);
  ''')
+ # Forward-only, additive migration for any V4.1/V4.2 probe database that
+ # already created this table before one of the capture columns existed.
+ cols={str(r[1]) for r in c.execute('PRAGMA table_info(reborn_scout_calls)').fetchall()}
+ for name,ddl in (
+  ('legacy_query',"TEXT NOT NULL DEFAULT ''"),
+  ('legacy_method',"TEXT NOT NULL DEFAULT ''"),
+  ('legacy_content_type',"TEXT NOT NULL DEFAULT ''"),
+  ('legacy_body',"TEXT NOT NULL DEFAULT ''"),
+  ('legacy_body_b64',"TEXT NOT NULL DEFAULT ''"),
+  ('body_sha256',"TEXT NOT NULL DEFAULT ''")
+ ):
+  if name not in cols:c.execute(f'ALTER TABLE reborn_scout_calls ADD COLUMN {name} {ddl}')
 
 def reborn_validate_id(value,name='device_id'):
  value=(value or '').strip()
@@ -628,6 +664,98 @@ async def reborn_bootstrap(body:RebornBootstrap):
   'profile':{'rank':int(p['rank']) if p else 1,'tutorial_step':int(p['tutorial_step']) if p else 0},
   'content_manifest':'/api/v4/content/manifest','server_time':int(time.time())
  }}
+
+def _scout_json_override(env_name):
+ raw=os.getenv(env_name,'').strip()
+ if not raw:return None
+ try:
+  data=json.loads(raw)
+  if not isinstance(data,dict):raise ValueError('root must be object')
+  return data
+ except Exception as e:
+  print(f'[SAOCB-V4.2] invalid {env_name}: {e}')
+  return None
+
+def _scout_active_response(path=''):
+ # Optional exact wire response. This is deliberately server-side so protocol
+ # tuning never requires rebuilding the APK again. A typed active-list route can
+ # have its own override (for example .../105 -> SAOCB_SCOUT_ACTIVE_LIST_105_JSON).
+ prefix='/api/lottery/active-list/'
+ if path.startswith(prefix):
+  suffix=path[len(prefix):].strip('/')
+  if suffix:
+   typed='SAOCB_SCOUT_ACTIVE_LIST_'+re.sub(r'[^A-Za-z0-9]+','_',suffix).strip('_').upper()+'_JSON'
+   override=_scout_json_override(typed)
+   if override is not None:return override
+ override=_scout_json_override('SAOCB_SCOUT_ACTIVE_JSON')
+ if override is not None:return override
+ return {'status':200,'result':{'lottery_list':[],'function_lock':[]}}
+
+def _scout_unimplemented(path):
+ return {'status':501,'result':{'error':'SAO-CB SCOUT route not mapped yet','path':path}}
+
+def _scout_record(c,gu,body):
+ raw_text=(body.legacy_body or '')
+ raw_bytes=raw_text.encode('utf-8','replace')
+ body_b64=(body.legacy_body_b64 or '').strip()
+ if body_b64:
+  try:raw_bytes=base64.b64decode(body_b64.encode('ascii'),validate=True)
+  except Exception:raise HTTPException(400,'invalid legacy body base64')
+ if len(raw_bytes)>1024*1024:raise HTTPException(413,'legacy scout body too large')
+ # Text is only a diagnostic preview; Base64 is the byte-exact capture.
+ if len(raw_text)>1024*1024:raw_text=raw_text[:1024*1024]
+ digest=hashlib.sha256(raw_bytes).hexdigest()
+ c.execute('INSERT INTO reborn_scout_calls(game_user,legacy_path,legacy_query,legacy_method,legacy_content_type,legacy_body,legacy_body_b64,body_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?)',(
+  gu,(body.legacy_path or '')[:512],(body.legacy_query or '')[:4096],(body.legacy_method or '')[:16],(body.legacy_content_type or '')[:256],raw_text,body_b64,digest,int(time.time())))
+ return digest,len(raw_bytes)
+
+@app.get('/api/v4/scout/capabilities')
+async def reborn_scout_capabilities():
+ return {'status':200,'result':{
+  'bridge_version':'4.2',
+  'legacy_prefix':'/api/lottery',
+  'raw_body_base64':True,
+  'request_recorder':True,
+  'server_side_overrides':True
+ }}
+
+@app.post('/api/v4/scout/active-list')
+async def reborn_scout_active_list(body:RebornScoutLegacyRequest):
+ # V4.1 compatibility endpoint. V4.2 uses /scout/legacy.
+ device_id=reborn_validate_id(body.device_id); gu=reborn_validate_id(body.game_user,'game_user')
+ with db() as c:
+  reborn_auth_device(c,device_id,gu,body.device_token)
+  body.legacy_path='/api/lottery/active-list'
+  digest,raw_bytes=_scout_record(c,gu,body)
+ print(f'[SAOCB-V4.2] scout active-list game_user={gu} method={body.legacy_method[:12]} bytes={raw_bytes} sha={digest[:10]}')
+ return _scout_active_response('/api/lottery/active-list')
+
+@app.post('/api/v4/scout/legacy')
+async def reborn_scout_legacy(body:RebornScoutLegacyRequest):
+ device_id=reborn_validate_id(body.device_id); gu=reborn_validate_id(body.game_user,'game_user')
+ path=(body.legacy_path or '').strip()
+ if not (path=='/api/lottery' or path.startswith('/api/lottery/')):raise HTTPException(400,'legacy path outside scout')
+ with db() as c:
+  reborn_auth_device(c,device_id,gu,body.device_token)
+  digest,raw_bytes=_scout_record(c,gu,body)
+ print(f'[SAOCB-V4.2] scout {path} game_user={gu} method={body.legacy_method[:12]} bytes={raw_bytes} sha={digest[:10]}')
+ if path=='/api/lottery/active-list' or path.startswith('/api/lottery/active-list/'):
+  return _scout_active_response(path)
+ # Exact-response overrides let us finish any old route from Render alone.
+ env='SAOCB_SCOUT_'+re.sub(r'[^A-Za-z0-9]+','_',path.removeprefix('/api/lottery/')).strip('_').upper()+'_JSON'
+ override=_scout_json_override(env)
+ if override is not None:return override
+ return _scout_unimplemented(path)
+
+@app.get('/api/v4/scout/debug/recent')
+async def reborn_scout_debug_recent(x_api_secret:str|None=Header(default=None),limit:int=20):
+ if not API_SECRET or not x_api_secret or not secrets.compare_digest(str(x_api_secret),str(API_SECRET)):
+  raise HTTPException(404,'not found')
+ limit=max(1,min(int(limit),100))
+ with db() as c:
+  reborn_schema(c)
+  rows=c.execute("SELECT id,game_user,legacy_path,legacy_query,legacy_method,legacy_content_type,substr(legacy_body,1,4096) AS legacy_body_preview,length(legacy_body_b64) AS legacy_body_b64_chars,body_sha256,created_at FROM reborn_scout_calls ORDER BY id DESC LIMIT ?",(limit,)).fetchall()
+ return {'status':200,'result':{'calls':[dict(r) for r in rows]}}
 
 @app.post('/api/v4/save/pull')
 async def reborn_save_pull(body:RebornSavePull):
