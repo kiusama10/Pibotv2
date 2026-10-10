@@ -502,6 +502,31 @@ def legacy_user_from_request(request:Request, body):
 def legacy_envelope(result=None,status=200):
     return {'status':status,'result':result if result is not None else {}}
 
+# --- SAO-CB Transport V2: stable endpoints used by the embedded Android bridge ---
+# These routes are intentionally additive: they do not change PiBot or the legacy
+# game routes. The embedded client uses them only for transport health/bootstrap.
+@app.api_route('/api/v2/health', methods=['GET','HEAD'])
+async def saocb_v2_health():
+    return {'status':200,'result':{'ok':True,'service':'SAO-CB','transport':'v2','bridge_min':3,'server_time':int(time.time())}}
+
+@app.api_route('/api/v2/bootstrap', methods=['GET','POST'])
+async def saocb_v2_bootstrap(request:Request):
+    return {'status':200,'result':{
+        'ok':True,
+        'service':'SAO-CB',
+        'transport':'v2',
+        'api_version':2,
+        'legacy_base':'/api',
+        'content_manifest':'/api/v2/content/manifest',
+        'server_time':int(time.time()),
+    }}
+
+@app.api_route('/api/v2/content/manifest', methods=['GET','HEAD'])
+async def saocb_v2_content_manifest():
+    # Future content packs can be published here without changing the game domain
+    # or transport again. Empty is deliberate until a pack is actually verified.
+    return {'status':200,'result':{'revision':1,'packs':[],'server_time':int(time.time())}}
+
 @app.api_route('/api', methods=['GET','POST','HEAD'])
 @app.api_route('/api/', methods=['GET','POST','HEAD'])
 async def legacy_api_root():
@@ -534,11 +559,10 @@ async def original_api_probe(path:str, request:Request):
     # therefore exposed as one aggregate state surface instead of fabricated data.
     import re as _re
     _user_aggregate = _re.fullmatch(r'user/([^/]+)', path)
-    # Retail boot route recovered from the client: master/start.
-    # Keep the old 'start' alias for backward compatibility with earlier SAO-CB builds.
-    # RealDriver's success callback consumes post, ptoken and prealtime; server_time is also present.
-    if path in ('master/start','start'):
-        response=legacy_envelope({'post':False,'ptoken':'','prealtime':False,'server_time':int(time.time())},200)
+    # RealDriver::start is the first online boot request. Its success callback
+    # reads post, ptoken and prealtime; server_time is optional in the client.
+    if path in ('start','master/start'):
+        response=legacy_envelope({'post':False,'ptoken':'','prealtime':False},200)
     elif _user_aggregate and _user_aggregate.group(1) not in ('register','comment','characters','equipment','current-party','cleared-quests','last-quest','world','area','quest'):
         route_user=str(_user_aggregate.group(1))
         if route_user not in ('{0}',): gu=route_user
