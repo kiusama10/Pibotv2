@@ -1,4 +1,4 @@
-import os, secrets, time, json, sqlite3
+import os, secrets, time, json, sqlite3, base64, hashlib, re
 from saocb_persistence import restore_once, connect as durable_sqlite_connect
 from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, Request, HTTPException, Header
@@ -501,6 +501,187 @@ def legacy_user_from_request(request:Request, body):
 
 def legacy_envelope(result=None,status=200):
     return {'status':status,'result':result if result is not None else {}}
+
+
+# --- SAO-CB REBORN V4 -------------------------------------------------------
+# V4 does NOT emulate WrightFlyer. The original game runs with its local
+# DummyDriver while this independent Android core owns accounts, cloud saves,
+# Telegram linking and future content manifests over modern HTTPS.
+REBORN_PROTOCOL=4
+REBORN_CLIENT_MIN=4
+REBORN_MAX_SAVE_BYTES=12*1024*1024
+REBORN_ID_RE=re.compile(r'^[A-Za-z0-9._:-]{8,160}$')
+
+class RebornBootstrap(BaseModel):
+ device_id:str
+ client_version:str='4'
+ platform:str='android'
+ device_token:str|None=None
+
+class RebornSavePush(BaseModel):
+ device_id:str
+ device_token:str
+ game_user:str
+ sha256:str
+ payload_b64:str
+ base_revision:int=Field(default=0,ge=0)
+
+class RebornSavePull(BaseModel):
+ device_id:str
+ device_token:str
+ game_user:str
+ have_revision:int=Field(default=0,ge=0)
+
+def reborn_schema(c):
+ c.executescript('''
+ CREATE TABLE IF NOT EXISTS reborn_devices(
+   device_id TEXT PRIMARY KEY,
+   game_user TEXT UNIQUE NOT NULL,
+   device_token TEXT NOT NULL,
+   client_version TEXT DEFAULT '4',
+   platform TEXT DEFAULT 'android',
+   created_at INTEGER NOT NULL,
+   last_seen INTEGER NOT NULL
+ );
+ CREATE TABLE IF NOT EXISTS reborn_cloud_saves(
+   game_user TEXT PRIMARY KEY,
+   revision INTEGER NOT NULL DEFAULT 0,
+   sha256 TEXT NOT NULL,
+   payload_b64 TEXT NOT NULL,
+   payload_bytes INTEGER NOT NULL,
+   updated_at INTEGER NOT NULL
+ );
+ CREATE TABLE IF NOT EXISTS reborn_content_packs(
+   pack_id TEXT PRIMARY KEY,
+   revision INTEGER NOT NULL,
+   url TEXT NOT NULL DEFAULT '',
+   sha256 TEXT NOT NULL DEFAULT '',
+   size_bytes INTEGER NOT NULL DEFAULT 0,
+   enabled INTEGER NOT NULL DEFAULT 0,
+   metadata_json TEXT NOT NULL DEFAULT '{}'
+ );
+ ''')
+
+def reborn_validate_id(value,name='device_id'):
+ value=(value or '').strip()
+ if not REBORN_ID_RE.fullmatch(value):raise HTTPException(400,f'invalid {name}')
+ return value
+
+def reborn_user_for_device(c,device_id,client_version='4',platform='android',presented_token=None):
+ reborn_schema(c); now=int(time.time())
+ row=c.execute('SELECT game_user,device_token FROM reborn_devices WHERE device_id=?',(device_id,)).fetchone()
+ if row:
+  gu=str(row['game_user']); token=str(row['device_token'])
+  if presented_token and secrets.compare_digest(str(presented_token),token): pass
+  elif not presented_token:
+   token=secrets.token_urlsafe(32)
+   c.execute('UPDATE reborn_devices SET device_token=? WHERE device_id=?',(token,device_id))
+  else:
+   raise HTTPException(401,'bad device token')
+  c.execute('UPDATE reborn_devices SET client_version=?,platform=?,last_seen=? WHERE device_id=?',(str(client_version)[:32],str(platform)[:32],now,device_id))
+ else:
+  gu='r4_'+hashlib.sha256(device_id.encode('utf-8')).hexdigest()[:24]
+  token=secrets.token_urlsafe(32)
+  c.execute('INSERT INTO reborn_devices(device_id,game_user,device_token,client_version,platform,created_at,last_seen) VALUES(?,?,?,?,?,?,?)',(device_id,gu,token,str(client_version)[:32],str(platform)[:32],now,now))
+ ensure_user(c,gu); grant_starter(c,gu)
+ return gu,token
+
+def reborn_auth_device(c,device_id,game_user,device_token):
+ reborn_schema(c)
+ row=c.execute('SELECT game_user,device_token FROM reborn_devices WHERE device_id=?',(device_id,)).fetchone()
+ if not row or str(row['game_user'])!=str(game_user) or not secrets.compare_digest(str(row['device_token']),str(device_token or '')):
+  raise HTTPException(401,'device authorization failed')
+ return row
+
+def reborn_link_info(c,game_user):
+ linked=c.execute('SELECT telegram_id FROM telegram_links WHERE game_user=?',(game_user,)).fetchone()
+ if linked:return True,None,0
+ now=int(time.time())
+ row=c.execute('SELECT code,expires FROM links WHERE game_user=? AND expires>=? ORDER BY expires DESC LIMIT 1',(game_user,now)).fetchone()
+ if row:return False,str(row['code']),max(0,int(row['expires'])-now)
+ for _ in range(8):
+  code=f'{secrets.randbelow(1000000):06d}'
+  try:
+   c.execute('DELETE FROM links WHERE game_user=?',(game_user,))
+   c.execute('INSERT INTO links(code,game_user,expires) VALUES(?,?,?)',(code,game_user,now+600))
+   return False,code,600
+  except sqlite3.IntegrityError:continue
+ raise HTTPException(503,'could not allocate telegram link code')
+
+@app.api_route('/api/v4/health',methods=['GET','HEAD'])
+async def reborn_health():
+ return {'status':200,'result':{'ok':True,'service':'SAO-CB REBORN','protocol':REBORN_PROTOCOL,'server_time':int(time.time())}}
+
+@app.post('/api/v4/bootstrap')
+async def reborn_bootstrap(body:RebornBootstrap):
+ device_id=reborn_validate_id(body.device_id)
+ with db() as c:
+  gu,token=reborn_user_for_device(c,device_id,body.client_version,body.platform,body.device_token)
+  linked,code,expires=reborn_link_info(c,gu)
+  save=c.execute('SELECT revision,sha256,payload_bytes,updated_at FROM reborn_cloud_saves WHERE game_user=?',(gu,)).fetchone()
+  p=c.execute('SELECT rank,tutorial_step,releases FROM profiles WHERE game_user=?',(gu,)).fetchone()
+ print(f'[SAOCB-V4] bootstrap game_user={gu} device={device_id[:8]} linked={linked} save_rev={int(save["revision"]) if save else 0}')
+ return {'status':200,'result':{
+  'ok':True,'protocol':REBORN_PROTOCOL,'game_user':gu,'device_token':token,
+  'telegram_linked':linked,'telegram_link_code':code,'telegram_link_expires_in':expires,
+  'cloud':{'revision':int(save['revision']) if save else 0,'sha256':str(save['sha256']) if save else '', 'bytes':int(save['payload_bytes']) if save else 0,'updated_at':int(save['updated_at']) if save else 0},
+  'profile':{'rank':int(p['rank']) if p else 1,'tutorial_step':int(p['tutorial_step']) if p else 0},
+  'content_manifest':'/api/v4/content/manifest','server_time':int(time.time())
+ }}
+
+@app.post('/api/v4/save/pull')
+async def reborn_save_pull(body:RebornSavePull):
+ device_id=reborn_validate_id(body.device_id); gu=reborn_validate_id(body.game_user,'game_user')
+ with db() as c:
+  reborn_auth_device(c,device_id,gu,body.device_token)
+  row=c.execute('SELECT revision,sha256,payload_b64,payload_bytes,updated_at FROM reborn_cloud_saves WHERE game_user=?',(gu,)).fetchone()
+ if not row:return {'status':200,'result':{'ok':True,'changed':False,'revision':0}}
+ rev=int(row['revision'])
+ if rev<=int(body.have_revision):return {'status':200,'result':{'ok':True,'changed':False,'revision':rev,'sha256':str(row['sha256'])}}
+ print(f'[SAOCB-V4] save pull game_user={gu} revision={rev} bytes={int(row["payload_bytes"])}')
+ return {'status':200,'result':{'ok':True,'changed':True,'revision':rev,'sha256':str(row['sha256']),'payload_b64':str(row['payload_b64']),'bytes':int(row['payload_bytes']),'updated_at':int(row['updated_at'])}}
+
+@app.post('/api/v4/save/push')
+async def reborn_save_push(body:RebornSavePush):
+ device_id=reborn_validate_id(body.device_id); gu=reborn_validate_id(body.game_user,'game_user')
+ digest=(body.sha256 or '').lower().strip()
+ if not re.fullmatch(r'[0-9a-f]{64}',digest):raise HTTPException(400,'invalid sha256')
+ try:raw=base64.b64decode(body.payload_b64.encode('ascii'),validate=True)
+ except Exception:raise HTTPException(400,'invalid base64 save')
+ if len(raw)<4 or raw[:2]!=b'PK':raise HTTPException(400,'save payload is not a zip')
+ if len(raw)>REBORN_MAX_SAVE_BYTES:raise HTTPException(413,'save too large')
+ if hashlib.sha256(raw).hexdigest()!=digest:raise HTTPException(400,'save sha256 mismatch')
+ now=int(time.time())
+ with db() as c:
+  reborn_auth_device(c,device_id,gu,body.device_token)
+  old=c.execute('SELECT revision,sha256 FROM reborn_cloud_saves WHERE game_user=?',(gu,)).fetchone()
+  if old and str(old['sha256'])==digest:
+   return {'status':200,'result':{'ok':True,'unchanged':True,'revision':int(old['revision']),'sha256':digest}}
+  if old and int(body.base_revision)<int(old['revision']):
+   raise HTTPException(409,detail={'reason':'cloud_newer','revision':int(old['revision']),'sha256':str(old['sha256'])})
+  rev=(int(old['revision']) if old else 0)+1
+  c.execute('INSERT INTO reborn_cloud_saves(game_user,revision,sha256,payload_b64,payload_bytes,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(game_user) DO UPDATE SET revision=excluded.revision,sha256=excluded.sha256,payload_b64=excluded.payload_b64,payload_bytes=excluded.payload_bytes,updated_at=excluded.updated_at',(gu,rev,digest,body.payload_b64,len(raw),now))
+ print(f'[SAOCB-V4] save push game_user={gu} revision={rev} bytes={len(raw)}')
+ return {'status':200,'result':{'ok':True,'revision':rev,'sha256':digest,'bytes':len(raw),'server_time':now}}
+
+@app.get('/api/v4/content/manifest')
+async def reborn_content_manifest():
+ with db() as c:
+  reborn_schema(c)
+  rows=c.execute('SELECT pack_id,revision,url,sha256,size_bytes,metadata_json FROM reborn_content_packs WHERE enabled=1 ORDER BY pack_id').fetchall()
+ packs=[]
+ for r in rows:
+  try:meta=json.loads(r['metadata_json'] or '{}')
+  except Exception:meta={}
+  packs.append({'id':r['pack_id'],'revision':int(r['revision']),'url':r['url'],'sha256':r['sha256'],'size_bytes':int(r['size_bytes']),'metadata':meta})
+ return {'status':200,'result':{'revision':1,'packs':packs,'server_time':int(time.time())}}
+
+@app.get('/api/v4/link/status/{game_user}')
+async def reborn_link_status(game_user:str):
+ gu=reborn_validate_id(game_user,'game_user')
+ with db() as c:
+  linked,code,expires=reborn_link_info(c,gu)
+ return {'status':200,'result':{'linked':linked,'code':code,'expires_in':expires}}
 
 # --- SAO-CB Transport V2: stable endpoints used by the embedded Android bridge ---
 # These routes are intentionally additive: they do not change PiBot or the legacy
