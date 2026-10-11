@@ -38,6 +38,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyboard = [
+        [InlineKeyboardButton("⚔️ SAO-CB · Aincrad", callback_data="sao:home")],
         [InlineKeyboardButton("📜 Ver comandos", callback_data="ver_comandos"), InlineKeyboardButton("❓ Instrucciones", callback_data="instrucciones")],
         [InlineKeyboardButton("🛍️ Abrir tienda", callback_data="abrir_tienda")],
         [InlineKeyboardButton("📦 Ver inventario", callback_data="ver_inventario")],
@@ -54,7 +55,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def _commands_text():
     return (
         commands_intro() +
-        "\n\n🎮 *Juegos y casino*\n/jugar · /robar · /caza · /suerte · /baloncesto · /batallanaval · /rankingnaval · /palabraprueba · /palabraon · /palabraoff · /apostar · /aceptar · /cancelar · /dardos · /cancelardardos · /boliche · /cancelarboliche · /aliados · /cancelaraliados · /tortugas · /tortuga · /rankingtortugas · /blackjack · /cancelarblackjack · /asesino · /dibujar · /matardibujo\n"
+        "\n\n⚔️ *SAO-CB Telegram Reborn*\n/sao · /saocb · /aincrad\n"
+        "\n🎮 *Juegos y casino*\n/jugar · /robar · /caza · /suerte · /baloncesto · /batallanaval · /rankingnaval · /palabraprueba · /palabraon · /palabraoff · /apostar · /aceptar · /cancelar · /dardos · /cancelardardos · /boliche · /cancelarboliche · /aliados · /cancelaraliados · /tortugas · /tortuga · /rankingtortugas · /blackjack · /cancelarblackjack · /asesino · /dibujar · /matardibujo\n"
         "\n⚔️ *Combates*\n/lucha · /aceptarlucha · /ataque\n"
         "\n💰 *Economía*\n/pipesos · /tienda · /inventario · /usar · /dar · /ver · /bankiu · /pagarbanco\n"
         "\n👤 *Perfil y personalización*\n/perfil · /editarperfil · /privacidadperfil · /titulos · /mistitulos · /equipartitulo · /tipografias · /fotoperfil\n"
