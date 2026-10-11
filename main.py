@@ -17,6 +17,7 @@ def getaddrinfo_ipv4(*args, **kwargs):
     return [x for x in orig_getaddrinfo(*args, **kwargs) if x[0] == socket.AF_INET]
 socket.getaddrinfo = getaddrinfo_ipv4
 
+import sitecustomize
 from drawing_web import run_server
 
 import json
