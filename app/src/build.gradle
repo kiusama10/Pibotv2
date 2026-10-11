@@ -1,0 +1,30 @@
+plugins { id 'com.android.application' }
+
+def saoUrl = project.findProperty('SAOCB_BASE_URL') ?: 'https://pibotv2-1.onrender.com/saocb-app'
+
+android {
+    namespace 'com.kiusama.saocb'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.kiusama.saocb'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+        buildConfigField 'String', 'SAOCB_URL', '"' + saoUrl + '"'
+    }
+
+    buildFeatures { buildConfig true }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
