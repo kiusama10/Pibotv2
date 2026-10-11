@@ -83,6 +83,7 @@ from handlers.community_activities import ensure_community_tables, daily_questio
 from handlers.palabra_relampago import ensure_palabra_tables, palabra_hourly_job, palabra_guess, palabra_prueba, palabra_on, palabra_off
 from handlers.batalla_naval import batalla_naval, cancelar_naval, naval_callback, ranking_naval, ensure_naval_tables
 from handlers.gato import gato, cancelar_gato, ranking_gato, gato_callback, ensure_gato_tables
+from handlers.saocb_telegram import sao_command, sao_name_command, sao_callback, ensure_saocb_telegram_tables
 
 # Constants
 RUTA_CASTIGADOS = PUNISHMENT_FILE
@@ -501,6 +502,7 @@ def main() -> None:
     ensure_palabra_tables()
     ensure_naval_tables()
     ensure_gato_tables()
+    ensure_saocb_telegram_tables()
     
     print("[INIT] Restarting active combats...")
     restart_all_combats()
@@ -559,6 +561,8 @@ def main() -> None:
 
     # Group 0: Core commands (start, admin commands)
     app.add_handler(CommandHandler("start", start), group=0)
+    app.add_handler(CommandHandler(["sao", "saocb", "aincrad"], sao_command), group=0)
+    app.add_handler(CommandHandler("saonombre", sao_name_command), group=0)
     app.add_handler(CommandHandler("dante", dante_command), group=0)
     app.add_handler(CommandHandler("presentaciones", presentaciones_command), group=0)
     app.add_handler(CommandHandler("todos", todos), group=0)
@@ -699,6 +703,7 @@ def main() -> None:
     # )
 
     # Group 5: Callback handlers for inline keyboards
+    app.add_handler(CallbackQueryHandler(sao_callback, pattern="^sao:"), group=5)
     app.add_handler(
         CallbackQueryHandler(
             menu_callback,
@@ -767,14 +772,10 @@ def main() -> None:
     # Group 6: Punishment filter (prevents messages outside punishment corner)
     app.add_handler(MessageHandler(filters.ALL, filtro_castigo), group=6)
 
-    # Start the bot
-    print("🤖 PiBot listo. Iniciando SAO-CB, servidor web y guardia de instancia...")
+    # Start the bot. SAO-CB is now Telegram-native and uses PostgreSQL directly;
+    # the retired Android bridge API is intentionally not started.
+    print("🤖 PiBot listo. SAO-CB Telegram Reborn activo; iniciando servidor web y guardia de instancia...")
     import threading, time
-    def _run_saocb_internal():
-        import uvicorn
-        uvicorn.run("saocb_app:app", host="127.0.0.1", port=8091, log_level="warning")
-    threading.Thread(target=_run_saocb_internal, daemon=True, name="saocb-api").start()
-    time.sleep(0.5)
     threading.Thread(target=run_server, daemon=True, name="pibot-web").start()
     while not acquire_single_poller_lock():
         print("[INSTANCE] Otra instancia de PiBot ya posee el polling. Esta copia queda en espera segura.")
