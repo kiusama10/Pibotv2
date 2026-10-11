@@ -4,6 +4,17 @@ from urllib.parse import urlparse, parse_qs
 from urllib.request import Request as UrlRequest, urlopen
 from urllib.error import HTTPError, URLError
 from handlers.drawing_game import canvas_get, canvas_append, canvas_meta, canvas_change_word, canvas_chat
+from handlers.saocb_mobile import mobile_api
+
+_SAOCB_MOBILE_HTML_PATH = os.path.join(os.path.dirname(__file__), "saocb_telegram", "mobile", "index.html")
+
+def _saocb_mobile_html():
+ try:
+  with open(_SAOCB_MOBILE_HTML_PATH, "r", encoding="utf-8") as f:
+   return f.read()
+ except Exception as e:
+  return "<!doctype html><meta charset=utf-8><title>SAO-CB</title><h1>SAO-CB</h1><p>UI no disponible.</p>"
+
 
 HTML=r'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>PiBot Canvas v3</title><style>
 *{box-sizing:border-box}html,body{margin:0;background:#09090d;color:#fff;font-family:system-ui,-apple-system,Segoe UI,sans-serif}.app{max-width:1000px;margin:auto;padding:10px}.top{text-align:center;font-size:24px;font-weight:900;margin:4px 0 8px}.secret{background:#17131f;border:1px solid #6e3ab5;border-radius:14px;padding:11px;text-align:center;font-size:21px;font-weight:900;color:#ffd75c;margin-bottom:8px}.tools{display:grid;gap:8px;background:#15151c;border-radius:14px;padding:10px;margin-bottom:10px}.palette{display:grid;grid-template-columns:repeat(11,minmax(30px,1fr));gap:6px}.sw{height:42px;border-radius:10px;border:3px solid #555}.sw.sel{border-color:#fff;outline:2px solid #8b5cf6}.row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.btn{min-height:44px;border:0;border-radius:10px;background:#2b2b36;color:#fff;padding:9px 12px;font-weight:800;font-size:15px}.btn.on{background:#7c3aed}.range{min-width:150px;flex:1}.workarea{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:10px;align-items:stretch}.board{width:100%;height:min(68vw,620px);min-height:360px;background:#fff;border-radius:14px;overflow:hidden;border:2px solid #444}.board canvas{display:block;width:100%;height:100%;touch-action:none;background:#fff}.status{text-align:center;color:#bbb;padding:8px}.livechat{margin-top:0;display:flex;flex-direction:column;min-height:360px;background:#111118;border:1px solid #30303c;border-radius:14px;overflow:hidden}.livehead{padding:9px 12px;font-weight:900;border-bottom:1px solid #292934}.messages{height:auto;flex:1;min-height:260px;overflow:auto;padding:8px 10px}.msg{padding:5px 2px;border-bottom:1px solid #20202a;font-size:14px}.msg b{color:#c4a7ff}.empty{color:#777;text-align:center;padding:18px}.viewer .secret,.viewer .tools,.viewer .livechat{display:none}.viewer .top:after{content:' · EN VIVO'}.viewer .board{height:min(75vw,700px)}@media(max-width:760px){.workarea{grid-template-columns:1fr}.livechat{margin-top:9px;min-height:0}.messages{height:170px;min-height:170px}}
@@ -31,11 +42,6 @@ class H(BaseHTTPRequestHandler):
   try:
    n=min(int(self.headers.get('content-length','0') or 0),2_000_000)
    body=self.rfile.read(n) if n else None
-   # Diagnostico temporal SAO-CB: confirma en Render cualquier llegada real del cliente.
-   # No imprime Authorization ni secretos.
-   ua=self.headers.get('user-agent','')
-   ctype=self.headers.get('content-type','')
-   print(f"[SAO-HTTP-IN] {self.command} {self.path} bytes={n} ua={ua[:180]!r} content_type={ctype[:100]!r}", flush=True)
    headers={}
    for k in ('content-type','accept','accept-language','user-agent','x-api-secret','x-saocb-secret','x-telegram-user-id','x-pibot-secret','authorization','x-request-id'):
     v=self.headers.get(k)
@@ -49,14 +55,29 @@ class H(BaseHTTPRequestHandler):
   except Exception as e:
    data=json.dumps({'error':'saocb unavailable','detail':type(e).__name__}).encode(); self.send_response(503); self.send_header('content-type','application/json'); self.send_header('content-length',str(len(data))); self.end_headers(); self.wfile.write(data)
 
+ def _mobile_api(self, path):
+  try:
+   n=min(int(self.headers.get('content-length','0') or 0),200000)
+   raw=self.rfile.read(n) if n else b''
+   headers={str(k).lower():str(v) for k,v in self.headers.items()}
+   code,payload=mobile_api(self.command,path,headers,raw)
+   body=json.dumps(payload,ensure_ascii=False,separators=(',',':'))
+   return self._send(code,body,'application/json; charset=utf-8')
+  except Exception as e:
+   print(f"[SAO-APP API] {type(e).__name__}: {e}")
+   return self._send(500,json.dumps({'error':'internal_error'}),'application/json; charset=utf-8')
+
  def do_HEAD(self):
   u=urlparse(self.path)
+  if u.path.startswith('/saocb-app/api/v1/'): return self._mobile_api(u.path)
   if _is_saocb_path(u.path): return self._proxy_saocb()
   if u.path=='/health':
    self.send_response(200);self.send_header('content-type','application/json');self.send_header('content-length','0');self.send_header('cache-control','no-store, no-cache, must-revalidate, max-age=0');self.send_header('pragma','no-cache');self.end_headers();return
   self.send_response(404);self.send_header('content-length','0');self.end_headers()
  def do_GET(self):
   u=urlparse(self.path)
+  if u.path in ('/saocb-app','/saocb-app/'): return self._send(200,_saocb_mobile_html(),'text/html; charset=utf-8')
+  if u.path.startswith('/saocb-app/api/v1/'): return self._mobile_api(u.path)
   if _is_saocb_path(u.path): return self._proxy_saocb()
   if u.path in ('/pibot-canvas-v4','/pibot-canvas-v3','/draw'): return self._send(200,HTML,'text/html; charset=utf-8')
   if u.path=='/health': return self._send(200,'{"ok":true}')
@@ -69,6 +90,7 @@ class H(BaseHTTPRequestHandler):
   self._send(404,'{"error":"not found"}')
  def do_POST(self):
   u=urlparse(self.path);q=parse_qs(u.query)
+  if u.path.startswith('/saocb-app/api/v1/'): return self._mobile_api(u.path)
   if _is_saocb_path(u.path): return self._proxy_saocb()
   if u.path in ('/pibot-api-v3/change','/api/change'):
    d=canvas_change_word(q.get('game',[''])[0],q.get('token',[''])[0]);return self._send(200 if d is not None else 403,json.dumps(d if d is not None else {'error':'forbidden'}))

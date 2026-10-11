@@ -1,0 +1,12 @@
+SAO-CB APP V1 — SERVER ONLY
+
+Sube ESTOS 4 archivos al repositorio respetando rutas:
+- main.py (reemplazar raíz)
+- drawing_web.py (reemplazar raíz)
+- handlers/saocb_mobile.py (nuevo)
+- saocb_telegram/mobile/index.html (nuevo)
+
+No toca la carpeta Android.
+Después deja que Render despliegue y prueba:
+https://pibotv2-1.onrender.com/saocb-app/api/v1/health
+https://pibotv2-1.onrender.com/saocb-app

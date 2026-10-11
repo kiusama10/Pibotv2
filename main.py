@@ -84,6 +84,7 @@ from handlers.palabra_relampago import ensure_palabra_tables, palabra_hourly_job
 from handlers.batalla_naval import batalla_naval, cancelar_naval, naval_callback, ranking_naval, ensure_naval_tables
 from handlers.gato import gato, cancelar_gato, ranking_gato, gato_callback, ensure_gato_tables
 from handlers.saocb_telegram import sao_command, sao_name_command, sao_callback, ensure_saocb_telegram_tables
+from handlers.saocb_mobile import sao_app_link_command, ensure_saocb_mobile_tables
 
 # Constants
 RUTA_CASTIGADOS = PUNISHMENT_FILE
@@ -503,6 +504,7 @@ def main() -> None:
     ensure_naval_tables()
     ensure_gato_tables()
     ensure_saocb_telegram_tables()
+    ensure_saocb_mobile_tables()
     
     print("[INIT] Restarting active combats...")
     restart_all_combats()
@@ -563,6 +565,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start), group=0)
     app.add_handler(CommandHandler(["sao", "saocb", "aincrad"], sao_command), group=0)
     app.add_handler(CommandHandler("saonombre", sao_name_command), group=0)
+    app.add_handler(CommandHandler("saoapp", sao_app_link_command), group=0)
     app.add_handler(CommandHandler("dante", dante_command), group=0)
     app.add_handler(CommandHandler("presentaciones", presentaciones_command), group=0)
     app.add_handler(CommandHandler("todos", todos), group=0)
