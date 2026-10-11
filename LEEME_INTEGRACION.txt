@@ -1,0 +1,65 @@
+SAO-CB REBORN APP V1
+====================
+
+OBJETIVO
+La app Android y Telegram usan el MISMO juego y el MISMO PostgreSQL.
+No existe una segunda economía:
+  1 Memory Diamond = 1 PiPeso.
+
+QUÉ AGREGA ESTE PAQUETE
+- Web App SAO-CB en /saocb-app
+- API móvil segura /saocb-app/api/v1/*
+- Vinculación por Telegram: /saoapp CODIGO
+- Android WebView nativo, sin guardar contraseña de Telegram
+- Build automático de APK con GitHub Actions
+
+PANTALLAS V1
+- Inicio / Aincrad
+- Perfil + nombre
+- Party 3 slots
+- Unidades
+- Mejoras
+- SCOUT 1x / 11x
+- Quests
+- Combate por turnos
+- Diario
+- Ranking
+
+INSTALACIÓN SERVIDOR
+1) Copia en tu repo los archivos del PATCH respetando rutas.
+2) Espera el deploy de Render.
+3) Abre:
+   https://pibotv2-1.onrender.com/saocb-app/api/v1/health
+   Debe devolver ok=true.
+4) Abre:
+   https://pibotv2-1.onrender.com/saocb-app
+   Debe mostrar la pantalla de vinculación.
+
+COMPILAR APK EN GITHUB
+1) Sube también la carpeta saocb_android/ y .github/workflows/saocb-android.yml
+2) GitHub -> Actions -> Build SAO-CB Android -> Run workflow.
+3) Al terminar, abre la ejecución y descarga el artifact:
+   SAO-CB-Reborn-Android-V1
+4) Dentro está app-debug.apk.
+
+PRIMER INICIO
+1) Instala app-debug.apk.
+2) La app mostrará un código, por ejemplo ABC123.
+3) En el chat privado con PiBot manda:
+   /saoapp ABC123
+4) Regresa a la app. Se vincula sola.
+
+PRUEBA DE SINCRONÍA
+- Mira tus PiPesos en Telegram.
+- Haz SCOUT 1x en la app (25 diamantes/PiPesos).
+- /sao en Telegram debe mostrar 25 PiPesos menos y la unidad obtenida.
+
+SEGURIDAD
+- El APK no contiene BOT_TOKEN ni contraseña de PostgreSQL.
+- La app no acepta un Telegram ID escrito manualmente.
+- El código de enlace dura 10 minutos y se usa una vez.
+- La sesión usa un token aleatorio, revocable y con expiración.
+
+NOTA APK
+El workflow V1 genera APK DEBUG para instalación directa y pruebas.
+Para publicación formal/Play Store conviene añadir keystore release propio.
