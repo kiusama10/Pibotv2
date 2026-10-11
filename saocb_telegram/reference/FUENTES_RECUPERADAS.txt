@@ -1,0 +1,18 @@
+SAO-CB TELEGRAM REBORN V1 - FUENTES RECUPERADAS
+
+De los archivos disponibles se reutiliza:
+- PiBot actual + PostgreSQL + Telegram.
+- Estructura previa SAO-CB: perfiles, inventario, gacha, quests, upgrades, bosses y eventos como referencia de diseño.
+- base.apk: icono Android usado como icono inicial del juego Telegram.
+- libcocos2dcpp.so ARM64/ARMv7: referencia histórica de lógica/nombres del cliente.
+
+Los tres APK subidos NO contienen los assets pesados del juego.
+Los archivos históricos indican que existían:
+- split_InstallTimeAssetPack.apk (~1.413 GB)
+- split_InstallTimeAssetPack2.apk (~894 MB)
+- split_InstallTimeAssetPack3.apk (~525 MB)
+- assets/en/data/character.bin (~16,772,248 bytes)
+- assets/en/data/ui_text.bin (~135,000 bytes)
+- assets/en/data/localization_info.bin (~60,292 bytes)
+
+IMPORTAR_ASSETS_SAO.bat está preparado para absorber esos packs cuando se copien desde el proyecto local original.
