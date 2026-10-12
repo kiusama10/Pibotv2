@@ -18,6 +18,7 @@ def getaddrinfo_ipv4(*args, **kwargs):
 socket.getaddrinfo = getaddrinfo_ipv4
 
 import saocb_surgical
+import saocb_internal_server
 from drawing_web import run_server
 
 import json

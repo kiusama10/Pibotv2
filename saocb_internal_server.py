@@ -36,5 +36,4 @@ def start_saocb_internal():
             name="saocb-internal-8091",
         ).start()
 
-# Importing this module is the only change main.py needs.
 start_saocb_internal()
