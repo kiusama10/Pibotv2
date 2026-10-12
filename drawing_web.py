@@ -53,7 +53,13 @@ class H(BaseHTTPRequestHandler):
     code=e.code; data=e.read(); ctype=e.headers.get('content-type','application/json')
    self.send_response(code); self.send_header('content-type',ctype); self.send_header('content-length',str(len(data))); self.send_header('cache-control','no-store'); self.end_headers(); self.wfile.write(data)
   except Exception as e:
-   data=json.dumps({'error':'saocb unavailable','detail':type(e).__name__}).encode(); self.send_response(503); self.send_header('content-type','application/json'); self.send_header('content-length',str(len(data))); self.end_headers(); self.wfile.write(data)
+   target=SAOCB_INTERNAL_URL+self.path
+   print(f"[SAOCB-PROXY-ERROR] {self.command} {self.path} -> {target} | {type(e).__name__}: {e}")
+   data=json.dumps({'error':'saocb unavailable','detail':type(e).__name__}).encode()
+   try:
+    self.send_response(503); self.send_header('content-type','application/json'); self.send_header('content-length',str(len(data))); self.end_headers(); self.wfile.write(data)
+   except (BrokenPipeError, ConnectionResetError) as write_exc:
+    print(f"[SAOCB-PROXY-CLOSED] {self.command} {self.path} | {type(write_exc).__name__}: client closed before 503")
 
  def _mobile_api(self, path):
   try:
