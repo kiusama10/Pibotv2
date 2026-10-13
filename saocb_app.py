@@ -811,6 +811,56 @@ async def reborn_link_status(game_user:str):
   linked,code,expires=reborn_link_info(c,gu)
  return {'status':200,'result':{'linked':linked,'code':code,'expires_in':expires}}
 
+# --- SAO-CB native fetchUserAll dispatcher (additive; V4 bootstrap/save untouched) ---
+@app.post('/api/v4/dispatch')
+async def saocb_v4_dispatch(request:Request):
+    try:
+        envelope=await request.json()
+    except Exception:
+        return {'request_id':'','ok':False,'data':None,'error':{'code':'invalid_json','message':'invalid dispatcher JSON'}}
+    if not isinstance(envelope,dict):
+        return {'request_id':'','ok':False,'data':None,'error':{'code':'invalid_envelope','message':'dispatcher envelope must be an object'}}
+
+    rid=str(envelope.get('request_id') or '')
+    route=str(envelope.get('route') or '')
+    method=str(envelope.get('method') or '').upper()
+    game_user=str(envelope.get('game_user') or '')
+    payload=envelope.get('payload')
+    match=re.fullmatch(r'user/([A-Za-z0-9._~-]{1,128})',route)
+    uid=match.group(1) if match else ''
+    fields={'x_uid','sub_character','is_search','is_dungeon','is_sortie'}
+
+    valid=(
+        bool(rid) and len(rid)<=128
+        and method=='POST'
+        and bool(uid) and game_user==uid
+        and isinstance(payload,dict) and set(payload)==fields
+        and payload.get('x_uid')==uid
+        and all(type(payload.get(k)) is int and payload[k]==0 for k in ('sub_character','is_search','is_dungeon','is_sortie'))
+    )
+    if not valid:
+        return {'request_id':rid,'ok':False,'data':None,'error':{'code':'invalid_fetch_user_all','message':'invalid fetchUserAll bridge contract'}}
+
+    # Route internally through the existing aggregate surface. This keeps the
+    # proven /api/user/{uid} response as the single source of truth and avoids
+    # an extra public-network round trip back into the same Render service.
+    try:
+        transport=httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport,base_url='http://saocb.internal',timeout=10.0) as client:
+            response=await client.post(
+                f'/api/user/{uid}',
+                json=payload,
+                headers={'X-Request-ID':rid,'X-SAOCB-User':uid,'Accept':'application/json'},
+            )
+        backend_response=response.json()
+    except Exception:
+        return {'request_id':rid,'ok':False,'data':None,'error':{'code':'user_aggregate_unavailable','message':'aggregate user endpoint unavailable'}}
+
+    if response.status_code<200 or response.status_code>=300 or not isinstance(backend_response,dict):
+        return {'request_id':rid,'ok':False,'data':None,'error':{'code':'user_aggregate_error','message':'aggregate user endpoint rejected the request'}}
+    return {'request_id':rid,'ok':True,'data':backend_response,'error':None}
+# --- end SAO-CB native fetchUserAll dispatcher ---
+
 # --- SAO-CB Transport V2: stable endpoints used by the embedded Android bridge ---
 # These routes are intentionally additive: they do not change PiBot or the legacy
 # game routes. The embedded client uses them only for transport health/bootstrap.
