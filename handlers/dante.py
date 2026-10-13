@@ -12,7 +12,7 @@ from src.database.database import _get_connection, _put_connection
 from src.config import KIU_ROOT_ID, KIU_ROOT_USERNAME
 from src.utils.display_name import visible_user
 
-DANTE_VERSION = "1.0.1"
+DANTE_VERSION = "1.0.2"
 
 
 
@@ -61,7 +61,8 @@ def _is_dante_owner(user):
     if not user: return False
     if KIU_ROOT_ID: return user.id == KIU_ROOT_ID
     return bool(KIU_ROOT_USERNAME and (user.username or '').lower() == KIU_ROOT_USERNAME)
-DANTE_ENABLED = os.getenv("DANTE_ENABLED", "true").strip().lower() not in {"0","false","off","no"}
+_DANTE_ENV_DEFAULT = os.getenv("DANTE_ENABLED", "true").strip().lower() not in {"0","false","off","no"}
+DANTE_ENABLED = _DANTE_ENV_DEFAULT
 _started = time.monotonic()
 _last_event = None
 _errors = 0
@@ -100,6 +101,36 @@ def ensure_dante_tables():
     "CREATE INDEX IF NOT EXISTS idx_dante_events_type_time ON dante_events_tb(event_type,event_at DESC)",
     ]
     for s in statements: _db(s)
+
+    # Runtime on/off state survives deploys/restarts. If it has never been set
+    # from Telegram, the environment variable remains the initial default.
+    global DANTE_ENABLED
+    rows = _db("SELECT value FROM dante_settings_tb WHERE key=%s", ("enabled",), True)
+    if rows:
+        DANTE_ENABLED = str(rows[0][0]).strip().lower() not in {"0", "false", "off", "no"}
+    else:
+        _db(
+            "INSERT INTO dante_settings_tb(key,value) VALUES(%s,%s) ON CONFLICT(key) DO NOTHING",
+            ("enabled", "true" if DANTE_ENABLED else "false"),
+        )
+
+
+def _set_dante_enabled(enabled: bool, actor_id=None):
+    global DANTE_ENABLED
+    DANTE_ENABLED = bool(enabled)
+    _identity_cache.clear()
+    _db(
+        """INSERT INTO dante_settings_tb(key,value,updated_at) VALUES(%s,%s,NOW())
+           ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()""",
+        ("enabled", "true" if DANTE_ENABLED else "false"),
+    )
+    try:
+        _db(
+            "INSERT INTO dante_audit_tb(actor_id,action,data) VALUES(%s,%s,%s::jsonb)",
+            (actor_id, "dante_enabled" if DANTE_ENABLED else "dante_disabled", json.dumps({"enabled": DANTE_ENABLED})),
+        )
+    except Exception as exc:
+        print(f"[DANTE AUDIT] {type(exc).__name__}: {exc}")
 
 
 def _event_key(update, kind):
@@ -184,9 +215,34 @@ def record_system_event(chat_id,user_id,kind,data=None):
 async def dante_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user=update.effective_user; msg=update.effective_message; chat=update.effective_chat
     if not _is_dante_owner(user): return
-    if not DANTE_ENABLED:
-        await msg.reply_text("🕵️ DANTE está desactivado por configuración."); return
     args=context.args or []; sub=(args[0].lower() if args else "")
+
+    # Owner-only runtime switch. It works even while DANTE itself is off.
+    if sub in {"on", "activar", "encender"}:
+        _set_dante_enabled(True, getattr(user, "id", None))
+        text="🕵️ DANTE activado. Volvió a observar normalmente."
+        if chat and chat.type != 'private':
+            try: await context.bot.send_message(user.id, text)
+            except Exception: pass
+            try: await msg.delete()
+            except Exception: pass
+        else:
+            await msg.reply_text(text)
+        return
+    if sub in {"off", "desactivar", "apagar"}:
+        _set_dante_enabled(False, getattr(user, "id", None))
+        text="🕵️ DANTE desactivado. No observará ni registrará actividad hasta que uses /dante on."
+        if chat and chat.type != 'private':
+            try: await context.bot.send_message(user.id, text)
+            except Exception: pass
+            try: await msg.delete()
+            except Exception: pass
+        else:
+            await msg.reply_text(text)
+        return
+
+    if not DANTE_ENABLED:
+        await msg.reply_text("🕵️ DANTE está desactivado. Usa /dante on para volver a activarlo."); return
     target=msg.reply_to_message.from_user if msg.reply_to_message else None
     # The only group-side DANTE action is selecting a replied user for watch/case notes.
     # Sensitive output is sent to the owner's private chat and the command is removed when possible.
