@@ -1,5 +1,7 @@
 package com.bandainamcoent.saomdeu;
 
+import android.util.Log;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -27,6 +29,7 @@ import org.json.JSONObject;
  * envelope, and returns only its data/error object to native.
  */
 public final class GameApiBridge {
+    private static final String TAG = "SAOCBBridge";
     private static final String DISPATCH_ENDPOINT =
             "https://pibotv2-1.onrender.com/api/v4/dispatch";
     private static final int CONNECT_TIMEOUT_MS = 12000;
@@ -38,12 +41,96 @@ public final class GameApiBridge {
             Executors.newSingleThreadScheduledExecutor();
     private static final ConcurrentHashMap<String, Pending> PENDING =
             new ConcurrentHashMap<String, Pending>();
+    private static final AtomicBoolean GROWTHBEAT_GUARD_INSTALLED =
+            new AtomicBoolean(false);
 
     static {
         System.loadLibrary("saocb_bridge");
+        installGrowthbeatCrashGuard();
     }
 
     private GameApiBridge() {
+    }
+
+    /**
+     * Keeps the abandoned Growthbeat background client from terminating the
+     * whole game when its old endpoint can no longer create a connection.
+     * Every exception not belonging to Growthbeat is delegated unchanged to
+     * Android's previous uncaught-exception handler.
+     */
+    public static boolean installGrowthbeatCrashGuard() {
+        if (!GROWTHBEAT_GUARD_INSTALLED.compareAndSet(false, true)) {
+            return true;
+        }
+
+        final Thread.UncaughtExceptionHandler previous =
+                Thread.getDefaultUncaughtExceptionHandler();
+
+        try {
+            Thread.setDefaultUncaughtExceptionHandler(
+                    new Thread.UncaughtExceptionHandler() {
+                        @Override
+                        public void uncaughtException(Thread thread, Throwable error) {
+                            if (isLegacyGrowthbeatFailure(thread, error)) {
+                                String type = error != null
+                                        ? error.getClass().getName()
+                                        : "unknown";
+                                String message = error != null
+                                        ? error.getMessage()
+                                        : null;
+                                Log.w(
+                                        TAG,
+                                        "Suppressed legacy Growthbeat background crash: "
+                                                + type
+                                                + (message != null ? ": " + message : ""));
+                                return;
+                            }
+
+                            if (previous != null) {
+                                previous.uncaughtException(thread, error);
+                            } else if (error != null) {
+                                error.printStackTrace();
+                            }
+                        }
+                    });
+            Log.i(TAG, "Legacy Growthbeat crash guard active");
+            return true;
+        } catch (RuntimeException error) {
+            GROWTHBEAT_GUARD_INSTALLED.set(false);
+            Log.e(TAG, "Could not install legacy Growthbeat crash guard", error);
+            return false;
+        }
+    }
+
+    private static boolean isLegacyGrowthbeatFailure(
+            Thread thread,
+            Throwable error) {
+        if (thread == null
+                || thread.getName() == null
+                || !thread.getName().startsWith("growthbeat-thread")) {
+            return false;
+        }
+
+        Throwable current = error;
+        for (int depth = 0; current != null && depth < 8; depth++) {
+            String throwableClass = current.getClass().getName();
+            if (throwableClass.startsWith("com.growthbeat.")) {
+                return true;
+            }
+
+            StackTraceElement[] stack = current.getStackTrace();
+            if (stack != null) {
+                for (StackTraceElement element : stack) {
+                    if (element != null
+                            && element.getClassName() != null
+                            && element.getClassName().startsWith("com.growthbeat.")) {
+                        return true;
+                    }
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     /**
@@ -83,7 +170,6 @@ public final class GameApiBridge {
             throw new JSONException("The SAO-CB dispatcher URL is invalid.");
         }
     }
-
 
     /**
      * Starts one bridged native request. Call on the Cocos thread while both
@@ -287,6 +373,7 @@ public final class GameApiBridge {
 
     private static native boolean nativeRegisterResponse(
             String requestId, long httpClientPointer, long httpRequestPointer);
+
     private static boolean isValidRequestId(String requestId) {
         if (requestId == null || requestId.length() < 1 || requestId.length() > 128) {
             return false;
