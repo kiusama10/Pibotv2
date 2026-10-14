@@ -4,8 +4,10 @@
 #include <android/log.h>
 #include <jni.h>
 
+#include <atomic>
 #include <dlfcn.h>
 #include <link.h>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -22,7 +24,7 @@ namespace {
 
 using namespace saocb::bridge;
 
-std::uintptr_t gCocosLibraryBase = 0;
+std::atomic<std::uintptr_t> gCocosLibraryBase{0};
 
 struct LibrarySearch {
     std::uintptr_t base = 0;
@@ -83,6 +85,7 @@ void* mapNear(std::uintptr_t target, std::size_t pageSize) {
                     || !isBranchReachable(target, candidate)) {
                 continue;
             }
+
             void* fixed = mmap(
                     reinterpret_cast<void*>(candidate),
                     pageSize,
@@ -91,7 +94,11 @@ void* mapNear(std::uintptr_t target, std::size_t pageSize) {
                     -1,
                     0);
             if (fixed != MAP_FAILED) {
-                return fixed;
+                const auto address = reinterpret_cast<std::uintptr_t>(fixed);
+                if (isBranchReachable(target, address)) {
+                    return fixed;
+                }
+                munmap(fixed, pageSize);
             }
 
             // Older Android kernels may not implement MAP_FIXED_NOREPLACE.
@@ -323,7 +330,8 @@ bool callJavaFetchUserAll(
 }
 
 void submitHook(void* httpClient, void* httpRequest, int mode) noexcept {
-    const std::uintptr_t base = gCocosLibraryBase;
+    const std::uintptr_t base =
+            gCocosLibraryBase.load(std::memory_order_acquire);
     if (base == 0) {
         return;
     }
@@ -360,74 +368,208 @@ void submitHook(void* httpClient, void* httpRequest, int mode) noexcept {
             httpClient, httpRequest);
 }
 
-bool installHook() {
-    const std::uintptr_t base = cocosBase();
+bool installHook(std::uintptr_t base) {
     const long pageSizeResult = sysconf(_SC_PAGESIZE);
-    if (base == 0 || pageSizeResult <= 0) {
+    if (base == 0) {
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "installHook called with cocos base=0");
         return false;
     }
-    gCocosLibraryBase = base;
+    if (pageSizeResult <= 0) {
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "sysconf(_SC_PAGESIZE) failed value=%ld",
+                pageSizeResult);
+        return false;
+    }
+
     const auto pageSize = static_cast<std::size_t>(pageSizeResult);
     const auto siteA = runtimeAddress(base, cocos_abi::kRequestSubmitCallA);
     const auto siteB = runtimeAddress(base, cocos_abi::kRequestSubmitCallB);
+
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            "SAOCBBridge",
+            "cocos ready base=%p page=%zu siteA=%p siteB=%p",
+            reinterpret_cast<void*>(base),
+            pageSize,
+            reinterpret_cast<void*>(siteA),
+            reinterpret_cast<void*>(siteB));
+
     if ((siteA & ~(pageSize - 1)) != (siteB & ~(pageSize - 1))) {
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "submit call sites are on different pages");
+        return false;
+    }
+
+    const auto actualA = *reinterpret_cast<const std::uint32_t*>(siteA);
+    const auto actualB = *reinterpret_cast<const std::uint32_t*>(siteB);
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            "SAOCBBridge",
+            "submit words A=0x%08x expected=0x%08x B=0x%08x expected=0x%08x",
+            static_cast<unsigned int>(actualA),
+            static_cast<unsigned int>(cocos_abi::kRequestSubmitCallAInstruction),
+            static_cast<unsigned int>(actualB),
+            static_cast<unsigned int>(cocos_abi::kRequestSubmitCallBInstruction));
+
+    if (actualA != cocos_abi::kRequestSubmitCallAInstruction
+            || actualB != cocos_abi::kRequestSubmitCallBInstruction) {
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "submit instruction mismatch; no call sites were changed");
         return false;
     }
 
     void* thunkPage = mapNear(siteA, pageSize);
     if (thunkPage == MAP_FAILED) {
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "mapNear failed; no call sites were changed");
         return false;
     }
+
     auto* thunkBytes = static_cast<std::byte*>(thunkPage);
     writeThunk(thunkBytes, 0, reinterpret_cast<std::uintptr_t>(&submitHook));
     writeThunk(thunkBytes + 24, 1, reinterpret_cast<std::uintptr_t>(&submitHook));
     __builtin___clear_cache(
             reinterpret_cast<char*>(thunkPage),
             reinterpret_cast<char*>(thunkPage) + 48);
-    if (mprotect(thunkPage, pageSize, PROT_READ | PROT_EXEC) != 0) {
+
+    const auto thunkA = reinterpret_cast<std::uintptr_t>(thunkPage);
+    const auto thunkB = thunkA + 24;
+    const bool reachableA = isBranchReachable(siteA, thunkA);
+    const bool reachableB = isBranchReachable(siteB, thunkB);
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            "SAOCBBridge",
+            "thunk page=%p reachableA=%d reachableB=%d",
+            thunkPage,
+            reachableA ? 1 : 0,
+            reachableB ? 1 : 0);
+
+    if (!reachableA || !reachableB) {
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "thunk is outside ARM64 BL range; no call sites were changed");
         munmap(thunkPage, pageSize);
         return false;
     }
 
-    const auto expectedA = *reinterpret_cast<const std::uint32_t*>(siteA);
-    const auto expectedB = *reinterpret_cast<const std::uint32_t*>(siteB);
-    const auto thunkA = reinterpret_cast<std::uintptr_t>(thunkPage);
-    const auto thunkB = thunkA + 24;
-    if (expectedA != cocos_abi::kRequestSubmitCallAInstruction
-            || expectedB != cocos_abi::kRequestSubmitCallBInstruction
-            || !isBranchReachable(siteA, thunkA)
-            || !isBranchReachable(siteB, thunkB)) {
+    if (mprotect(thunkPage, pageSize, PROT_READ | PROT_EXEC) != 0) {
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "mprotect thunk RX failed; no call sites were changed");
         munmap(thunkPage, pageSize);
         return false;
     }
 
     const auto codePage = reinterpret_cast<void*>(siteA & ~(pageSize - 1));
     if (mprotect(codePage, pageSize, PROT_READ | PROT_WRITE) != 0) {
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "mprotect Cocos code RW failed; no call sites were changed");
         munmap(thunkPage, pageSize);
         return false;
     }
+
     *reinterpret_cast<std::uint32_t*>(siteA) = encodeBl(siteA, thunkA);
     *reinterpret_cast<std::uint32_t*>(siteB) = encodeBl(siteB, thunkB);
     __builtin___clear_cache(
             reinterpret_cast<char*>(codePage),
             reinterpret_cast<char*>(codePage) + pageSize);
-    return mprotect(codePage, pageSize, PROT_READ | PROT_EXEC) == 0;
-}
 
-__attribute__((constructor)) void installFetchUserAllHook() {
-    // This bridge is loaded as a DT_NEEDED dependency of the pinned Cocos
-    // library. Its constructor runs before the first RealDriver request.
-    if (installHook()) {
-        __android_log_print(
-                ANDROID_LOG_INFO,
-                "SAOCBBridge",
-                "Pinned ARM64 fetchUserAll submit hook installed");
-    } else {
+    if (mprotect(codePage, pageSize, PROT_READ | PROT_EXEC) != 0) {
+        // The page is still writable here. Restore the two original words before
+        // attempting to return it to RX, so a failed installation does not leave
+        // partially patched call sites behind.
+        *reinterpret_cast<std::uint32_t*>(siteA) = actualA;
+        *reinterpret_cast<std::uint32_t*>(siteB) = actualB;
+        __builtin___clear_cache(
+                reinterpret_cast<char*>(codePage),
+                reinterpret_cast<char*>(codePage) + pageSize);
+        mprotect(codePage, pageSize, PROT_READ | PROT_EXEC);
         __android_log_print(
                 ANDROID_LOG_ERROR,
                 "SAOCBBridge",
-                "Pinned ARM64 submit sites did not match; no call sites were changed");
+                "mprotect Cocos code RX restore failed; original call sites restored");
+        munmap(thunkPage, pageSize);
+        return false;
     }
+
+    gCocosLibraryBase.store(base, std::memory_order_release);
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            "SAOCBBridge",
+            "Pinned ARM64 fetchUserAll submit hook installed");
+    return true;
+}
+
+void* installHookWorker(void*) {
+    constexpr int kMaxAttempts = 200;
+    constexpr unsigned int kRetryDelayUs = 10000;
+
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            "SAOCBBridge",
+            "deferred hook worker started; waiting for libcocos2dcpp.so");
+
+    for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+        const std::uintptr_t base = cocosBase();
+        if (base != 0) {
+            __android_log_print(
+                    ANDROID_LOG_INFO,
+                    "SAOCBBridge",
+                    "libcocos2dcpp.so visible to bridge on attempt=%d base=%p",
+                    attempt,
+                    reinterpret_cast<void*>(base));
+            if (!installHook(base)) {
+                __android_log_print(
+                        ANDROID_LOG_ERROR,
+                        "SAOCBBridge",
+                        "deferred fetchUserAll hook installation failed");
+            }
+            return nullptr;
+        }
+        usleep(kRetryDelayUs);
+    }
+
+    __android_log_print(
+            ANDROID_LOG_ERROR,
+            "SAOCBBridge",
+            "timed out waiting for libcocos2dcpp.so; hook not installed");
+    return nullptr;
+}
+
+__attribute__((constructor)) void installFetchUserAllHook() {
+    // libsaocb_bridge.so is a DT_NEEDED dependency of libcocos2dcpp.so. A
+    // dependency constructor can run while the parent DSO is still being loaded,
+    // so patch Cocos from a detached worker after the linker finishes that load.
+    pthread_t worker{};
+    const int createResult = pthread_create(
+            &worker,
+            nullptr,
+            &installHookWorker,
+            nullptr);
+    if (createResult != 0) {
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "pthread_create for deferred hook failed rc=%d",
+                createResult);
+        return;
+    }
+    pthread_detach(worker);
 }
 
 }  // namespace
