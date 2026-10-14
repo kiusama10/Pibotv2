@@ -21,6 +21,24 @@
 #define MAP_FIXED_NOREPLACE 0x100000
 #endif
 
+static std::atomic<JavaVM*> gJavaVm{nullptr};
+
+extern "C" JNIEXPORT jint JNICALL
+JNI_OnLoad(JavaVM* vm, void*) {
+    if (vm == nullptr) {
+        return JNI_ERR;
+    }
+
+    gJavaVm.store(vm, std::memory_order_release);
+
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            "SAOCBBridge",
+            "JavaVM bound through JNI_OnLoad");
+
+    return JNI_VERSION_1_6;
+}
+
 namespace {
 
 using namespace saocb::bridge;
@@ -302,6 +320,15 @@ bool isFetchUserAllOnStack(std::uintptr_t base) {
 }
 
 jint getCreatedJavaVms(JavaVM** vm) {
+    if (vm == nullptr) {
+        return JNI_ERR;
+    }
+
+    if (JavaVM* bound = gJavaVm.load(std::memory_order_acquire)) {
+        *vm = bound;
+        return JNI_OK;
+    }
+
     using GetCreatedJavaVms = jint (*)(JavaVM**, jsize, jsize*);
     auto function = reinterpret_cast<GetCreatedJavaVms>(
             dlsym(RTLD_DEFAULT, "JNI_GetCreatedJavaVMs"));
