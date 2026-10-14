@@ -5,6 +5,7 @@
 #include <jni.h>
 
 #include <atomic>
+#include <cerrno>
 #include <dlfcn.h>
 #include <link.h>
 #include <pthread.h>
@@ -132,6 +133,151 @@ void writeThunk(std::byte* destination, int mode, std::uintptr_t target) {
     };
     std::memcpy(destination, instructions, sizeof(instructions));
     std::memcpy(destination + sizeof(instructions), &target, sizeof(target));
+}
+
+bool replaceCodePageWithAnonymousExec(
+        std::uintptr_t codePageAddress,
+        std::size_t pageSize,
+        std::uintptr_t siteA,
+        std::uintptr_t siteB,
+        std::uintptr_t thunkA,
+        std::uintptr_t thunkB) {
+    auto* const codePage = reinterpret_cast<void*>(codePageAddress);
+    const std::uintptr_t offsetA = siteA - codePageAddress;
+    const std::uintptr_t offsetB = siteB - codePageAddress;
+
+    if (offsetA > pageSize - sizeof(std::uint32_t)
+            || offsetB > pageSize - sizeof(std::uint32_t)) {
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "submit offsets are outside Cocos code page");
+        return false;
+    }
+
+    // Android/SELinux rejected execmod on the file-backed Cocos page.
+    // Build an exact anonymous copy, patch it while RW, make it RX, then move
+    // that already-executable anonymous mapping over the original virtual page.
+    void* shadowPage = mmap(
+            nullptr,
+            pageSize,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS,
+            -1,
+            0);
+    if (shadowPage == MAP_FAILED) {
+        const int error = errno;
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "anonymous Cocos shadow mmap failed errno=%d (%s)",
+                error,
+                std::strerror(error));
+        return false;
+    }
+
+    std::memcpy(shadowPage, codePage, pageSize);
+
+    auto* const shadowBytes = static_cast<std::byte*>(shadowPage);
+    const std::uint32_t patchedA = encodeBl(siteA, thunkA);
+    const std::uint32_t patchedB = encodeBl(siteB, thunkB);
+
+    std::memcpy(
+            shadowBytes + offsetA,
+            &patchedA,
+            sizeof(patchedA));
+    std::memcpy(
+            shadowBytes + offsetB,
+            &patchedB,
+            sizeof(patchedB));
+
+    __builtin___clear_cache(
+            reinterpret_cast<char*>(shadowPage),
+            reinterpret_cast<char*>(shadowPage) + pageSize);
+
+    std::uint32_t shadowA = 0;
+    std::uint32_t shadowB = 0;
+    std::memcpy(
+            &shadowA,
+            shadowBytes + offsetA,
+            sizeof(shadowA));
+    std::memcpy(
+            &shadowB,
+            shadowBytes + offsetB,
+            sizeof(shadowB));
+
+    if (shadowA != patchedA || shadowB != patchedB) {
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "anonymous Cocos shadow verification failed");
+        munmap(shadowPage, pageSize);
+        return false;
+    }
+
+    if (mprotect(shadowPage, pageSize, PROT_READ | PROT_EXEC) != 0) {
+        const int error = errno;
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "anonymous Cocos shadow RX failed errno=%d (%s)",
+                error,
+                std::strerror(error));
+        munmap(shadowPage, pageSize);
+        return false;
+    }
+
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            "SAOCBBridge",
+            "anonymous Cocos shadow ready RX page=%p",
+            shadowPage);
+
+    errno = 0;
+    void* moved = mremap(
+            shadowPage,
+            pageSize,
+            pageSize,
+            MREMAP_MAYMOVE | MREMAP_FIXED,
+            codePage);
+    if (moved == MAP_FAILED) {
+        const int error = errno;
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "mremap anonymous Cocos page failed errno=%d (%s); original page untouched",
+                error,
+                std::strerror(error));
+        munmap(shadowPage, pageSize);
+        return false;
+    }
+
+    __builtin___clear_cache(
+            reinterpret_cast<char*>(codePage),
+            reinterpret_cast<char*>(codePage) + pageSize);
+
+    const auto installedA =
+            *reinterpret_cast<const std::uint32_t*>(siteA);
+    const auto installedB =
+            *reinterpret_cast<const std::uint32_t*>(siteB);
+
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            "SAOCBBridge",
+            "anonymous Cocos page installed page=%p A=0x%08x B=0x%08x",
+            codePage,
+            static_cast<unsigned int>(installedA),
+            static_cast<unsigned int>(installedB));
+
+    if (installedA != patchedA || installedB != patchedB) {
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "installed anonymous Cocos page verification failed");
+        return false;
+    }
+
+    return true;
 }
 
 bool isFetchUserAllOnStack(std::uintptr_t base) {
@@ -473,41 +619,25 @@ bool installHook(std::uintptr_t base) {
         return false;
     }
 
-    const auto codePage = reinterpret_cast<void*>(siteA & ~(pageSize - 1));
-    if (mprotect(codePage, pageSize, PROT_READ | PROT_WRITE) != 0) {
-        __android_log_print(
-                ANDROID_LOG_ERROR,
-                "SAOCBBridge",
-                "mprotect Cocos code RW failed; no call sites were changed");
-        munmap(thunkPage, pageSize);
-        return false;
-    }
+    const auto codePageAddress =
+            siteA & ~(static_cast<std::uintptr_t>(pageSize) - 1);
 
-    *reinterpret_cast<std::uint32_t*>(siteA) = encodeBl(siteA, thunkA);
-    *reinterpret_cast<std::uint32_t*>(siteB) = encodeBl(siteB, thunkB);
-    __builtin___clear_cache(
-            reinterpret_cast<char*>(codePage),
-            reinterpret_cast<char*>(codePage) + pageSize);
-
-    if (mprotect(codePage, pageSize, PROT_READ | PROT_EXEC) != 0) {
-        // The page is still writable here. Restore the two original words before
-        // attempting to return it to RX, so a failed installation does not leave
-        // partially patched call sites behind.
-        *reinterpret_cast<std::uint32_t*>(siteA) = actualA;
-        *reinterpret_cast<std::uint32_t*>(siteB) = actualB;
-        __builtin___clear_cache(
-                reinterpret_cast<char*>(codePage),
-                reinterpret_cast<char*>(codePage) + pageSize);
-        mprotect(codePage, pageSize, PROT_READ | PROT_EXEC);
-        __android_log_print(
-                ANDROID_LOG_ERROR,
-                "SAOCBBridge",
-                "mprotect Cocos code RX restore failed; original call sites restored");
-        munmap(thunkPage, pageSize);
-        return false;
-    }
-
+    // Publish before the final page replacement. Once the two BL instructions
+    // become live, submitHook already has the correct Cocos base.
     gCocosLibraryBase.store(base, std::memory_order_release);
+
+    if (!replaceCodePageWithAnonymousExec(
+                codePageAddress,
+                pageSize,
+                siteA,
+                siteB,
+                thunkA,
+                thunkB)) {
+        gCocosLibraryBase.store(0, std::memory_order_release);
+        munmap(thunkPage, pageSize);
+        return false;
+    }
+
     __android_log_print(
             ANDROID_LOG_INFO,
             "SAOCBBridge",
