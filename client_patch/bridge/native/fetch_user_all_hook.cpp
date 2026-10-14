@@ -412,6 +412,65 @@ jclass findGameApiBridgeClass(JNIEnv* env) {
     return static_cast<jclass>(loaded);
 }
 
+bool installJavaGrowthbeatCrashGuard() {
+    JavaVM* vm = nullptr;
+    if (getCreatedJavaVms(&vm) != JNI_OK || vm == nullptr) {
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "Growthbeat crash guard could not resolve JavaVM");
+        return false;
+    }
+
+    JNIEnv* env = nullptr;
+    bool attachedHere = false;
+    const jint environmentStatus =
+            vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (environmentStatus == JNI_EDETACHED) {
+        if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+            __android_log_print(
+                    ANDROID_LOG_ERROR,
+                    "SAOCBBridge",
+                    "Growthbeat crash guard could not attach JNI thread");
+            return false;
+        }
+        attachedHere = true;
+    } else if (environmentStatus != JNI_OK || env == nullptr) {
+        __android_log_print(
+                ANDROID_LOG_ERROR,
+                "SAOCBBridge",
+                "Growthbeat crash guard has no JNI environment status=%d",
+                environmentStatus);
+        return false;
+    }
+
+    bool installed = false;
+    if (env->PushLocalFrame(16) == JNI_OK) {
+        jclass bridge = findGameApiBridgeClass(env);
+        if (bridge != nullptr) {
+            jmethodID install = env->GetStaticMethodID(
+                    bridge,
+                    "installGrowthbeatCrashGuard",
+                    "()Z");
+            if (install != nullptr && !env->ExceptionCheck()) {
+                installed = env->CallStaticBooleanMethod(bridge, install) == JNI_TRUE;
+            }
+        }
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            installed = false;
+        }
+        env->PopLocalFrame(nullptr);
+    } else if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+
+    if (attachedHere) {
+        vm->DetachCurrentThread();
+    }
+    return installed;
+}
+
 bool callJavaFetchUserAll(
         const std::string& uid,
         void* httpClient,
@@ -663,6 +722,19 @@ void* installHookWorker(void*) {
                     "libcocos2dcpp.so visible to bridge on attempt=%d base=%p",
                     attempt,
                     reinterpret_cast<void*>(base));
+
+            if (installJavaGrowthbeatCrashGuard()) {
+                __android_log_print(
+                        ANDROID_LOG_INFO,
+                        "SAOCBBridge",
+                        "legacy Growthbeat crash guard installed");
+            } else {
+                __android_log_print(
+                        ANDROID_LOG_ERROR,
+                        "SAOCBBridge",
+                        "legacy Growthbeat crash guard installation failed");
+            }
+
             if (!installHook(base)) {
                 __android_log_print(
                         ANDROID_LOG_ERROR,
