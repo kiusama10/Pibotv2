@@ -196,9 +196,9 @@ class GachaRequest(BaseModel):game_user:str; banner_id:str='halloween-2026'; cou
 # until mapped to real event.bin/event_quest_2.bin records.
 SEASONAL_EVENTS=[
  {'id':'halloween-opening','name':'Halloween: Apertura','month':10,'day':1,'duration_days':7,'reward_pipesos':3000},
- {'id':'halloween-hunt','name':'Halloween: Cacería','month':10,'day':8,'duration_days':7,'reward_pipesos':5000},
+ {'id':'halloween-hunt','name':'Halloween: CacerÃ­a','month':10,'day':8,'duration_days':7,'reward_pipesos':5000},
  {'id':'halloween-boss','name':'Halloween: Boss','month':10,'day':15,'duration_days':10,'reward_pipesos':8000},
- {'id':'day-of-the-dead','name':'Día de Muertos','month':10,'day':25,'duration_days':12,'reward_pipesos':10000},
+ {'id':'day-of-the-dead','name':'DÃ­a de Muertos','month':10,'day':25,'duration_days':12,'reward_pipesos':10000},
 ]
 
 def seasonal_window(e, year=None):
@@ -283,7 +283,7 @@ async def pvp_result(body:PvPResult,x_saocb_secret:str|None=Header(default=None)
   else: l+=1; st=0
   c.execute('UPDATE pvp_rating SET rating=?,wins=?,losses=?,streak=? WHERE game_user=?',(new,w,l,st,body.game_user))
  gain=750 if body.won else 150
- bal=await change_balance(body.game_user,gain,'PvP victoria' if body.won else 'PvP participación','pvp')
+ bal=await change_balance(body.game_user,gain,'PvP victoria' if body.won else 'PvP participaciÃ³n','pvp')
  return {'ok':True,'rating_before':rating,'rating':new,'wins':w,'losses':l,'streak':st,'earned_pipesos':gain,'pipesos':bal}
 
 
@@ -418,7 +418,7 @@ async def reward(body:RewardRequest,x_saocb_secret:str|None=Header(default=None)
    c.execute('INSERT INTO reward_claims VALUES(?,?,?,?,?)',(body.claim_id,body.game_user,body.pipesos,body.reason,int(time.time())))
  bal=await change_balance(body.game_user,body.pipesos,body.reason or 'Recompensa','reward')
  tid=await linked_tid(body.game_user)
- if tid:await tg('sendMessage',{'chat_id':tid,'text':f'⚔️ SAO-CB: {body.pipesos:+,} PiPesos'+(f' — {body.reason}' if body.reason else '')+f'\nSaldo: {bal:,}'})
+ if tid:await tg('sendMessage',{'chat_id':tid,'text':f'âš”ï¸ SAO-CB: {body.pipesos:+,} PiPesos'+(f' â€” {body.reason}' if body.reason else '')+f'\nSaldo: {bal:,}'})
  return {'ok':True,'pipesos':bal}
 
 @app.get('/game/gacha/banners')
@@ -461,18 +461,18 @@ async def webhook(req:Request,x_telegram_bot_api_secret_token:str|None=Header(de
  if WEBHOOK_SECRET and x_telegram_bot_api_secret_token!=WEBHOOK_SECRET:raise HTTPException(401,'bad telegram secret')
  u=await req.json(); m=u.get('message') or {}; text=(m.get('text') or '').strip(); tid=str((m.get('chat') or {}).get('id',''))
  if not tid:return {'ok':True}
- if text.startswith('/start'):await tg('sendMessage',{'chat_id':tid,'text':'⚔️ SAO-CB conectado. /vincular CODIGO · /estado · /gacha'})
+ if text.startswith('/start'):await tg('sendMessage',{'chat_id':tid,'text':'âš”ï¸ SAO-CB conectado. /vincular CODIGO Â· /estado Â· /gacha'})
  elif text.startswith('/vincular'):
   code=(text.split(maxsplit=1)+[''])[1].strip()
   with db() as c:
    r=c.execute('SELECT game_user,expires FROM links WHERE code=?',(code,)).fetchone()
    if r and r['expires']>=int(time.time()):
-    gu_link=str(r['game_user']); c.execute('DELETE FROM telegram_links WHERE telegram_id=? OR game_user=?',(tid,gu_link)); c.execute('INSERT INTO telegram_links VALUES(?,?)',(tid,gu_link)); c.execute('DELETE FROM links WHERE code=?',(code,)); msg=f'✅ Partida SAO-CB vinculada: {gu_link}'
-   else: gu_link=None; msg='Código inválido o vencido.'
+    gu_link=str(r['game_user']); c.execute('DELETE FROM telegram_links WHERE telegram_id=? OR game_user=?',(tid,gu_link)); c.execute('INSERT INTO telegram_links VALUES(?,?)',(tid,gu_link)); c.execute('DELETE FROM links WHERE code=?',(code,)); msg=f'âœ… Partida SAO-CB vinculada: {gu_link}'
+   else: gu_link=None; msg='CÃ³digo invÃ¡lido o vencido.'
   if gu_link and DATABASE_URL:
    try:
-    migrated_balance=_migrate_starter_to_pibot(gu_link,tid); msg+=f'\n💰 PiPesos compartidos: {migrated_balance:,}'
-   except Exception as exc: msg+=f'\n⚠️ Vinculado; saldo inicial pendiente de sincronización ({type(exc).__name__}).'
+    migrated_balance=_migrate_starter_to_pibot(gu_link,tid); msg+=f'\nðŸ’° PiPesos compartidos: {migrated_balance:,}'
+   except Exception as exc: msg+=f'\nâš ï¸ Vinculado; saldo inicial pendiente de sincronizaciÃ³n ({type(exc).__name__}).'
   await tg('sendMessage',{'chat_id':tid,'text':msg})
  elif text=='/estado':await tg('sendMessage',{'chat_id':tid,'text':await status_text(tid)})
  elif text=='/gacha':
@@ -480,8 +480,8 @@ async def webhook(req:Request,x_telegram_bot_api_secret_token:str|None=Header(de
   if not l:msg='Primero vincula tu partida con /vincular CODIGO.'
   else:
    try:
-    msg='🎃 Scout SAO-CB: 10,000 individual / 50,000 multi. Las probabilidades originales deben estar mapeadas antes de habilitar tiradas.'
-   except HTTPException as e:msg=f'🎃 Gacha: {e.detail}'
+    msg='ðŸŽƒ Scout SAO-CB: 10,000 individual / 50,000 multi. Las probabilidades originales deben estar mapeadas antes de habilitar tiradas.'
+   except HTTPException as e:msg=f'ðŸŽƒ Gacha: {e.detail}'
   await tg('sendMessage',{'chat_id':tid,'text':msg})
  return {'ok':True}
 
@@ -826,6 +826,32 @@ async def saocb_v4_dispatch(request:Request):
     method=str(envelope.get('method') or '').upper()
     game_user=str(envelope.get('game_user') or '')
     payload=envelope.get('payload')
+
+    # SAO-CB: RealDriver::start / master/start
+    # Parser verificado: post(bool), ptoken(string), prealtime(bool).
+    # server_time es opcional.
+    if route.strip().lstrip('/') in ('master/start','start'):
+        if method not in ('GET','POST'):
+            return {
+                'request_id':rid,
+                'ok':False,
+                'data':None,
+                'error':{
+                    'code':'invalid_master_start_method',
+                    'message':'master/start requires GET'
+                }
+            }
+
+        return {
+            'request_id':rid,
+            'ok':True,
+            'data':legacy_envelope({
+                'post':False,
+                'ptoken':'',
+                'prealtime':False
+            },200),
+            'error':None
+        }
     match=re.fullmatch(r'user/([A-Za-z0-9._~-]{1,128})',route)
     uid=match.group(1) if match else ''
     fields={'x_uid','sub_character','is_search','is_dungeon','is_sortie'}
@@ -1304,9 +1330,9 @@ def auto_director_tick(now=None):
   p=active_players(); goal=recommended_quest_goal(p); eid=f'auto-goal-{now}'
   duration=max(6,min(168,int(cfg.get('target_event_hours','48'))))
   with db() as c:
-   c.execute("INSERT INTO live_events(id,name,event_type,status,starts_at,ends_at,difficulty,reward_mode,config_json,created_by) VALUES(?,?,?,'active',?,?,?,?,?,?)",(eid,'Misión comunitaria','world_goal',now,now+duration*3600,'auto','original',json.dumps({'target':goal,'metric':'quest_clear','active_players':p}), 'auto-director'))
-   c.execute("INSERT INTO world_goals(id,name,target,current,status,starts_at,ends_at) VALUES(?,?,?,0,'active',?,?)",(eid,'Misión comunitaria',goal,now,now+duration*3600))
-  history('auto_event',eid,'Auto Director inició una misión comunitaria',{'target':goal,'players':p}); actions.append({'type':'world_goal','id':eid,'target':goal})
+   c.execute("INSERT INTO live_events(id,name,event_type,status,starts_at,ends_at,difficulty,reward_mode,config_json,created_by) VALUES(?,?,?,'active',?,?,?,?,?,?)",(eid,'MisiÃ³n comunitaria','world_goal',now,now+duration*3600,'auto','original',json.dumps({'target':goal,'metric':'quest_clear','active_players':p}), 'auto-director'))
+   c.execute("INSERT INTO world_goals(id,name,target,current,status,starts_at,ends_at) VALUES(?,?,?,0,'active',?,?)",(eid,'MisiÃ³n comunitaria',goal,now,now+duration*3600))
+  history('auto_event',eid,'Auto Director iniciÃ³ una misiÃ³n comunitaria',{'target':goal,'players':p}); actions.append({'type':'world_goal','id':eid,'target':goal})
  if cfg.get('boss_enabled','1')=='1' and not boss:
   # Boss creation is intentionally tied to a floor/event trigger, not spawned every tick.
   pass
@@ -1370,7 +1396,7 @@ def release_tick(now=None):
  for r in rows:
   rid=r['id']
   if not notification_exists('release',rid):
-   msg=f"Actualización {r['version']}: {r['title']}"
+   msg=f"ActualizaciÃ³n {r['version']}: {r['title']}"
    if r['notes']: msg += f"\n{r['notes']}"
    a=create_announcement(msg,now,hours,'auto-director','release',rid)
    with db() as c:c.execute("UPDATE releases SET status='published',announcement_id=? WHERE id=?",(a['id'],rid))
@@ -1459,7 +1485,7 @@ async def deliver_telegram_notifications():
   if notification_exists(kind,ref_id,'telegram'): continue
   payload=json.loads(r['payload_json'] or '{}'); msg=payload.get('message')
   if not msg: continue
-  await tg('sendMessage',{'chat_id':ANNOUNCE_CHAT_ID,'text':f'⚔️ SAO-CB\n{msg}'})
+  await tg('sendMessage',{'chat_id':ANNOUNCE_CHAT_ID,'text':f'âš”ï¸ SAO-CB\n{msg}'})
   with db() as c:c.execute('INSERT OR IGNORE INTO notification_log(kind,ref_id,channel,payload_json,created_at) VALUES(?,?,?,?,?)',(kind,ref_id,'telegram',json.dumps({'message':msg},ensure_ascii=False),int(time.time())))
   delivered.append({'kind':kind,'ref_id':ref_id})
  return delivered
@@ -1503,24 +1529,24 @@ async def control_webhook(req:Request,x_telegram_bot_api_secret_token:str|None=H
  u=await req.json(); m=u.get('message') or {}; text=(m.get('text') or '').strip(); tid=str((m.get('from') or {}).get('id') or (m.get('chat') or {}).get('id','')); chat_id=str((m.get('chat') or {}).get('id',''))
  if not text or not tid:return {'ok':True}
  if tid not in ADMIN_TELEGRAM_IDS:
-  if text.startswith('/saocb') or text.startswith('/anuncio') or text.startswith('/actualizacion'): await tg('sendMessage',{'chat_id':chat_id,'text':'⛔ Comando exclusivo de administración SAO-CB.'})
+  if text.startswith('/saocb') or text.startswith('/anuncio') or text.startswith('/actualizacion'): await tg('sendMessage',{'chat_id':chat_id,'text':'â›” Comando exclusivo de administraciÃ³n SAO-CB.'})
   return {'ok':True}
  if text=='/saocb':
-  d=admin_status(None); cfg=auto_settings(); msg=f"⚔️ SAO-CB\nAuto: {'ON' if cfg.get('enabled')=='1' else 'OFF'}\nActivos 7d: {d['active_players_7d']}\nAincrad: Piso {d['aincrad_floor']}\nMeta sugerida: {d['recommended_quest_goal']} quests"
+  d=admin_status(None); cfg=auto_settings(); msg=f"âš”ï¸ SAO-CB\nAuto: {'ON' if cfg.get('enabled')=='1' else 'OFF'}\nActivos 7d: {d['active_players_7d']}\nAincrad: Piso {d['aincrad_floor']}\nMeta sugerida: {d['recommended_quest_goal']} quests"
   await tg('sendMessage',{'chat_id':chat_id,'text':msg})
  elif text in ('/saocb auto on','/saocb auto off'):
-  state=text.rsplit(' ',1)[1]; set_auto_setting('enabled','1' if state=='on' else '0'); await tg('sendMessage',{'chat_id':chat_id,'text':f"🤖 Auto Director: {state.upper()}"})
+  state=text.rsplit(' ',1)[1]; set_auto_setting('enabled','1' if state=='on' else '0'); await tg('sendMessage',{'chat_id':chat_id,'text':f"ðŸ¤– Auto Director: {state.upper()}"})
  elif text.startswith('/anuncio '):
-  msg=text.split(' ',1)[1].strip(); a=create_announcement(msg,None,72,f'telegram:{tid}','manual_tg',f'{tid}-{int(time.time())}'); await tg('sendMessage',{'chat_id':chat_id,'text':f"📢 Anuncio publicado. #{a['id']}"})
+  msg=text.split(' ',1)[1].strip(); a=create_announcement(msg,None,72,f'telegram:{tid}','manual_tg',f'{tid}-{int(time.time())}'); await tg('sendMessage',{'chat_id':chat_id,'text':f"ðŸ“¢ Anuncio publicado. #{a['id']}"})
  elif text.startswith('/actualizacion '):
   raw=text.split(' ',1)[1].strip(); parts=raw.split('|',2)
-  if len(parts)<2: await tg('sendMessage',{'chat_id':chat_id,'text':'Uso: /actualizacion VERSION | TÍTULO | NOTAS'})
+  if len(parts)<2: await tg('sendMessage',{'chat_id':chat_id,'text':'Uso: /actualizacion VERSION | TÃTULO | NOTAS'})
   else:
    version,title=parts[0].strip(),parts[1].strip(); notes=parts[2].strip() if len(parts)>2 else ''; rid=f'rel-{version}-{int(time.time())}'
    now=int(time.time())
    with db() as c:c.execute('INSERT INTO releases(id,version,title,notes,status,publish_at,created_at,created_by) VALUES(?,?,?,?,?,?,?,?)',(rid,version,title,notes,'scheduled',now,now,f'telegram:{tid}'))
-   release_tick(now); await deliver_telegram_notifications(); await tg('sendMessage',{'chat_id':chat_id,'text':f'✅ Actualización {version} publicada y anunciada.'})
- else: await tg('sendMessage',{'chat_id':chat_id,'text':'SAO-CB Admin: /saocb · /saocb auto on|off · /anuncio TEXTO · /actualizacion VERSION | TÍTULO | NOTAS'})
+   release_tick(now); await deliver_telegram_notifications(); await tg('sendMessage',{'chat_id':chat_id,'text':f'âœ… ActualizaciÃ³n {version} publicada y anunciada.'})
+ else: await tg('sendMessage',{'chat_id':chat_id,'text':'SAO-CB Admin: /saocb Â· /saocb auto on|off Â· /anuncio TEXTO Â· /actualizacion VERSION | TÃTULO | NOTAS'})
  return {'ok':True}
 
 # --- SAO-CB Guardian: auto-maintenance, safe self-repair and update orchestration ---
@@ -1571,7 +1597,7 @@ def guardian_check_and_repair():
  except Exception as e:
   checks['database']='error'; checks['error']=str(e)[:300]
  critical=checks.get('database')!='ok'
- if critical and cfg.get('auto_maintenance_enabled','1')=='1': set_maintenance(True,'Guardian detectó un fallo crítico','auto')
+ if critical and cfg.get('auto_maintenance_enabled','1')=='1': set_maintenance(True,'Guardian detectÃ³ un fallo crÃ­tico','auto')
  status='critical' if critical else ('repaired' if repairs else 'healthy')
  with db() as c:c.execute('INSERT INTO guardian_runs(status,checks_json,repairs_json,created_at) VALUES(?,?,?,?)',(status,json.dumps(checks,ensure_ascii=False),json.dumps(repairs,ensure_ascii=False),now))
  return {'status':status,'checks':checks,'repairs':repairs,'maintenance':maintenance_status()}
@@ -1599,7 +1625,7 @@ class UpdatePlan(BaseModel):
 def update_plan(body:UpdatePlan,x_saocb_secret:str|None=Header(default=None)):
  auth(x_saocb_secret); now=int(time.time())
  with db() as c:c.execute("UPDATE update_state SET target_version=?,state='ready',required=?,notes=?,updated_at=? WHERE id=1",(body.version,1 if body.required else 0,body.notes,now))
- create_announcement(f'Actualización {body.version} preparada. {body.notes}'.strip(),now,72,'guardian','update_ready',body.version)
+ create_announcement(f'ActualizaciÃ³n {body.version} preparada. {body.notes}'.strip(),now,72,'guardian','update_ready',body.version)
  return {'ok':True,'version':body.version,'state':'ready','required':body.required}
 
 @app.post('/admin/update/commit')
@@ -1610,7 +1636,7 @@ def update_commit(x_saocb_secret:str|None=Header(default=None)):
   r=c.execute('SELECT target_version,notes FROM update_state WHERE id=1').fetchone()
   if not r or not r['target_version']: raise HTTPException(409,'no prepared update')
   target=r['target_version']; c.execute("UPDATE update_state SET current_version=?,target_version='',state='idle',required=0,updated_at=? WHERE id=1",(target,now))
- set_maintenance(False,'','auto-update'); create_announcement(f'SAO-CB actualizado a {target}.',now,72,'guardian','update_done',target); history('update_committed',target,'Actualización marcada como aplicada',{})
+ set_maintenance(False,'','auto-update'); create_announcement(f'SAO-CB actualizado a {target}.',now,72,'guardian','update_done',target); history('update_committed',target,'ActualizaciÃ³n marcada como aplicada',{})
  return {'ok':True,'current_version':target}
 
 @app.get('/admin/guardian/status')
