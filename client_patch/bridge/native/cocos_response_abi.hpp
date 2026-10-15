@@ -22,7 +22,10 @@ namespace cocos_abi {
 // Verified against libcocos2dcpp.so SHA-256
 // 1f8407eb34b857828f028b293aaf49c8597ea2a5a638982bac96648b2cc49170.
 constexpr std::size_t kHttpRequestResponseCallbackOffset = 0x70;
-constexpr std::size_t kHttpRequestUrlOffset = 0x10;
+constexpr std::size_t kHttpRequestTypeOffset = 0x10;
+constexpr std::size_t kHttpRequestUrlOffset = 0x18;
+constexpr std::size_t kHttpRequestDataBeginOffset = 0x30;
+constexpr std::size_t kHttpRequestDataEndOffset = 0x38;
 constexpr std::size_t kHttpClientSchedulerOffset = 0x90;
 constexpr std::size_t kHttpResponseObjectSize = 0x88;
 constexpr std::size_t kHttpResponseSucceededOffset = 0x18;
@@ -57,7 +60,6 @@ using HttpResponseCallback =
 using CocosThreadTask = std::function<void()>;
 
 // ARM64 evidence in the pinned library:
-// - the shared request builder stores the HttpRequest URL std::string at +0x10;
 // - fetchUserAll builds the HttpRequest response std::function at request +0x70
 //   and calls the original request callback wrapper at 0xe4a414.
 // - that wrapper calls GameApiHelper::onHttpRequestCallBack at 0xe46df0.
