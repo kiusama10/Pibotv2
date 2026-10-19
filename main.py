@@ -64,6 +64,7 @@ from src.utils.instance_guard import acquire_single_poller_lock
 from src.utils.seasonal_bot import SeasonalExtBot
 from src.utils.root_owner import ensure_root_identity
 from handlers.casino_pvp import tortugas, tortuga, ranking_tortugas, blackjack, cancelar_blackjack, casino_pvp_callback, ensure_casino_pvp_tables, turtle_season_maintenance_job, process_turtle_input
+from handlers.triple_dice import triple, cancelar_triple, triple_callback, ensure_triple_dice_tables
 from handlers.auctions import subasta, puja, versubasta, cancelarsubasta, auction_maintenance_job
 from handlers.assassin_game import asesino, reiniciarasesino, cancelarasesino, terminarasesino, assassin_callback, assassin_cycle_job, assassin_track_member, ensure_assassin_tables
 from handlers.help_center import pipesos, instrucciones, canales, help_callback, channel_callback
@@ -79,8 +80,9 @@ from handlers.pipeso_extras import cajas, pociones, nivel, tipografias, gifvicto
 from handlers.welcoming import nuevo_usuario, mensaje_de_presentaciones
 from handlers.emoji_party_games import dardos, boliche, aliados, cancelar_emoji_juego, emoji_game_callback
 from handlers.dante import ensure_dante_tables, dante_observer, dante_command, dante_callback
-from handlers.everyone import todos
+from handlers.everyone import todos, member_state_observer
 from handlers.community_activities import ensure_community_tables, daily_question_job, daily_answer_handler, weekly_awards_job, ranking_callback, ranking_command, pregunta_dia_info
+from handlers.season_pass import ensure_season_tables, nivel_temporada, pase_command, ranking_niveles, aprobar_aporte, gifperfil_command, profile_gif_input
 from handlers.palabra_relampago import ensure_palabra_tables, palabra_hourly_job, palabra_guess, palabra_prueba, palabra_on, palabra_off
 from handlers.batalla_naval import batalla_naval, cancelar_naval, naval_callback, ranking_naval, ensure_naval_tables
 from handlers.gato import gato, cancelar_gato, ranking_gato, gato_callback, ensure_gato_tables
@@ -489,6 +491,7 @@ def main() -> None:
     ensure_quiz_tables()
     ensure_fact_tables()
     ensure_casino_pvp_tables()
+    ensure_triple_dice_tables()
     ensure_drawing_tables()
     ensure_presentation_tables()
     try:
@@ -500,6 +503,7 @@ def main() -> None:
     ensure_extras_tables()
     ensure_assassin_tables()
     ensure_community_tables()
+    ensure_season_tables()
     ensure_palabra_tables()
     ensure_naval_tables()
     ensure_gato_tables()
@@ -540,6 +544,10 @@ def main() -> None:
         # Cierre/pago semanal idempotente: lunes 10:50, fuera de la ventana protegida de la Pregunta del Día.
         app.job_queue.run_daily(weekly_awards_job, time=dt_time(hour=10, minute=50, tzinfo=_ZoneInfo('America/Mexico_City')), days=(1,), name='ranking_quiz_weekly')
         app.job_queue.run_daily(challenge_weekly_awards_job, time=dt_time(hour=0, minute=5, tzinfo=_ZoneInfo('America/Mexico_City')), days=(1,), name='ranking_retos_weekly')
+
+    # /todos membership cache: only reacts to Telegram join/leave service messages.
+    # No polling loop and no per-member API scan.
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, member_state_observer), group=-6)
 
     # DANTE observes independently of presentation controls.
     app.add_handler(MessageHandler(filters.ALL, dante_observer), group=-5)
@@ -626,6 +634,8 @@ def main() -> None:
     app.add_handler(CommandHandler("rankingtortugas", ranking_tortugas), group=2)
     app.add_handler(CommandHandler("blackjack", blackjack), group=2)
     app.add_handler(CommandHandler("cancelarblackjack", cancelar_blackjack), group=2)
+    app.add_handler(CommandHandler("triple", triple), group=2)
+    app.add_handler(CommandHandler("cancelartriple", cancelar_triple), group=2)
     app.add_handler(CommandHandler("subasta", subasta), group=2)
     app.add_handler(CommandHandler("puja", puja), group=2)
     app.add_handler(CommandHandler("versubasta", versubasta), group=2)
@@ -642,6 +652,11 @@ def main() -> None:
     app.add_handler(CommandHandler("wiki", wiki), group=2)
     app.add_handler(CommandHandler("buscar", buscar), group=2)
     app.add_handler(CommandHandler("cajas", cajas), group=2)
+    app.add_handler(CommandHandler("nivel", nivel_temporada), group=2)
+    app.add_handler(CommandHandler("pase", pase_command), group=2)
+    app.add_handler(CommandHandler("rankingnivel", ranking_niveles), group=2)
+    app.add_handler(CommandHandler("aporte", aprobar_aporte), group=2)
+    app.add_handler(CommandHandler("gifperfil", gifperfil_command), group=2)
     app.add_handler(CommandHandler("tipografias", tipografias), group=2)
     app.add_handler(CommandHandler("gifvictoria", gifvictoria), group=2)
     app.add_handler(CommandHandler("quitargif", quitargif), group=2)
@@ -672,6 +687,7 @@ def main() -> None:
     # Guess detector: only reacts when an active drawing round exists in this exact chat/topic.
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, profile_text_input), group=2)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.PHOTO, profile_photo_input), group=2)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.ANIMATION, profile_gif_input), group=2)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, drawing_guess), group=3)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, daily_answer_handler), group=4)
     # Grupo separado para que no compita con Dibuja ni Pregunta del Día.
@@ -725,7 +741,7 @@ def main() -> None:
     )
 
     app.add_handler(
-        CallbackQueryHandler(profile_editor_callback, pattern="^profile_(editor$|role$|experience$|privacy$|preview$|photo$|text_|set_|help_|public$|private$)"),
+        CallbackQueryHandler(profile_editor_callback, pattern="^profile_(editor$|role$|experience$|privacy$|preview$|photo$|gif$|text_|set_|help_|public$|private$)"),
         group=5
     )
     app.add_handler(
@@ -740,10 +756,11 @@ def main() -> None:
         group=5
     )
     app.add_handler(CallbackQueryHandler(quiz_callback, pattern="^bq:"), group=5)
-    app.add_handler(CallbackQueryHandler(extras_callback, pattern="^ex:(box|font|fontpage|luck):|^ex:fontnoop$"), group=5)
+    app.add_handler(CallbackQueryHandler(extras_callback, pattern="^ex:(box|font|fontpage|luck):|^ex:jackpot$|^ex:fontnoop$"), group=5)
     app.add_handler(CallbackQueryHandler(victory_toggle_callback, pattern="^vg:toggle:"), group=5)
     app.add_handler(CallbackQueryHandler(victory_callback, pattern="^vg:(gif|text|games|preview|remove)$"), group=5)
     app.add_handler(CallbackQueryHandler(casino_pvp_callback, pattern="^(turtle|bj):"), group=5)
+    app.add_handler(CallbackQueryHandler(triple_callback, pattern="^tri:"), group=5)
     app.add_handler(CallbackQueryHandler(assassin_callback, pattern="^as:"), group=5)
     app.add_handler(CallbackQueryHandler(naval_callback, pattern="^nv:"), group=5)
     app.add_handler(CallbackQueryHandler(gato_callback, pattern="^gt:"), group=5)
