@@ -402,6 +402,12 @@ async def detectar_dado(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # ===== NO ACTIVE COMBAT - CHECK TRIPLE DICE FIRST =====
+    # Solo consulta PostgreSQL cuando alguien efectivamente manda un dado; no hay jobs ni loops.
+    from handlers.triple_dice import process_triple_dice
+    if await process_triple_dice(update, context):
+        return
+
     # ===== NO ACTIVE COMBAT - CHECK FOR BETTING =====
 
     thread_id = msg.message_thread_id

@@ -13,6 +13,7 @@ from src.utils.seasonal import current_season
 
 MX = ZoneInfo("America/Mexico_City")
 RARE_EMOJI = {"comun":"⚪","raro":"🔵","epico":"🟣","legendario":"🟡","mitico":"🔴"}
+COSMETIC_RESALE_PRICE = 1000
 
 # code: (name, type, rarity, price, season-or-None)
 COSMETICS = {
@@ -138,6 +139,31 @@ def _equip(uid:int,cid:int,ctype:str):
     finally: _put_connection(conn)
 
 
+def _sell(uid:int,cid:int,ctype:str):
+    """Sell one owned profile cosmetic back to PiBot for a flat 1,000 PiPesos."""
+    col="marco_equipado_id" if ctype=="marco" else "insignia_equipada_id"
+    conn=_get_connection()
+    try:
+        cur=conn.cursor()
+        cur.execute("SELECT nombre FROM profile_cosmetics_tb WHERE cosmetic_id=%s AND owner_id=%s AND cosmetic_type=%s FOR UPDATE",(cid,uid,ctype))
+        row=cur.fetchone()
+        if not row:
+            conn.rollback(); return None
+        # If it is equipped, remove it cleanly before deleting the collectible.
+        cur.execute(f"UPDATE perfiles_tb SET {col}=NULL WHERE id_user=%s AND {col}=%s",(uid,cid))
+        cur.execute("DELETE FROM profile_cosmetics_tb WHERE cosmetic_id=%s AND owner_id=%s AND cosmetic_type=%s",(cid,uid,ctype))
+        if cur.rowcount != 1:
+            conn.rollback(); return None
+        cur.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s RETURNING saldo",(COSMETIC_RESALE_PRICE,uid))
+        bal=cur.fetchone()
+        conn.commit()
+        return row[0], int(bal[0]) if bal else None
+    except Exception as exc:
+        conn.rollback(); print("[COSMETICS] sell",exc); return None
+    finally:
+        _put_connection(conn)
+
+
 def _home_markup():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🛍️ Tienda",callback_data="cos_shop"), InlineKeyboardButton("🎒 Mi colección",callback_data="cos_collection")],
@@ -148,8 +174,9 @@ def _home_markup():
 
 def _home_text():
     season=current_season(); extra="\n🎉 Hay piezas especiales de temporada disponibles." if season!="normal" else ""
-    return ("✨ VESTIDOR DE PIBOT\n\nAquí puedes comprar y equipar tu perfil sin escribir IDs ni códigos."
-            f"\n\n🔄 La colección cambia en {_countdown()}.{extra}")
+    return ("✨ VESTIDOR DE PIBOT\n\nAquí puedes comprar, equipar y vender marcos e insignias sin escribir IDs ni códigos."
+            f"\n\n💰 Cualquier marco o insignia de tu colección se puede vender a PiBot por {COSMETIC_RESALE_PRICE:,} PiPesos."
+            f"\n🔄 La colección cambia en {_countdown()}.{extra}")
 
 
 async def send_cosmetics_home(update:Update, context:ContextTypes.DEFAULT_TYPE, edit=False):
@@ -185,8 +212,8 @@ async def cosmetics_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; await q.answer(); uid=q.from_user.id
     if q.message.chat.type != "private": return await q.answer("El vestidor solo funciona por privado.",show_alert=True)
     data=q.data
-    if data.startswith("cos_buy_") and not _claim_cos_action(uid,q.message.message_id,data):
-        return await q.answer("⏳ Esa compra ya fue procesada. Abre la tienda de nuevo.",show_alert=True)
+    if (data.startswith("cos_buy_") or data.startswith("cos_sellconfirm_")) and not _claim_cos_action(uid,q.message.message_id,data):
+        return await q.answer("⏳ Esa acción ya fue procesada. Abre tu colección de nuevo.",show_alert=True)
     if data=="cos_home": return await send_cosmetics_home(update,context,edit=True)
     if data=="cos_shop":
         rows=[]
@@ -198,8 +225,13 @@ async def cosmetics_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         code=data[9:]; item=_available_catalog().get(code)
         if not item: return await q.edit_message_text("⏳ Esa pieza ya no está en la rotación actual.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍️ Volver",callback_data="cos_shop")]]))
         name,ctype,rarity,price,season=item; icon="🖼️ Marco" if ctype=="marco" else "🎖️ Insignia"; seasonal="\n🎃/🎄 Edición de temporada" if season else ""
+        try:
+            from handlers.profile_social import CUSTOM_FRAME_BORDERS, CUSTOM_BADGE_DISPLAY
+            preview = CUSTOM_FRAME_BORDERS.get(code, name) if ctype=="marco" else CUSTOM_BADGE_DISPLAY.get(code, name)
+        except Exception:
+            preview = name
         kb=InlineKeyboardMarkup([[InlineKeyboardButton(f"💰 Comprar por {price:,} PP",callback_data=f"cos_buy_{code}")],[InlineKeyboardButton("⬅️ Tienda",callback_data="cos_shop")]])
-        return await q.edit_message_text(f"{icon}: {name}\n{RARE_EMOJI.get(rarity,'')} {rarity.title()}\n💰 {price:,} PiPesos{seasonal}",reply_markup=kb)
+        return await q.edit_message_text(f"{icon}: {name}\n{RARE_EMOJI.get(rarity,'')} {rarity.title()}\n💰 {price:,} PiPesos{seasonal}\n\n👁️ Vista en perfil:\n{preview}",reply_markup=kb)
     if data.startswith("cos_buy_"):
         code=data[8:]; status,res=_buy(uid,code)
         if status=="ok":
@@ -214,9 +246,56 @@ async def cosmetics_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         rows=[]
         for cid,name,kind,rarity,price,code in owned[:30]:
             typ="m" if kind=="marco" else "i"; icon="🖼️" if kind=="marco" else "🎖️"
-            rows.append([InlineKeyboardButton(f"{icon} {RARE_EMOJI.get(rarity,'')} {name}",callback_data=f"cos_eq_{typ}_{cid}")])
+            rows.append([InlineKeyboardButton(f"{icon} {RARE_EMOJI.get(rarity,'')} {name}",callback_data=f"cos_item_{typ}_{cid}")])
         rows.append([InlineKeyboardButton("⬅️ Vestidor",callback_data="cos_home")])
-        return await q.edit_message_text("🎒 TU COLECCIÓN\n\nToca una pieza para equiparla. No necesitas copiar ningún ID.",reply_markup=InlineKeyboardMarkup(rows))
+        return await q.edit_message_text(f"🎒 TU COLECCIÓN\n\nToca una pieza para equiparla o venderla por {COSMETIC_RESALE_PRICE:,} PiPesos.",reply_markup=InlineKeyboardMarkup(rows))
+    if data.startswith("cos_item_"):
+        try:
+            _,_,typ,cid=data.split("_",3); cid=int(cid)
+        except Exception:
+            return await q.answer("Selección inválida.",show_alert=True)
+        ctype="marco" if typ=="m" else "insignia"
+        row=next((x for x in _owned(uid,ctype) if int(x[0])==cid),None)
+        if not row:
+            return await q.answer("Esa pieza ya no está en tu colección.",show_alert=True)
+        _,name,kind,rarity,price,code=row
+        try:
+            from handlers.profile_social import CUSTOM_FRAME_BORDERS, CUSTOM_BADGE_DISPLAY
+            preview = CUSTOM_FRAME_BORDERS.get(code, name) if ctype=="marco" else CUSTOM_BADGE_DISPLAY.get(code, name)
+        except Exception:
+            preview = name
+        kb=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✨ Activar",callback_data=f"cos_eq_{typ}_{cid}")],
+            [InlineKeyboardButton(f"💰 Vender · {COSMETIC_RESALE_PRICE:,} PP",callback_data=f"cos_sell_{typ}_{cid}")],
+            [InlineKeyboardButton("⬅️ Mi colección",callback_data=f"cos_owned_{ctype}")],
+        ])
+        return await q.edit_message_text(f"{'🖼️' if ctype=='marco' else '🎖️'} {name}\n{RARE_EMOJI.get(rarity,'')} {rarity.title()}\n\n👁️ Así aparece en tu perfil:\n{preview}\n\n💰 Reventa a PiBot: {COSMETIC_RESALE_PRICE:,} PiPesos",reply_markup=kb)
+    if data.startswith("cos_sell_"):
+        try:
+            _,_,typ,cid=data.split("_",3); cid=int(cid)
+        except Exception:
+            return await q.answer("Selección inválida.",show_alert=True)
+        ctype="marco" if typ=="m" else "insignia"
+        row=next((x for x in _owned(uid,ctype) if int(x[0])==cid),None)
+        if not row:
+            return await q.answer("Esa pieza ya no está en tu colección.",show_alert=True)
+        name=row[1]
+        kb=InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"✅ Sí, vender por {COSMETIC_RESALE_PRICE:,}",callback_data=f"cos_sellconfirm_{typ}_{cid}")],
+            [InlineKeyboardButton("❌ No, conservar",callback_data=f"cos_item_{typ}_{cid}")],
+        ])
+        return await q.edit_message_text(f"💰 ¿VENDER {name.upper()}?\n\nRecibirás {COSMETIC_RESALE_PRICE:,} PiPesos. Si está activo, PiBot lo quitará de tu perfil automáticamente.",reply_markup=kb)
+    if data.startswith("cos_sellconfirm_"):
+        try:
+            _,_,typ,cid=data.split("_",3); cid=int(cid)
+        except Exception:
+            return await q.answer("Selección inválida.",show_alert=True)
+        ctype="marco" if typ=="m" else "insignia"
+        sold=_sell(uid,cid,ctype)
+        if not sold:
+            return await q.answer("Esa pieza ya no está disponible para vender.",show_alert=True)
+        name,balance=sold
+        return await q.edit_message_text(f"✅ Vendiste {name} por {COSMETIC_RESALE_PRICE:,} PiPesos.\n💰 Saldo: {balance:,} PiPesos",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎒 Volver a mi colección",callback_data="cos_collection"),InlineKeyboardButton("🏠 Vestidor",callback_data="cos_home")]]))
     if data.startswith("cos_eq_"):
         try: _,_,typ,cid=data.split("_",3); cid=int(cid)
         except Exception: return await q.answer("Selección inválida.",show_alert=True)

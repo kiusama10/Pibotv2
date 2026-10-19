@@ -1,7 +1,8 @@
 """Admin-only /todos.
 
-Uses PiBot's group-scoped member registry, verifies membership at send time, and
-mentions every still-present known member without printing a wall of usernames.
+Uses PiBot's group-scoped member registry and mentions known members without
+checking every account against Telegram on each use. Join/leave service events
+keep the local membership state updated, so /todos stays fast even in big groups.
 Telegram does not expose an arbitrary complete member list to bots.
 """
 import asyncio
@@ -84,6 +85,30 @@ async def _membership(bot, chat_id, uid, fallback_username=None, fallback_name=N
             return None, fallback_username, fallback_name
 
 
+async def member_state_observer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Keep /todos membership state current from Telegram join/leave service messages.
+
+    This runs only when somebody joins or leaves; it does not scan the group and
+    creates no timer/background loop.
+    """
+    chat = update.effective_chat
+    msg = update.effective_message
+    if not chat or chat.type == 'private' or not msg:
+        return
+
+    for joined in (msg.new_chat_members or []):
+        if joined and not joined.is_bot:
+            _save_membership(
+                chat.id, joined.id, joined.username, joined.full_name or None, True
+            )
+
+    left = msg.left_chat_member
+    if left and not left.is_bot:
+        _save_membership(
+            chat.id, left.id, left.username, left.full_name or None, False
+        )
+
+
 async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
@@ -109,31 +134,14 @@ async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("Aún no tengo miembros conocidos de este grupo para mencionar.")
         return
 
-    # Verify the locally-known registry against Telegram. A bounded semaphore keeps
-    # large groups from firing hundreds of API requests simultaneously.
-    sem = asyncio.Semaphore(CHECK_CONCURRENCY)
-    async def check(uid, data):
-        async with sem:
-            return uid, await _membership(context.bot, chat.id, uid, data[0], data[1])
-
-    checked = await asyncio.gather(*(check(uid, data) for uid, data in known.items()))
-    inside = []
-    outside = 0
-    unverifiable = 0
-    for uid, (state, _username, _name) in checked:
-        if state is True:
-            inside.append(uid)
-        elif state is False:
-            outside += 1
-        else:
-            # Do not mention someone whose current membership could not be verified.
-            unverifiable += 1
+    # FAST PATH: do not call get_chat_member once per person. That was the old
+    # bottleneck and could take minutes/hours in a large group because Telegram
+    # rate-limits those API calls. The registry is maintained from normal activity
+    # plus join/leave service events instead.
+    inside = list(known.keys())
 
     if not inside:
-        await msg.reply_text(
-            f"No encontré miembros registrados que pudiera confirmar dentro del grupo.\n"
-            f"🚪 Ya no están: {outside}\n⚠️ No pude verificar: {unverifiable}"
-        )
+        await msg.reply_text("Aún no tengo miembros conocidos de este grupo para mencionar.")
         return
 
     extra = html.escape(" ".join(context.args or []).strip())
@@ -154,8 +162,5 @@ async def todos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(chunks)>1: await asyncio.sleep(0.15)
 
     summary=(f"✅ Notificación terminada\n"
-             f"🔔 Notificados: {mentioned}\n"
-             f"🚪 Ya no están en el grupo: {outside}")
-    if unverifiable:
-        summary += f"\n⚠️ No pude verificar: {unverifiable}"
+             f"🔔 Notificados: {mentioned}")
     await msg.reply_text(summary)

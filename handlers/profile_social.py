@@ -52,6 +52,22 @@ CUSTOM_FRAME_BORDERS = {
     "marco_titan": "🪽🧱━━━━ MURALLA ━━━━🧱🪽",
 }
 
+CUSTOM_BADGE_DISPLAY = {
+    "insignia_brattamer": "😈🎀 Brat Tamer",
+    "insignia_pet": "🐾👑 Pet de Élite",
+    "insignia_dom": "👑🩸 Dominio Carmesí",
+    "insignia_kitsune": "🦊👑 Kitsune Imperial",
+    "insignia_otaku": "🎌✨ Otaku Supremo",
+    "insignia_dragon": "🐉❤️‍🔥 Corazón de Dragón",
+    "insignia_infernal": "🔥⛧ Marca Infernal",
+    "insignia_celestial": "🪽✨ Halo Caído",
+    "insignia_realeza": "👑⚜️ Sello Imperial",
+    "insignia_calabaza": "🎃✨ Calabaza Eterna",
+    "insignia_catrina": "💀🌼 Catrina Nocturna",
+    "insignia_estrella": "❄️⭐ Estrella de Invierno",
+    "insignia_corazon": "⛓️❤️ Corazón Encadenado",
+}
+
 
 
 
@@ -95,7 +111,9 @@ def _editor_markup():
         [InlineKeyboardButton("🪪 Sobre mí", callback_data="profile_text_bio"), InlineKeyboardButton("💬 Mi frase", callback_data="profile_text_frase")],
         [InlineKeyboardButton("🛡️ Límites", callback_data="profile_text_limites"), InlineKeyboardButton("🔐 Privacidad", callback_data="profile_privacy")],
         [InlineKeyboardButton("🏷️ Títulos", callback_data="profile_help_titles"), InlineKeyboardButton("🔤 Tipografía", callback_data="profile_help_fonts")],
-        [InlineKeyboardButton("📸 Foto de mi tarjeta", callback_data="profile_photo"), InlineKeyboardButton("👁️ Ver mi perfil", callback_data="profile_preview")],
+        [InlineKeyboardButton("🖼️ Marcos e insignias", callback_data="profile_help_cosmetics")],
+        [InlineKeyboardButton("📸 Foto de mi tarjeta", callback_data="profile_photo"), InlineKeyboardButton("🎞️ GIF de perfil", callback_data="profile_gif")],
+        [InlineKeyboardButton("👁️ Ver mi perfil", callback_data="profile_preview")],
     ])
 
 
@@ -114,7 +132,8 @@ async def _editor_screen(q):
         "🎭 Rol · ⭐ experiencia · 💜 gustos\n"
         "🔗 vínculo · 🪪 sobre mí · 💬 frase\n"
         "🛡️ límites · 🔐 privacidad\n"
-        "🏷️ títulos · 🔤 tipografía",
+        "🏷️ títulos · 🔤 tipografía\n"
+        "🖼️ marcos · 🎖️ insignias",
         reply_markup=_editor_markup(),
     )
 
@@ -287,6 +306,151 @@ def _ratings(uid:int):
     finally:_put_connection(conn)
     return out
 
+
+def _ranking_is_consecutive(kind: str, previous, current) -> bool:
+    """True si dos ediciones de un ranking son consecutivas."""
+    try:
+        if kind == "cycle":
+            return int(current) == int(previous) + 1
+        if kind == "week":
+            from datetime import date
+            a = date.fromisoformat(str(previous)[:10])
+            b = date.fromisoformat(str(current)[:10])
+            return (b - a).days == 7
+        if kind == "month":
+            ay, am = map(int, str(previous).split("-")[:2])
+            by, bm = map(int, str(current).split("-")[:2])
+            return (by * 12 + bm) == (ay * 12 + am) + 1
+    except Exception:
+        return False
+    return False
+
+
+def _ranking_history_summary(rows, kind: str) -> str | None:
+    """Resume podios históricos ya guardados: oros/platas/bronces y mejor racha Top 3."""
+    if not rows:
+        return None
+    def _order_key(item):
+        key = item[0]
+        if kind == "cycle":
+            try:
+                return int(key)
+            except Exception:
+                return 0
+        return str(key)
+    ordered = sorted(((r[0], int(r[1])) for r in rows), key=_order_key)
+    counts = {1: 0, 2: 0, 3: 0}
+    best_streak = streak = 0
+    previous = None
+    for key, place in ordered:
+        if place in counts:
+            counts[place] += 1
+        if previous is not None and _ranking_is_consecutive(kind, previous, key):
+            streak += 1
+        else:
+            streak = 1
+        best_streak = max(best_streak, streak)
+        previous = key
+    return f"campeón x{counts[1]} · 🥈x{counts[2]} · 🥉x{counts[3]} · 🔥 racha Top 3: {best_streak}"
+
+
+def _ranking_profile_info(uid: int):
+    """Información de TODOS los rankings PiBot sin jobs extra.
+
+    Lee las tablas históricas que ya existen, por lo que también recupera
+    ediciones pasadas si quedaron registradas. Los rankings sin temporadas
+    (PiPesos, Naval, Gato y Regalos) muestran su posición actual.
+    """
+    history_lines = []
+    current_lines = []
+    conn = _get_connection()
+    try:
+        c = conn.cursor()
+
+        # Rankings con cierres y podio histórico.
+        history_specs = [
+            ("⭐ Pase de niveles", "month",
+             "SELECT season_id,place FROM season_ranking_awards_tb WHERE user_id=%s ORDER BY season_id", (uid,)),
+            ("🧠 Quiz/Conocimiento", "week",
+             "SELECT week_start,place FROM community_weekly_awards_tb WHERE user_id=%s ORDER BY week_start", (uid,)),
+            ("🏆 Participación", "cycle",
+             "SELECT cycle_id,position FROM participation_awards_tb WHERE user_id=%s ORDER BY cycle_id", (uid,)),
+            ("🎯 Retos", "week",
+             """SELECT week_start,
+                       CASE WHEN first_id=%s THEN 1 WHEN second_id=%s THEN 2 WHEN third_id=%s THEN 3 END AS place
+                  FROM challenge_weekly_payouts_tb
+                 WHERE first_id=%s OR second_id=%s OR third_id=%s
+                 ORDER BY week_start""", (uid, uid, uid, uid, uid, uid)),
+            ("🐢 Tortugas", "month",
+             "SELECT season,place FROM turtle_season_results_tb WHERE user_id=%s ORDER BY season", (uid,)),
+        ]
+        for label, kind, query, params in history_specs:
+            try:
+                c.execute(query, params)
+                summary = _ranking_history_summary(c.fetchall(), kind)
+                if summary:
+                    history_lines.append(f"{label}: {summary}")
+            except Exception:
+                # Todo es lectura; recuperar la transacción permite seguir con el resto.
+                conn.rollback()
+                c = conn.cursor()
+
+        # Posiciones actuales de los rankings que existen en PiBot.
+        current_specs = [
+            ("🏆 Participación", """SELECT pos,puntos FROM (
+                    SELECT s.user_id,s.puntos,ROW_NUMBER() OVER(ORDER BY s.puntos DESC,s.user_id ASC) pos
+                    FROM participation_scores_tb s
+                    JOIN participation_cycles_tb cy ON cy.cycle_id=s.cycle_id
+                    WHERE cy.estado='activo'
+                ) r WHERE user_id=%s""", (uid,), lambda r: f"#{r[0]} · {r[1]} pts"),
+            ("🧠 Quiz", """SELECT pos,total FROM (
+                    SELECT user_id,(quiz_points+daily_points) total,
+                           ROW_NUMBER() OVER(ORDER BY (quiz_points+daily_points) DESC,quiz_points DESC,updated_at ASC,user_id ASC) pos
+                    FROM community_weekly_points_tb
+                    WHERE week_start=date_trunc('week',NOW() AT TIME ZONE 'America/Mexico_City')::date
+                ) r WHERE user_id=%s""", (uid,), lambda r: f"#{r[0]} · {r[1]} pts"),
+            ("🎯 Retos", """SELECT pos,points FROM (
+                    SELECT user_id,points,ROW_NUMBER() OVER(ORDER BY points DESC,updated_at ASC,user_id ASC) pos
+                    FROM challenge_weekly_points_tb
+                    WHERE week_start=date_trunc('week',NOW() AT TIME ZONE 'America/Mexico_City')::date
+                ) r WHERE user_id=%s""", (uid,), lambda r: f"#{r[0]} · {r[1]} pts"),
+            ("🐢 Tortugas", """SELECT pos,wins,races FROM (
+                    SELECT user_id,wins,races,ROW_NUMBER() OVER(ORDER BY wins DESC,races ASC,user_id ASC) pos
+                    FROM turtle_monthly_stats_tb
+                    WHERE season=to_char(NOW() AT TIME ZONE 'America/Mexico_City','YYYY-MM') AND races>0
+                ) r WHERE user_id=%s""", (uid,), lambda r: f"#{r[0]} · {r[1]}V/{r[2]} carreras"),
+            ("💰 PiPesos", """SELECT pos,saldo FROM (
+                    SELECT id_user,saldo,ROW_NUMBER() OVER(ORDER BY saldo DESC,id_user ASC) pos FROM usuarios_tb
+                ) r WHERE id_user=%s""", (uid,), lambda r: f"#{r[0]} · {int(r[1]):,} PP"),
+            ("🚢 Naval", """SELECT pos,wins,losses FROM (
+                    SELECT user_id,wins,losses,ROW_NUMBER() OVER(ORDER BY wins DESC,ships_sunk DESC,hits DESC,user_id ASC) pos
+                    FROM naval_stats_tb
+                ) r WHERE user_id=%s""", (uid,), lambda r: f"#{r[0]} · {r[1]}V/{r[2]}D"),
+            ("🐱 Gato", """SELECT pos,wins,losses,draws FROM (
+                    SELECT user_id,wins,losses,draws,ROW_NUMBER() OVER(ORDER BY wins DESC,games DESC,user_id ASC) pos
+                    FROM gato_stats_tb
+                ) r WHERE user_id=%s""", (uid,), lambda r: f"#{r[0]} · {r[1]}V/{r[2]}D/{r[3]}E"),
+            ("🎁 Regalos", """SELECT pos,total FROM (
+                    SELECT propietario_id,COUNT(*) total,
+                           ROW_NUMBER() OVER(ORDER BY COUNT(*) DESC,propietario_id ASC) pos
+                    FROM social_assets_tb WHERE asset_type='regalo'
+                    GROUP BY propietario_id
+                ) r WHERE propietario_id=%s""", (uid,), lambda r: f"#{r[0]} · {r[1]} recibidos"),
+        ]
+        for label, query, params, formatter in current_specs:
+            try:
+                c.execute(query, params)
+                row = c.fetchone()
+                if row:
+                    current_lines.append(f"{label}: {formatter(row)}")
+            except Exception:
+                conn.rollback()
+                c = conn.cursor()
+    finally:
+        _put_connection(conn)
+    return current_lines, history_lines
+
+
 def _render(uid: int, viewer: int):
     r = _profile(uid)
     if not r:
@@ -311,18 +475,28 @@ def _render(uid: int, viewer: int):
     finally: _put_connection(conn)
     title = (tname + (f" #{sn}/{st}" if sn else "")) if tname else "Sin equipar"
     season_icon, seasonal_border = profile_style()
-    border = '━━━━━━━━━━━━━━━━━━'
+    border = CUSTOM_FRAME_BORDERS.get(frame_code, '━━━━━━━━━━━━━━━━━━')
+    badge_display = CUSTOM_BADGE_DISPLAY.get(badge_code, badge_name) if badge_name else 'Sin insignia equipada'
 
     lines = [
         border,
         f"{season_icon} PERFIL DE {nombre}",
         border,
         f"🏷️ {title}",
-        f"🎖️ {badge_name or 'Sin insignia equipada'}",
+        f"🎖️ {badge_display}",
+        f"🖼️ {frame_name or 'Sin marco equipado'}",
         f"💰 {saldo:,} PiPesos",
         f"📚 {counts.get('titulo',0)} títulos · 🎁 cosméticos de cajas",
         f"🎖️ {counts.get('cos_insignia',0)} insignias",
     ]
+    try:
+        from handlers.season_pass import season_status, gif_license_status
+        _sst=season_status(uid); _gst=gif_license_status(uid)
+        lines.append(f"⭐ Temporada: nivel {_sst['level']} · ranking #{_sst['rank']}")
+        if _gst['active']:
+            lines.append(f"🎞️ GIF de perfil: {_gst['days']} día(s)")
+    except Exception:
+        pass
     conn=_get_connection(); active_badges=[]
     try:
         c=conn.cursor(); c.execute("SELECT badge FROM community_badges_tb WHERE user_id=%s AND (expires_at IS NULL OR expires_at>NOW()) ORDER BY earned_at DESC LIMIT 3",(uid,)); active_badges=[r[0] for r in c.fetchall()]
@@ -330,6 +504,14 @@ def _render(uid: int, viewer: int):
     finally:_put_connection(conn)
     if active_badges:
         lines += ['', '🏅 INSIGNIAS DE LA SEMANA'] + [f'• {x}' for x in active_badges]
+    try:
+        _rank_now, _rank_history = _ranking_profile_info(uid)
+        if _rank_now:
+            lines += ['', '📍 RANKINGS ACTUALES'] + [f'• {x}' for x in _rank_now]
+        if _rank_history:
+            lines += ['', '🏆 HISTORIAL DE RANKINGS'] + [f'• {x}' for x in _rank_history]
+    except Exception:
+        pass
     ratings=_ratings(uid)
     if ratings:
         lines += ['', '📊 RATINGS']
@@ -364,7 +546,8 @@ async def send_profile_editor(update: Update, context: ContextTypes.DEFAULT_TYPE
         "🎭 Rol · ⭐ experiencia · 💜 gustos\n"
         "🔗 vínculo · 🪪 sobre mí · 💬 frase\n"
         "🛡️ límites · 🔐 privacidad\n"
-        "🏷️ títulos · 🔤 tipografía",
+        "🏷️ títulos · 🔤 tipografía\n"
+        "🖼️ marcos · 🎖️ insignias",
         reply_markup=_editor_markup(),
     )
 
@@ -424,6 +607,19 @@ async def profile_editor_callback(update: Update, context: ContextTypes.DEFAULT_
         context.user_data["profile_waiting_photo"] = True
         return await q.edit_message_text(
             "📸 FOTO DE TU TARJETA\n\nMándame la imagen que quieras usar. Puede ser tu foto de Telegram o cualquier imagen tuya que prefieras para tu perfil.\n\nSi después quieres volver a usar tu foto pública de Telegram, usa /fotoperfil telegram.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancelar",callback_data="profile_editor")]])
+        )
+    if data == "profile_gif":
+        from handlers.season_pass import gif_license_status
+        st=gif_license_status(q.from_user.id)
+        if not st["active"]:
+            return await q.edit_message_text(
+                "🔒 GIF DE PERFIL\n\nNecesitas una licencia activa. Puede salir como bonus raro en las cajas y el nivel 100 del pase da 10 días garantizados.",
+                reply_markup=_back_editor()
+            )
+        context.user_data["profile_waiting_gif"] = True
+        return await q.edit_message_text(
+            f"🎞️ GIF DE PERFIL\n\nTe quedan {st['days']} día(s). Envíame ahora el GIF que quieras usar.\n\nPiBot guardará el file_id de Telegram; no vuelve a subir el archivo cada vez que alguien mira tu perfil.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancelar",callback_data="profile_editor")]])
         )
     if data == "profile_preview":
@@ -738,11 +934,25 @@ async def perfil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text=_render(target,target)
     r=_profile(target); custom_photo=r[-1] if r else None
     url=await _edit_profile_url(context)
+    vestidor_url=url.replace("editar_perfil","vestidor")
     markup=InlineKeyboardMarkup([
         [InlineKeyboardButton("🏷️ Mis títulos",callback_data="soc:title_owned"),InlineKeyboardButton("🔤 Tipografía",url=url)],
+        [InlineKeyboardButton("🖼️ Marcos e insignias",url=vestidor_url)],
         [InlineKeyboardButton("📸 Cambiar imagen",url=url),InlineKeyboardButton("✏️ Editar perfil",url=url)],
     ])
-    if custom_photo:
+    sent_media=False
+    try:
+        from handlers.season_pass import gif_license_status
+        gst=gif_license_status(target)
+        if gst.get('active') and gst.get('file_id'):
+            try:
+                await update.effective_message.reply_animation(animation=gst['file_id'],caption=f"✨ Perfil de {update.effective_user.full_name}")
+                sent_media=True
+            except Exception:
+                sent_media=False
+    except Exception:
+        pass
+    if custom_photo and not sent_media:
         try: await update.effective_message.reply_photo(photo=custom_photo,caption=f"✨ Perfil de {update.effective_user.full_name}")
         except Exception: pass
     await update.effective_message.reply_text(text,reply_markup=markup)

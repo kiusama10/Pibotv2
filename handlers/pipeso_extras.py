@@ -15,7 +15,7 @@ SEASON_BOX_NAMES={
     "san_valentin": {"epic":"💘 Cofre Épico del Corazón","legendary":"👑 Cofre Legendario del Vínculo"},
 }
 # Se conservan los precios de las dos cajas superiores del sistema anterior.
-BOX_PRICES={"epic":15000,"legendary":40000}
+BOX_PRICES={"epic":15000,"legendary":25000}
 def current_boxes():
     names=SEASON_BOX_NAMES.get(current_season(),SEASON_BOX_NAMES["normal"])
     return {k:(BOX_PRICES[k],names[k]) for k in ("epic","legendary")}
@@ -45,6 +45,49 @@ _GENERAL_TITLES=[
     "One Winged Angel","Cowboy del Caos","Aerial Legend","Best Bout Machine","Rainmaker del Clan",
     "Campeón Sin Corona","Icono del Main Event","Fenómeno del Ring","Rebel Heart","Final Boss del Ring",
 ]
+
+_GENERAL_TITLES += [
+    'Arquitecto del Caos',
+    'Centinela del Clan',
+    'Oráculo del Quiz',
+    'Señor del Jackpot',
+    'Dama del Jackpot',
+    'Afortunado Improbable',
+    'Cazador de Cajas',
+    'Coleccionista del Mes',
+    'Veterano del Pase',
+    'Leyenda del Pase',
+    'Guardián del Límite',
+    'Voz del Consentimiento',
+    'Custodio del Aftercare',
+    'Maestro del Acuerdo',
+    'Dama de la Confianza',
+    'Señor de la Confianza',
+    'Switch de Medianoche',
+    'Dominio de Acero',
+    'Entrega Consciente',
+    'Voluntad de Obsidiana',
+    'Mente del Eclipse',
+    'Corona de Medianoche',
+    'Rebelde Elegante',
+    'Caos con Clase',
+    'Dueño del Plot Twist',
+    'Fantasma del Ranking',
+    'Titán de PiPesos',
+    'Magnate del Jackpot',
+    'Príncipe del Dado',
+    'Princesa del Dado',
+    'Seis Perfecto',
+    'Número Maldito',
+    'Racha de Suerte',
+    'Última Tirada',
+    'Rey del Triple',
+    'Reina del Triple',
+    'Archivo Viviente',
+    'Biblioteca del Clan',
+    'Mente Curiosa',
+    'Cerebro del Caos',
+]
 _SEASON_TITLES={
     "halloween":["Rey Calabaza","Reina Calabaza","Conde de Halloween","Condesa de Halloween","Señor del Cementerio","Dama del Cementerio","Fantasma VIP","Bruja Escarlata","Hechicero de Medianoche","Dueño de la Cripta","Reina de las Sombras","Pesadilla del Clan","Cazador de Fantasmas","Alma en Pena Premium","Monstruo Favorito","Vampiro Carmesí","Hijo de la Noche","Hija de la Noche","Guardián de la Cripta","Corona Maldita"],
     "dia_muertos":["Guardián del Mictlán","Reina Cempasúchil","Rey Cempasúchil","Alma Eterna","Calavera de Oro","Catrina Imperial","Catrín de Medianoche","Señor de las Ánimas","Dama de las Ánimas","Memoria Eterna"],
@@ -55,32 +98,128 @@ def title_pool():
     return list(dict.fromkeys(_GENERAL_TITLES + _SEASON_TITLES.get(current_season(),[])))
 BDSM_TITLES=_GENERAL_TITLES  # compatibilidad con cualquier import anterior
 
-FONT_BASES=["normal","bold","italic","script","double","mono","smallcaps","circled"]
+FONT_BASES=[
+    "normal","bold","italic","bolditalic","script","boldscript","fraktur","boldfraktur",
+    "double","sans","sansbold","sansitalic","sansbolditalic","mono","smallcaps","circled",
+    "fullwidth","parenthesized","negcircled","squared","negsquared","underline","doubleunderline",
+    "strike","overline","dotabove","slash",
+]
+# Se conservan todos los decoradores anteriores para no romper premios ya entregados.
 FONT_DECORATORS=[
     ("plain","{t}"),("stars","✦ {t} ✦"),("spark","✨ {t} ✨"),("moon","☾ {t} ☽"),("heart","♡ {t} ♡"),
     ("diamond","◇ {t} ◇"),("crown","♛ {t} ♛"),("chain","⛓ {t} ⛓"),("dot","• {t} •"),("wave","〜 {t} 〜"),
     ("cross","† {t} †"),("flower","❀ {t} ❀"),("arrow","➤ {t} ◀"),("bracket","【{t}】"),("angle","《{t}》"),
 ]
-FONTS=[f"{base}__{deco}" for base in FONT_BASES for deco,_ in FONT_DECORATORS]  # 120 opciones
-_BASE_LABELS={"normal":"Normal","bold":"𝐍𝐞𝐠𝐫𝐢𝐭𝐚","italic":"𝐼𝑡𝑎𝑙𝑖𝑐","script":"𝒮𝒸𝓇𝒾𝓅𝓉","double":"𝔻𝕠𝕓𝕝𝕖","mono":"𝙼𝚘𝚗𝚘","smallcaps":"ꜱᴍᴀʟʟᴄᴀᴘꜱ","circled":"Ⓒⓘⓡⓒⓛⓔⓓ"}
+# 27 estilos base reales x 15 acabados = 405 combinaciones. Las cajas priorizan bases nuevas antes de repetir adornos.
+FONTS=[f"{base}__{deco}" for base in FONT_BASES for deco,_ in FONT_DECORATORS]
 _DECO=dict(FONT_DECORATORS)
-FONT_LABELS={code:_DECO[code.split('__',1)[1]].format(t=_BASE_LABELS[code.split('__',1)[0]]) for code in FONTS}
 FONT_PAGE_SIZE=12
+
+_MATH_STYLE_NAMES={
+    "bold":"BOLD",
+    "italic":"ITALIC",
+    "bolditalic":"BOLD ITALIC",
+    "boldscript":"BOLD SCRIPT",
+    "boldfraktur":"BOLD FRAKTUR",
+    "sans":"SANS-SERIF",
+    "sansbold":"SANS-SERIF BOLD",
+    "sansitalic":"SANS-SERIF ITALIC",
+    "sansbolditalic":"SANS-SERIF BOLD ITALIC",
+    "mono":"MONOSPACE",
+}
+_DIGIT_NAMES={"0":"ZERO","1":"ONE","2":"TWO","3":"THREE","4":"FOUR","5":"FIVE","6":"SIX","7":"SEVEN","8":"EIGHT","9":"NINE"}
+_SCRIPT_EXCEPT={
+    'B':'ℬ','E':'ℰ','F':'ℱ','H':'ℋ','I':'ℐ','L':'ℒ','M':'ℳ','R':'ℛ',
+    'e':'ℯ','g':'ℊ','o':'ℴ',
+}
+_FRAKTUR_EXCEPT={'C':'ℭ','H':'ℌ','I':'ℑ','R':'ℜ','Z':'ℨ'}
+_DOUBLE_EXCEPT={'C':'ℂ','H':'ℍ','N':'ℕ','P':'ℙ','Q':'ℚ','R':'ℝ','Z':'ℤ'}
+_SMALLCAPS_TRANS=str.maketrans("abcdefghijklmnopqrstuvwxyz","ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘqʀꜱᴛᴜᴠᴡxʏᴢ")
+
+
+def _unicode_lookup(name, fallback):
+    try:
+        return unicodedata.lookup(name)
+    except Exception:
+        return fallback
+
+
+def _math_style_char(ch, descriptor):
+    if 'A' <= ch <= 'Z':
+        return _unicode_lookup(f"MATHEMATICAL {descriptor} CAPITAL {ch}", ch)
+    if 'a' <= ch <= 'z':
+        return _unicode_lookup(f"MATHEMATICAL {descriptor} SMALL {ch.upper()}", ch)
+    if ch in _DIGIT_NAMES:
+        return _unicode_lookup(f"MATHEMATICAL {descriptor} DIGIT {_DIGIT_NAMES[ch]}", ch)
+    return ch
+
+
+def _script_char(ch):
+    if ch in _SCRIPT_EXCEPT: return _SCRIPT_EXCEPT[ch]
+    if 'A' <= ch <= 'Z': return _unicode_lookup(f"MATHEMATICAL SCRIPT CAPITAL {ch}", ch)
+    if 'a' <= ch <= 'z': return _unicode_lookup(f"MATHEMATICAL SCRIPT SMALL {ch.upper()}", ch)
+    return ch
+
+
+def _fraktur_char(ch):
+    if ch in _FRAKTUR_EXCEPT: return _FRAKTUR_EXCEPT[ch]
+    if 'A' <= ch <= 'Z': return _unicode_lookup(f"MATHEMATICAL FRAKTUR CAPITAL {ch}", ch)
+    if 'a' <= ch <= 'z': return _unicode_lookup(f"MATHEMATICAL FRAKTUR SMALL {ch.upper()}", ch)
+    return ch
+
+
+def _double_char(ch):
+    if ch in _DOUBLE_EXCEPT: return _DOUBLE_EXCEPT[ch]
+    if 'A' <= ch <= 'Z': return _unicode_lookup(f"MATHEMATICAL DOUBLE-STRUCK CAPITAL {ch}", ch)
+    if 'a' <= ch <= 'z': return _unicode_lookup(f"MATHEMATICAL DOUBLE-STRUCK SMALL {ch.upper()}", ch)
+    if ch in _DIGIT_NAMES: return _unicode_lookup(f"MATHEMATICAL DOUBLE-STRUCK DIGIT {_DIGIT_NAMES[ch]}", ch)
+    return ch
+
 
 def style_text(text,code):
     base,deco=(code.split('__',1)+['plain'])[:2] if '__' in code else (code,'plain')
-    maps={
-      "bold":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇𝐈𝐉𝐊𝐋𝐌𝐍𝐎𝐏𝐐𝐑𝐒𝐓𝐔𝐕𝐖𝐗𝐘𝐙𝐚𝐛𝐜𝐝𝐞𝐟𝐠𝐡𝐢𝐣𝐤𝐥𝐦𝐧𝐨𝐩𝐪𝐫𝐬𝐭𝐮𝐯𝐰𝐱𝐲𝐳𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟡"),
-      "mono":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","𝙰𝙱𝙲𝙳𝙴𝙵𝙶𝙷𝙸𝙹𝙺𝙻𝙼𝙽𝙾𝙿𝚀𝚁𝚂𝚃𝚄𝚅𝚆𝚇𝚈𝚉𝚊𝚋𝚌𝚍𝚎𝚏𝚐𝚑𝚒𝚓𝚔𝚕𝚖𝚗𝚘𝚙𝚚𝚛𝚜𝚝𝚞𝚟𝚠𝚡𝚢𝚣𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿"),
-      "circled":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","ⒶⒷⒸⒹⒺⒻⒼⒽⒾⒿⓀⓁⓂⓃⓄⓅⓆⓇⓈⓉⓊⓋⓌⓍⓎⓏⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩ⓪①②③④⑤⑥⑦⑧⑨"),
-      "italic":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz","𝐴𝐵𝐶𝐷𝐸𝐹𝐺𝐻𝐼𝐽𝐾𝐿𝑀𝑁𝑂𝑃𝑄𝑅𝑆𝑇𝑈𝑉𝑊𝑋𝑌𝑍𝑎𝑏𝑐𝑑𝑒𝑓𝑔ℎ𝑖𝑗𝑘𝑙𝑚𝑛𝑜𝑝𝑞𝑟𝑠𝑡𝑢𝑣𝑤𝑥𝑦𝑧"),
-      "script":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz","𝒜ℬ𝒞𝒟ℰℱ𝒢ℋℐ𝒥𝒦ℒℳ𝒩𝒪𝒫𝒬ℛ𝒮𝒯𝒰𝒱𝒲𝒳𝒴𝒵𝒶𝒷𝒸𝒹ℯ𝒻ℊ𝒽𝒾𝒿𝓀𝓁𝓂𝓃ℴ𝓅𝓆𝓇𝓈𝓉𝓊𝓋𝓌𝓍𝓎𝓏"),
-      "double":("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789","𝔸𝔹ℂ𝔻𝔼𝔽𝔾ℍ𝕀𝕁𝕂𝕃𝕄ℕ𝕆ℙℚℝ𝕊𝕋𝕌𝕍𝕎𝕏𝕐ℤ𝕒𝕓𝕔𝕕𝕖𝕗𝕘𝕙𝕚𝕛𝕜𝕝𝕞𝕟𝕠𝕡𝕢𝕣𝕤𝕥𝕦𝕧𝕨𝕩𝕪𝕫𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡")}
-    out=str(text)
-    if base in maps:
-        a,b=maps[base]; out=out.translate(str.maketrans(a,b))
-    elif base=='smallcaps': out=out.translate(str.maketrans("abcdefghijklmnopqrstuvwxyz","ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘqʀꜱᴛᴜᴠᴡxʏᴢ"))
+    raw=str(text)
+    if base in _MATH_STYLE_NAMES:
+        out=''.join(_math_style_char(ch,_MATH_STYLE_NAMES[base]) for ch in raw)
+    elif base=='script':
+        out=''.join(_script_char(ch) for ch in raw)
+    elif base=='fraktur':
+        out=''.join(_fraktur_char(ch) for ch in raw)
+    elif base=='double':
+        out=''.join(_double_char(ch) for ch in raw)
+    elif base=='smallcaps':
+        out=raw.lower().translate(_SMALLCAPS_TRANS)
+    elif base=='circled':
+        a="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"; b="ⒶⒷⒸⒹⒺⒻⒼⒽⒾⒿⓀⓁⓂⓃⓄⓅⓆⓇⓈⓉⓊⓋⓌⓍⓎⓏⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩ⓪①②③④⑤⑥⑦⑧⑨"
+        out=raw.translate(str.maketrans(a,b))
+    elif base=='fullwidth':
+        out=''.join(_unicode_lookup(f"FULLWIDTH LATIN CAPITAL LETTER {ch}",ch) if 'A'<=ch<='Z' else _unicode_lookup(f"FULLWIDTH LATIN SMALL LETTER {ch.upper()}",ch) if 'a'<=ch<='z' else _unicode_lookup(f"FULLWIDTH DIGIT {_DIGIT_NAMES[ch]}",ch) if ch in _DIGIT_NAMES else ch for ch in raw)
+    elif base=='parenthesized':
+        out=''.join(_unicode_lookup(f"PARENTHESIZED LATIN SMALL LETTER {ch.upper()}",ch) if ch.isalpha() and ch.isascii() else ch for ch in raw.lower())
+    elif base=='negcircled':
+        out=''.join(_unicode_lookup(f"NEGATIVE CIRCLED LATIN CAPITAL LETTER {ch.upper()}",ch) if ch.isalpha() and ch.isascii() else ch for ch in raw.upper())
+    elif base=='squared':
+        out=''.join(_unicode_lookup(f"SQUARED LATIN CAPITAL LETTER {ch.upper()}",ch) if ch.isalpha() and ch.isascii() else ch for ch in raw.upper())
+    elif base=='negsquared':
+        out=''.join(_unicode_lookup(f"NEGATIVE SQUARED LATIN CAPITAL LETTER {ch.upper()}",ch) if ch.isalpha() and ch.isascii() else ch for ch in raw.upper())
+    elif base=='underline':
+        out=''.join(ch+'\u0332' if not ch.isspace() else ch for ch in raw)
+    elif base=='doubleunderline':
+        out=''.join(ch+'\u0333' if not ch.isspace() else ch for ch in raw)
+    elif base=='strike':
+        out=''.join(ch+'\u0336' if not ch.isspace() else ch for ch in raw)
+    elif base=='overline':
+        out=''.join(ch+'\u0305' if not ch.isspace() else ch for ch in raw)
+    elif base=='dotabove':
+        out=''.join(ch+'\u0307' if not ch.isspace() else ch for ch in raw)
+    elif base=='slash':
+        out=''.join(ch+'\u0338' if not ch.isspace() else ch for ch in raw)
+    else:
+        out=raw
     return _DECO.get(deco,"{t}").format(t=out)
+
+# El botón enseña una muestra real; así no parece que haya 100 variantes de la misma fuente.
+FONT_LABELS={code:style_text("Kiu",code) for code in FONTS}
 
 def owned_fonts(uid):
     """Tipografías desbloqueadas por cajas. Normal y la actualmente equipada se conservan siempre."""
@@ -134,6 +273,15 @@ def ensure_extras_tables():
         c.execute("""CREATE TABLE IF NOT EXISTS challenge_weekly_points_tb(week_start DATE NOT NULL,user_id BIGINT NOT NULL,points INT NOT NULL DEFAULT 0,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(week_start,user_id))""")
         c.execute("""CREATE TABLE IF NOT EXISTS challenge_weekly_audit_tb(audit_id BIGSERIAL PRIMARY KEY,week_start DATE NOT NULL,target_id BIGINT NOT NULL,actor_id BIGINT NOT NULL,delta INT NOT NULL,before_points INT NOT NULL,after_points INT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
         c.execute("""CREATE TABLE IF NOT EXISTS challenge_weekly_payouts_tb(week_start DATE PRIMARY KEY,paid_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),first_id BIGINT,second_id BIGINT,third_id BIGINT)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS box_jackpot_tb(
+            jackpot_key TEXT PRIMARY KEY,
+            amount BIGINT NOT NULL DEFAULT 10000,
+            purchases BIGINT NOT NULL DEFAULT 0,
+            last_winner_id BIGINT,
+            last_win_amount BIGINT,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""")
+        c.execute("""INSERT INTO box_jackpot_tb(jackpot_key,amount,purchases) VALUES('main',10000,0) ON CONFLICT DO NOTHING""")
         conn.commit()
     except Exception as e: conn.rollback(); print('[EXTRAS tables]',e)
     finally:_put_connection(conn)
@@ -205,27 +353,79 @@ async def cajas(update:Update,context:ContextTypes.DEFAULT_TYPE):
         return await update.effective_message.reply_text('📩 Te mandé tus cajas por privado.')
     await update.effective_message.reply_text(_boxes_text(),reply_markup=_boxes_markup())
 
+def _jackpot_amount():
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT amount FROM box_jackpot_tb WHERE jackpot_key='main'"); r=c.fetchone(); return int(r[0]) if r else 10000
+    except Exception:
+        return 10000
+    finally:_put_connection(conn)
+
+
 def _boxes_markup():
-    return InlineKeyboardMarkup([[InlineKeyboardButton(f"{name} · {price:,} PiPesos",callback_data=f'ex:box:{code}')] for code,(price,name) in current_boxes().items()])
+    rows=[[InlineKeyboardButton(f"{name} · {price:,} PiPesos",callback_data=f'ex:box:{code}')] for code,(price,name) in current_boxes().items()]
+    rows.append([InlineKeyboardButton("🎰 Ver Jackpot",callback_data='ex:jackpot')])
+    return InlineKeyboardMarkup(rows)
+
 
 def _boxes_text():
-    season=current_season().replace('_',' ').upper()
-    return (f"🎁 CAJAS · {season}\n\n💜 Épica: premios comunes, raros y hasta ÉPICOS.\n🌟 Legendaria: puede soltar todo lo anterior y premios LEGENDARIOS.\n\nDentro pueden salir PiPesos, títulos y tipografías coleccionables. Si repites un coleccionable, recibes 2,000 PiPesos.")
+    season=current_season().replace('_',' ').upper(); jackpot=_jackpot_amount()
+    return (f"🎁 CAJAS · {season}\n\n💜 Épica: premios comunes, raros y hasta ÉPICOS.\n🌟 Legendaria: puede soltar todo lo anterior y premios LEGENDARIOS.\n\nDentro pueden salir PiPesos, títulos, tipografías, marcos de texto/emoji e insignias para el perfil. Cada compra suma +10,000 PiPesos al Jackpot y cada caja también da XP de temporada.\n\n🎰 Jackpot actual: {jackpot:,} PiPesos\n🎞️ El GIF de perfil por 10 días puede aparecer como bonus muy raro.\n💰 Marcos e insignias pueden venderse después por 1,000 PiPesos cada uno.\n\nSi repites un coleccionable, recibes 2,000 PiPesos.")
 
-def _roll_box(code):
+
+def _font_reward_for(uid):
+    # Primero intenta entregar un ESTILO BASE que la persona todavía no tenga.
+    # Así no parecen 100 copias de la misma tipografía con adornos distintos.
+    try:
+        owned=set(owned_fonts(uid)); owned_bases={x.split('__',1)[0] for x in owned}
+        fresh_bases=[f"{b}__plain" for b in FONT_BASES if b not in owned_bases and f"{b}__plain" in FONTS]
+        if fresh_bases: return random.choice(fresh_bases)
+        remaining=[x for x in FONTS if x not in owned]
+        if remaining: return random.choice(remaining)
+    except Exception:
+        pass
+    return random.choice(FONTS)
+
+
+def _cosmetic_reward_for(uid, rarity):
+    """Choose a profile frame/badge compatible with the rolled rarity and current season."""
+    from handlers.profile_cosmetics import COSMETICS
+    season=current_season()
+    eligible=[(code,item) for code,item in COSMETICS.items() if item[2]==rarity and (item[4] is None or item[4]==season)]
+    if not eligible:
+        eligible=[(code,item) for code,item in COSMETICS.items() if item[2] in {'comun','raro'} and (item[4] is None or item[4]==season)]
+    if uid is not None and eligible:
+        conn=_get_connection()
+        try:
+            c=conn.cursor(); c.execute("SELECT code FROM profile_cosmetics_tb WHERE owner_id=%s",(uid,)); owned={r[0] for r in c.fetchall()}
+            fresh=[x for x in eligible if x[0] not in owned]
+            if fresh: eligible=fresh
+        except Exception:
+            pass
+        finally:
+            _put_connection(conn)
+    return random.choice(eligible) if eligible else (None,None)
+
+
+def _roll_box(code,uid=None):
     # Dos cajas únicamente: la Épica llega hasta épico; la Legendaria añade legendario.
-    x=random.random()
     if code=='epic':
         rarity=random.choices(['comun','raro','epico'],weights=[52,33,15],k=1)[0]
         money_by_rarity={'comun':[2000,3000,4000],'raro':[5000,7000,9000],'epico':[12000,15000,18000]}
     else:
         rarity=random.choices(['comun','raro','epico','legendario'],weights=[36,31,23,10],k=1)[0]
         money_by_rarity={'comun':[4000,6000,8000],'raro':[9000,12000,15000],'epico':[18000,22000,28000],'legendario':[35000,45000,60000]}
-    kind=random.choices(['title','font','money'],weights=[38,34,28],k=1)[0]
+    kind=random.choices(['title','font','cosmetic','money'],weights=[30,28,20,22],k=1)[0]
     if kind=='title':
         val=random.choice(title_pool()); return 'title',val,f'{val} · {rarity.upper()}'
     if kind=='font':
-        f=random.choice(FONTS); return 'font',f,f'Tipografía {FONT_LABELS.get(f,f)} · {rarity.upper()}'
+        f=_font_reward_for(uid) if uid is not None else random.choice(FONTS); return 'font',f,f'Tipografía {FONT_LABELS.get(f,f)} · {rarity.upper()}'
+    if kind=='cosmetic':
+        ccode,item=_cosmetic_reward_for(uid,rarity)
+        if item:
+            name,ctype,crarity,price,season=item
+            label=('Marco ' if ctype=='marco' else 'Insignia ')+name+f' · {crarity.upper()}'
+            return 'cosmetic',ccode,label
     money=random.choice(money_by_rarity[rarity]); return 'money',str(money),f'{money:,} PiPesos · {rarity.upper()}'
 
 async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
@@ -259,27 +459,104 @@ async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
             c.execute("""INSERT INTO user_boosters_tb(user_id,kind,multiplier,expires_at) VALUES(%s,%s,%s,NOW()+(%s||' minutes')::interval) ON CONFLICT(user_id,kind) DO UPDATE SET multiplier=EXCLUDED.multiplier,expires_at=GREATEST(user_boosters_tb.expires_at,NOW())+(%s||' minutes')::interval""",(uid,kind,mult,mins,mins)); conn.commit()
         finally:_put_connection(conn)
         return await q.answer(f'{name} activado por {mins//60}h.',show_alert=True)
+    if p[1]=='jackpot':
+        amount=_jackpot_amount()
+        return await q.answer(f'🎰 Jackpot actual: {amount:,} PiPesos. Cada compra añade +10,000.',show_alert=True)
     if p[1]=='box':
-        code=p[2]; price,name=current_boxes()[code]; conn=_get_connection(); kind,val,label=_roll_box(code)
+        code=p[2]
+        if code not in current_boxes():
+            return await q.answer('Caja inválida.',show_alert=True)
+        price,name=current_boxes()[code]
+        kind,val,label=_roll_box(code,uid)
+        conn=_get_connection(); jackpot_win=0; jackpot_after=10000; gif_bonus=False
         try:
-            c=conn.cursor();
-            if not _charge(c,uid,price): conn.rollback(); return await q.answer('No tienes suficientes PiPesos.',show_alert=True)
-            if kind=='money': c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(int(val),uid))
+            c=conn.cursor()
+            if not _charge(c,uid,price):
+                conn.rollback(); return await q.answer('No tienes suficientes PiPesos.',show_alert=True)
+
+            # Jackpot: cada COMPRA suma 10,000. Probabilidad deliberadamente muy baja.
+            c.execute("INSERT INTO box_jackpot_tb(jackpot_key,amount,purchases) VALUES('main',10000,0) ON CONFLICT DO NOTHING")
+            c.execute("SELECT amount,purchases FROM box_jackpot_tb WHERE jackpot_key='main' FOR UPDATE")
+            jr=c.fetchone() or (10000,0)
+            pot=int(jr[0])+10000
+            chance=0.0002 if code=='epic' else 0.0005  # 0.02% / 0.05%
+            if random.random() < chance:
+                jackpot_win=pot
+                c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(jackpot_win,uid))
+                c.execute("UPDATE box_jackpot_tb SET amount=10000,purchases=purchases+1,last_winner_id=%s,last_win_amount=%s,updated_at=NOW() WHERE jackpot_key='main'",(uid,jackpot_win))
+                jackpot_after=10000
+            else:
+                c.execute("UPDATE box_jackpot_tb SET amount=%s,purchases=purchases+1,updated_at=NOW() WHERE jackpot_key='main'",(pot,))
+                jackpot_after=pot
+
+            if kind=='money':
+                c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(int(val),uid))
             elif kind=='potion':
-                _,mins,mult,pname=POTIONS[val]; k='xp' if val.startswith('xp') else 'money'; c.execute("""INSERT INTO user_boosters_tb(user_id,kind,multiplier,expires_at) VALUES(%s,%s,%s,NOW()+(%s||' minutes')::interval) ON CONFLICT(user_id,kind) DO UPDATE SET multiplier=EXCLUDED.multiplier,expires_at=GREATEST(user_boosters_tb.expires_at,NOW())+(%s||' minutes')::interval""",(uid,k,mult,mins,mins))
+                _,mins,mult,pname=POTIONS[val]; k='xp' if val.startswith('xp') else 'money'
+                c.execute("""INSERT INTO user_boosters_tb(user_id,kind,multiplier,expires_at) VALUES(%s,%s,%s,NOW()+(%s||' minutes')::interval) ON CONFLICT(user_id,kind) DO UPDATE SET multiplier=EXCLUDED.multiplier,expires_at=GREATEST(user_boosters_tb.expires_at,NOW())+(%s||' minutes')::interval""",(uid,k,mult,mins,mins))
             elif kind=='title':
-                code='box_'+''.join(ch.lower() if ch.isalnum() else '_' for ch in val).strip('_')
-                c.execute("SELECT 1 FROM social_assets_tb WHERE propietario_id=%s AND asset_type='titulo' AND code=%s LIMIT 1",(uid,code))
+                asset_code='box_'+''.join(ch.lower() if ch.isalnum() else '_' for ch in val).strip('_')
+                c.execute("SELECT 1 FROM social_assets_tb WHERE propietario_id=%s AND asset_type='titulo' AND code=%s LIMIT 1",(uid,asset_code))
                 if c.fetchone():
                     c.execute("UPDATE usuarios_tb SET saldo=saldo+2000 WHERE id_user=%s",(uid,)); label+=' · repetido → +2,000 PiPesos'
                 else:
-                    c.execute("INSERT INTO social_assets_tb(asset_type,code,nombre,rareza,valor_base,propietario_id,origen) VALUES('titulo',%s,%s,'caja',0,%s,'caja_misteriosa')",(code,val,uid))
+                    c.execute("INSERT INTO social_assets_tb(asset_type,code,nombre,rareza,valor_base,propietario_id,origen) VALUES('titulo',%s,%s,'caja',0,%s,'caja_misteriosa')",(asset_code,val,uid))
+            elif kind=='cosmetic':
+                from handlers.profile_cosmetics import COSMETICS
+                item=COSMETICS.get(val)
+                if not item:
+                    c.execute("UPDATE usuarios_tb SET saldo=saldo+2000 WHERE id_user=%s",(uid,)); label+=' · premio sustituido → +2,000 PiPesos'
+                else:
+                    cname,ctype,crarity,cprice,cseason=item
+                    c.execute("SELECT 1 FROM profile_cosmetics_tb WHERE owner_id=%s AND code=%s LIMIT 1",(uid,val))
+                    if c.fetchone():
+                        c.execute("UPDATE usuarios_tb SET saldo=saldo+2000 WHERE id_user=%s",(uid,)); label+=' · repetido → +2,000 PiPesos'
+                    else:
+                        c.execute("""INSERT INTO profile_cosmetics_tb(code,nombre,cosmetic_type,rareza,precio_compra,owner_id,season_key)
+                                   VALUES(%s,%s,%s,%s,0,%s,%s)""",(val,cname,ctype,crarity,uid,cseason))
             else:
                 c.execute("INSERT INTO user_box_assets_tb(user_id,asset_type,asset_code,asset_name) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING",(uid,kind,val,label))
-                if c.rowcount==0: c.execute("UPDATE usuarios_tb SET saldo=saldo+2000 WHERE id_user=%s",(uid,)); label+=' · repetido → +2,000 PiPesos'
+                if c.rowcount==0:
+                    c.execute("UPDATE usuarios_tb SET saldo=saldo+2000 WHERE id_user=%s",(uid,)); label+=' · repetido → +2,000 PiPesos'
+
+            # Bonus GIF: usa solo file_id cuando la persona suba su GIF; aquí solo se acumulan días.
+            gif_chance=0.002 if code=='epic' else 0.008
+            if random.random() < gif_chance:
+                gif_bonus=True
+                c.execute("""INSERT INTO profile_gif_license_tb(user_id,expires_at)
+                    VALUES(%s,NOW()+INTERVAL '10 days')
+                    ON CONFLICT(user_id) DO UPDATE SET
+                      expires_at=CASE WHEN profile_gif_license_tb.expires_at IS NOT NULL AND profile_gif_license_tb.expires_at>NOW()
+                        THEN profile_gif_license_tb.expires_at+INTERVAL '10 days' ELSE NOW()+INTERVAL '10 days' END,
+                      updated_at=NOW()""",(uid,))
             conn.commit()
+        except Exception as e:
+            conn.rollback(); print('[BOX]',type(e).__name__,e)
+            return await q.answer('No pude abrir la caja. No se completó la compra.',show_alert=True)
         finally:_put_connection(conn)
-        await q.answer('Caja abierta 🎁',show_alert=True); return await q.message.reply_text(f"🎁 Abriste {name}\n✨ Te salió: {label}")
+
+        # XP se registra solo por la apertura; tiene tope diario para que las cajas no compren el nivel 100.
+        try:
+            from handlers.season_pass import grant_season_xp
+            xp=grant_season_xp(uid,25 if code=='epic' else 60,'box')
+        except Exception:
+            xp=None
+        lines=[f"🎁 Abriste {name}",f"✨ Te salió: {label}"]
+        if xp:
+            if xp.get('granted',0)>0: lines.append(f"⭐ +{xp['granted']} XP de temporada")
+            else: lines.append("⭐ XP de cajas: límite diario alcanzado")
+            if xp.get('new_level',1)>xp.get('old_level',1):
+                lines.append(f"🎉 ¡Nivel {xp['new_level']} del pase!")
+                for lv,rewards in xp.get('rewards',[]):
+                    if lv%10==0 or lv==100:
+                        lines.append(f"🎁 Nivel {lv}: "+" · ".join(rewards))
+        if gif_bonus: lines.append("🎞️ BONUS RARO: +10 días de GIF de perfil")
+        if jackpot_win:
+            lines += ["",f"🎰 ¡JACKPOT DEL CLAN! +{jackpot_win:,} PiPesos", "El bote volvió a 10,000 PiPesos."]
+        else:
+            lines.append(f"🎰 Jackpot: {jackpot_after:,} PiPesos")
+        await q.answer('Caja abierta 🎁',show_alert=True)
+        return await q.message.reply_text('\n'.join(lines))
 
 async def tipografias(update:Update,context:ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text('🔤 TIPOGRAFÍAS DE PERFIL\n\nAquí aparecen las tipografías que has conseguido en cajas. Equipar o cambiar entre las que ya tienes es gratis.',reply_markup=font_markup(0,uid=update.effective_user.id))
