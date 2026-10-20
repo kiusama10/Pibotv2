@@ -4,7 +4,8 @@ import asyncio
 import json
 import math
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -34,6 +35,24 @@ WILD_DICE_ANIMATION_SECONDS = 4.2  # espera a que termine la animacion del dado 
 WILD_LIFETIME_SECONDS = 600  # 10 minutos visible antes de irse
 WILD_CATCH_THRESHOLD = {"comun": 3, "raro": 4, "epico": 5, "legendario": 6}
 CANDIES_PER_LEVEL = 10
+
+POKEMON_TZ = ZoneInfo("America/Mexico_City")
+POKEMON_SEASON_PRIZES = {1: 30000, 2: 20000, 3: 10000}
+TOURNAMENT_MAX_PLAYERS = 16
+
+# Preferencias de aparición por franja. Todos los 151 siguen siendo posibles,
+# pero estos tienen más peso en su horario. Además se excluyen especies recientes
+# para que no se repita el mismo Pokémon una y otra vez.
+DAY_PREFERRED = {
+    10,11,12,13,14,15,16,17,18,19,20,21,22,25,26,29,30,31,32,33,34,
+    37,38,43,44,45,46,47,48,49,52,53,54,55,58,59,69,70,71,77,78,
+    83,84,85,102,103,111,112,113,114,115,123,127,128,133,134,135,136
+}
+NIGHT_PREFERRED = {
+    19,20,23,24,27,28,35,36,39,40,41,42,48,49,50,51,52,53,63,64,65,
+    66,67,68,74,75,76,79,80,88,89,90,91,92,93,94,95,96,97,104,105,
+    109,110,116,117,120,121,124,129,130,137,138,139,140,141,142
+}
 
 
 def ensure_pokemon_tables():
@@ -119,6 +138,83 @@ def ensure_pokemon_tables():
               updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
+        c.execute("ALTER TABLE pokemon_rank_tb ADD COLUMN IF NOT EXISTS season_best_streak INT NOT NULL DEFAULT 0")
+        c.execute("ALTER TABLE pokemon_rank_tb ADD COLUMN IF NOT EXISTS peak_rating INT NOT NULL DEFAULT 1000")
+        c.execute("ALTER TABLE pokemon_rank_tb ADD COLUMN IF NOT EXISTS rating_reached_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_rank_season_state_tb(
+              singleton SMALLINT PRIMARY KEY DEFAULT 1 CHECK(singleton=1),
+              season_key TEXT NOT NULL,
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_rank_history_tb(
+              season_key TEXT NOT NULL,
+              user_id BIGINT NOT NULL,
+              position INT NOT NULL,
+              rating INT NOT NULL,
+              wins INT NOT NULL,
+              losses INT NOT NULL,
+              best_streak INT NOT NULL DEFAULT 0,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              PRIMARY KEY(season_key,user_id)
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_season_boxes_tb(
+              box_id BIGSERIAL PRIMARY KEY,
+              owner_id BIGINT NOT NULL,
+              season_key TEXT NOT NULL,
+              placement SMALLINT NOT NULL CHECK(placement BETWEEN 1 AND 3),
+              opened BOOLEAN NOT NULL DEFAULT FALSE,
+              pokemon_id BIGINT,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              opened_at TIMESTAMPTZ,
+              UNIQUE(owner_id,season_key)
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_tournaments_tb(
+              tournament_id BIGSERIAL PRIMARY KEY,
+              chat_id BIGINT NOT NULL,
+              thread_id BIGINT,
+              created_by BIGINT NOT NULL,
+              mode SMALLINT NOT NULL CHECK(mode BETWEEN 1 AND 3),
+              status TEXT NOT NULL DEFAULT 'registration',
+              round_no INT NOT NULL DEFAULT 0,
+              message_id BIGINT,
+              champion_id BIGINT,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              started_at TIMESTAMPTZ,
+              finished_at TIMESTAMPTZ
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_pokemon_tournament_active ON pokemon_tournaments_tb(chat_id,thread_id,status)")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_tournament_players_tb(
+              tournament_id BIGINT NOT NULL,
+              user_id BIGINT NOT NULL,
+              joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              PRIMARY KEY(tournament_id,user_id)
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_tournament_matches_tb(
+              match_id BIGSERIAL PRIMARY KEY,
+              tournament_id BIGINT NOT NULL,
+              round_no INT NOT NULL,
+              slot_no INT NOT NULL,
+              user_a BIGINT NOT NULL,
+              user_b BIGINT,
+              winner_id BIGINT,
+              battle_id BIGINT,
+              status TEXT NOT NULL DEFAULT 'pending',
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              finished_at TIMESTAMPTZ
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_pokemon_tournament_match ON pokemon_tournament_matches_tb(tournament_id,round_no,status)")
         c.execute("""
             CREATE TABLE IF NOT EXISTS pokemon_battles_tb(
               battle_id BIGSERIAL PRIMARY KEY,
@@ -137,6 +233,7 @@ def ensure_pokemon_tables():
             )
         """)
         c.execute("CREATE INDEX IF NOT EXISTS idx_pokemon_battle_status ON pokemon_battles_tb(status,challenger_id,opponent_id)")
+        c.execute("ALTER TABLE pokemon_battles_tb ADD COLUMN IF NOT EXISTS tournament_match_id BIGINT")
         c.execute("""
             CREATE TABLE IF NOT EXISTS pokemon_trades_tb(
               trade_id BIGSERIAL PRIMARY KEY,
@@ -167,6 +264,7 @@ def ensure_pokemon_tables():
         """)
         c.execute("ALTER TABLE pokemon_trainer_tb ADD COLUMN IF NOT EXISTS media_type TEXT")
         c.execute("ALTER TABLE pokemon_trainer_tb ADD COLUMN IF NOT EXISTS media_file_id TEXT")
+        c.execute("ALTER TABLE pokemon_trainer_tb ADD COLUMN IF NOT EXISTS tournament_wins INT NOT NULL DEFAULT 0")
         c.execute("""
             CREATE TABLE IF NOT EXISTS pokemon_candies_tb(
               owner_id BIGINT NOT NULL,
@@ -199,6 +297,7 @@ def ensure_pokemon_tables():
               PRIMARY KEY(spawn_id,user_id)
             )
         """)
+        _pokemon_season_rollover_cursor(c)
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -206,6 +305,207 @@ def ensure_pokemon_tables():
         raise
     finally:
         _put_connection(conn)
+
+
+
+def _pokemon_month_key(now:datetime|None=None)->str:
+    now = now or datetime.now(POKEMON_TZ)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=POKEMON_TZ)
+    else:
+        now = now.astimezone(POKEMON_TZ)
+    return now.strftime('%Y-%m')
+
+
+def _wild_period(now:datetime|None=None)->str:
+    now = (now or datetime.now(POKEMON_TZ)).astimezone(POKEMON_TZ)
+    return 'day' if 6 <= now.hour < 18 else 'night'
+
+
+def _pokemon_season_rollover_cursor(c):
+    """Cierra el ranking mensual una sola vez y deja las recompensas listas."""
+    current = _pokemon_month_key()
+    c.execute("SELECT season_key FROM pokemon_rank_season_state_tb WHERE singleton=1 FOR UPDATE")
+    row = c.fetchone()
+    if not row:
+        c.execute("INSERT INTO pokemon_rank_season_state_tb(singleton,season_key) VALUES(1,%s)", (current,))
+        return None
+    previous = str(row[0])
+    if previous == current:
+        return None
+
+    c.execute("""
+        SELECT user_id,rating,wins,losses,season_best_streak,rating_reached_at
+        FROM pokemon_rank_tb
+        WHERE (wins+losses)>0
+        ORDER BY rating DESC,wins DESC,rating_reached_at ASC,user_id ASC
+    """)
+    rows = c.fetchall()
+    winners = []
+    for pos,r in enumerate(rows,1):
+        uid,rating,wins,losses,season_best,_ = r
+        c.execute("""
+            INSERT INTO pokemon_rank_history_tb(season_key,user_id,position,rating,wins,losses,best_streak)
+            VALUES(%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT(season_key,user_id) DO NOTHING
+        """, (previous,int(uid),pos,int(rating),int(wins),int(losses),int(season_best or 0)))
+        if pos <= 3:
+            prize = int(POKEMON_SEASON_PRIZES[pos])
+            c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s", (prize,int(uid)))
+            c.execute("""
+                INSERT INTO pokemon_season_boxes_tb(owner_id,season_key,placement)
+                VALUES(%s,%s,%s) ON CONFLICT(owner_id,season_key) DO NOTHING
+            """, (int(uid),previous,pos))
+            winners.append((pos,int(uid),prize))
+
+    c.execute("""
+        UPDATE pokemon_rank_tb SET rating=1000,wins=0,losses=0,current_streak=0,
+        season_best_streak=0,rating_reached_at=NOW(),updated_at=NOW()
+    """)
+    c.execute("UPDATE pokemon_rank_season_state_tb SET season_key=%s,updated_at=NOW() WHERE singleton=1", (current,))
+    return {'closed':previous,'current':current,'winners':winners}
+
+
+def _ensure_pokemon_season():
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); result=_pokemon_season_rollover_cursor(c); conn.commit(); return result
+    except Exception as e:
+        conn.rollback(); print('[PK season rollover]',type(e).__name__,e); return None
+    finally:
+        _put_connection(conn)
+
+
+def _pending_season_boxes(uid:int)->list[tuple]:
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("""
+            SELECT box_id,season_key,placement FROM pokemon_season_boxes_tb
+            WHERE owner_id=%s AND opened=FALSE ORDER BY created_at,box_id
+        """,(uid,)); return c.fetchall()
+    finally:_put_connection(conn)
+
+
+def _recent_wild_species_cursor(c,chat_id:int,thread_id:int|None,limit:int=8)->set[int]:
+    c.execute("""
+        SELECT species_id FROM pokemon_wild_spawns_tb
+        WHERE chat_id=%s AND thread_id IS NOT DISTINCT FROM %s
+        ORDER BY created_at DESC LIMIT %s
+    """,(chat_id,thread_id,int(limit)))
+    return {int(r[0]) for r in c.fetchall()}
+
+
+def _wild_species_cursor(c,chat_id:int,thread_id:int|None)->int:
+    legendary=list(LEGENDARY_IDS); epic=list(EPIC_IDS); rare=list(RARE_IDS)
+    used=set(legendary)|set(epic)|set(rare)
+    common=[i for i in range(1,152) if i not in used]
+    rarity=random.choices(['comun','raro','epico','legendario'],[70,24,5.5,0.5],k=1)[0]
+    base={'comun':common,'raro':rare,'epico':epic,'legendario':legendary}[rarity]
+    recent=_recent_wild_species_cursor(c,chat_id,thread_id,8)
+    candidates=[i for i in base if i not in recent]
+    if not candidates:
+        candidates=list(base)
+    preferred=DAY_PREFERRED if _wild_period()=='day' else NIGHT_PREFERRED
+    weights=[4 if i in preferred else 1 for i in candidates]
+    return random.choices(candidates,weights=weights,k=1)[0]
+
+
+def _tournament_active_cursor(c,chat_id:int,thread_id:int|None,statuses=('registration','active')):
+    # statuses se mantiene en la firma por compatibilidad; los estados vivos son estos dos.
+    c.execute("""
+        SELECT tournament_id,mode,status,round_no,created_by,message_id,champion_id
+        FROM pokemon_tournaments_tb
+        WHERE chat_id=%s AND thread_id IS NOT DISTINCT FROM %s AND status IN ('registration','active')
+        ORDER BY tournament_id DESC LIMIT 1
+    """,(chat_id,thread_id))
+    return c.fetchone()
+
+
+def _tournament_name_cursor(c,uid:int)->str:
+    return _display_name_cursor(c,uid)
+
+
+def _tournament_round_text_cursor(c,tid:int)->str:
+    c.execute("SELECT mode,status,round_no,champion_id FROM pokemon_tournaments_tb WHERE tournament_id=%s",(tid,)); tr=c.fetchone()
+    if not tr:return '🏆 Torneo no encontrado.'
+    mode,status,round_no,champion=tr
+    c.execute("SELECT COUNT(*) FROM pokemon_tournament_players_tb WHERE tournament_id=%s",(tid,)); count=int(c.fetchone()[0])
+    lines=[f'🏆 TORNEO POKÉMON #{tid} · {mode}v{mode}',f'👥 Participantes: {count}',f'📌 Estado: {status.upper()}']
+    if status=='registration':
+        lines += ['','Inscripciones abiertas.']
+    elif status=='active':
+        lines += ['',f'⚔️ Ronda {round_no}']
+        c.execute("""SELECT slot_no,user_a,user_b,winner_id,status FROM pokemon_tournament_matches_tb
+                     WHERE tournament_id=%s AND round_no=%s ORDER BY slot_no""",(tid,round_no))
+        for slot,a,b,winner,mstatus in c.fetchall():
+            an=_tournament_name_cursor(c,int(a)); bn=_tournament_name_cursor(c,int(b)) if b else 'Pase libre'
+            mark='✅' if mstatus=='finished' else '⚔️'
+            if b is None: mark='➡️'
+            lines.append(f'{mark} {slot}. {an} vs {bn}')
+    elif status=='finished' and champion:
+        lines += ['',f'👑 Campeón: {_tournament_name_cursor(c,int(champion))}']
+    return '\n'.join(lines)
+
+
+def _create_tournament_round_cursor(c,tid:int,round_no:int,players:list[int]):
+    players=[int(x) for x in players]
+    slot=1
+    for i in range(0,len(players),2):
+        a=players[i]; b=players[i+1] if i+1<len(players) else None
+        if b is None:
+            c.execute("""INSERT INTO pokemon_tournament_matches_tb(tournament_id,round_no,slot_no,user_a,user_b,winner_id,status,finished_at)
+                         VALUES(%s,%s,%s,%s,NULL,%s,'finished',NOW())""",(tid,round_no,slot,a,a))
+        else:
+            c.execute("""INSERT INTO pokemon_tournament_matches_tb(tournament_id,round_no,slot_no,user_a,user_b,status)
+                         VALUES(%s,%s,%s,%s,%s,'pending')""",(tid,round_no,slot,a,b))
+        slot+=1
+
+
+def _advance_tournament_cursor(c,tid:int):
+    c.execute("SELECT status,round_no FROM pokemon_tournaments_tb WHERE tournament_id=%s FOR UPDATE",(tid,)); tr=c.fetchone()
+    if not tr or tr[0]!='active':return None
+    round_no=int(tr[1])
+    c.execute("SELECT COUNT(*) FROM pokemon_tournament_matches_tb WHERE tournament_id=%s AND round_no=%s AND status!='finished'",(tid,round_no))
+    if int(c.fetchone()[0])>0:return None
+    c.execute("SELECT winner_id FROM pokemon_tournament_matches_tb WHERE tournament_id=%s AND round_no=%s ORDER BY slot_no",(tid,round_no))
+    winners=[int(r[0]) for r in c.fetchall() if r[0] is not None]
+    if len(winners)==1:
+        champion=winners[0]
+        c.execute("UPDATE pokemon_tournaments_tb SET status='finished',champion_id=%s,finished_at=NOW() WHERE tournament_id=%s",(champion,tid))
+        _ensure_trainer_row_cursor(c,champion)
+        c.execute("UPDATE pokemon_trainer_tb SET tournament_wins=tournament_wins+1,updated_at=NOW() WHERE user_id=%s",(champion,))
+        return {'finished':True,'champion':champion,'round':round_no}
+    next_round=round_no+1
+    _create_tournament_round_cursor(c,tid,next_round,winners)
+    c.execute("UPDATE pokemon_tournaments_tb SET round_no=%s WHERE tournament_id=%s",(next_round,tid))
+    # Si la nueva ronda fue un único pase libre, finaliza de inmediato.
+    c.execute("SELECT COUNT(*) FROM pokemon_tournament_matches_tb WHERE tournament_id=%s AND round_no=%s AND status!='finished'",(tid,next_round))
+    if int(c.fetchone()[0])==0:
+        return _advance_tournament_cursor(c,tid)
+    return {'finished':False,'round':next_round}
+
+
+def _tournament_match_for_pair_cursor(c,chat_id:int,thread_id:int|None,a:int,b:int):
+    c.execute("""
+        SELECT m.match_id,t.tournament_id,t.mode
+        FROM pokemon_tournament_matches_tb m
+        JOIN pokemon_tournaments_tb t ON t.tournament_id=m.tournament_id
+        WHERE t.chat_id=%s AND t.thread_id IS NOT DISTINCT FROM %s AND t.status='active'
+          AND m.status='pending' AND ((m.user_a=%s AND m.user_b=%s) OR (m.user_a=%s AND m.user_b=%s))
+        ORDER BY m.match_id DESC LIMIT 1
+    """,(chat_id,thread_id,a,b,b,a))
+    return c.fetchone()
+
+
+def _record_tournament_battle_cursor(c,bid:int,winner:int):
+    c.execute("SELECT tournament_match_id FROM pokemon_battles_tb WHERE battle_id=%s",(bid,)); r=c.fetchone()
+    if not r or not r[0]:return None
+    mid=int(r[0])
+    c.execute("SELECT tournament_id,status FROM pokemon_tournament_matches_tb WHERE match_id=%s FOR UPDATE",(mid,)); mr=c.fetchone()
+    if not mr or mr[1] not in ('pending','active'):return None
+    tid=int(mr[0])
+    c.execute("UPDATE pokemon_tournament_matches_tb SET winner_id=%s,status='finished',finished_at=NOW() WHERE match_id=%s",(winner,mid))
+    return {'tournament_id':tid,'advance':_advance_tournament_cursor(c,tid)}
 
 
 def _xp_floor(level:int)->int:
@@ -260,12 +560,11 @@ def _ensure_trainer_row_cursor(c, uid:int):
 
 
 def _wild_species()->int:
-    legendary = list(LEGENDARY_IDS)
-    epic = list(EPIC_IDS)
-    rare = list(RARE_IDS)
-    used = set(legendary) | set(epic) | set(rare)
-    common = [i for i in range(1,152) if i not in used]
-    rarity = random.choices(['comun','raro','epico','legendario'], [70,24,5.5,0.5], k=1)[0]
+    # Compatibilidad para llamadas internas antiguas; las apariciones reales usan
+    # _wild_species_cursor para aplicar horario y anti-repetición.
+    legendary=list(LEGENDARY_IDS); epic=list(EPIC_IDS); rare=list(RARE_IDS)
+    used=set(legendary)|set(epic)|set(rare); common=[i for i in range(1,152) if i not in used]
+    rarity=random.choices(['comun','raro','epico','legendario'],[70,24,5.5,0.5],k=1)[0]
     return random.choice({'comun':common,'raro':rare,'epico':epic,'legendario':legendary}[rarity])
 
 
@@ -861,12 +1160,13 @@ def _grant_pokemon_xp_cursor(c,pid:int,amount:int)->list[str]:
 
 
 def _update_rank_cursor(c,winner:int,loser:int):
+    _pokemon_season_rollover_cursor(c)
     for uid in (winner,loser):c.execute("INSERT INTO pokemon_rank_tb(user_id) VALUES(%s) ON CONFLICT DO NOTHING",(uid,))
-    c.execute("SELECT user_id,rating,wins,losses,current_streak,best_streak FROM pokemon_rank_tb WHERE user_id IN (%s,%s) FOR UPDATE",(winner,loser)); rows={int(r[0]):r for r in c.fetchall()}
+    c.execute("SELECT user_id,rating,wins,losses,current_streak,best_streak,season_best_streak,peak_rating FROM pokemon_rank_tb WHERE user_id IN (%s,%s) FOR UPDATE",(winner,loser)); rows={int(r[0]):r for r in c.fetchall()}
     rw=int(rows[winner][1]); rl=int(rows[loser][1]); ew=1/(1+10**((rl-rw)/400)); delta=max(8,round(24*(1-ew)))
-    ws=int(rows[winner][4])+1; best=max(int(rows[winner][5]),ws)
-    c.execute("UPDATE pokemon_rank_tb SET rating=rating+%s,wins=wins+1,current_streak=%s,best_streak=%s,updated_at=NOW() WHERE user_id=%s",(delta,ws,best,winner))
-    c.execute("UPDATE pokemon_rank_tb SET rating=GREATEST(0,rating-%s),losses=losses+1,current_streak=0,updated_at=NOW() WHERE user_id=%s",(delta,loser))
+    ws=int(rows[winner][4])+1; best=max(int(rows[winner][5]),ws); season_best=max(int(rows[winner][6]),ws); new_rating=rw+delta; peak=max(int(rows[winner][7]),new_rating)
+    c.execute("UPDATE pokemon_rank_tb SET rating=%s,wins=wins+1,current_streak=%s,best_streak=%s,season_best_streak=%s,peak_rating=%s,rating_reached_at=NOW(),updated_at=NOW() WHERE user_id=%s",(new_rating,ws,best,season_best,peak,winner))
+    c.execute("UPDATE pokemon_rank_tb SET rating=GREATEST(0,rating-%s),losses=losses+1,current_streak=0,rating_reached_at=NOW(),updated_at=NOW() WHERE user_id=%s",(delta,loser))
     return delta
 
 
@@ -929,7 +1229,8 @@ def _finish_battle_cursor(c,bid:int,state:dict)->dict:
             level_notes += _grant_pokemon_xp_cursor(c,int(mon['pid']),amount)
         c.execute("UPDATE pokemon_instances_tb SET wins=wins+1 WHERE owner_id=%s AND pokemon_id=ANY(%s)",(int(uid),[int(m['pid']) for m in p['mons']])) if won else c.execute("UPDATE pokemon_instances_tb SET losses=losses+1 WHERE owner_id=%s AND pokemon_id=ANY(%s)",(int(uid),[int(m['pid']) for m in p['mons']]))
     c.execute("UPDATE pokemon_battles_tb SET status='finished',winner_id=%s,state_json=%s,finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s",(winner,json.dumps(state,ensure_ascii=False),bid))
-    return {'winner':winner,'loser':loser,'elo':delta,'notes':level_notes}
+    tournament=_record_tournament_battle_cursor(c,bid,winner)
+    return {'winner':winner,'loser':loser,'elo':delta,'notes':level_notes,'tournament':tournament}
 
 
 async def batallapokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
@@ -938,17 +1239,30 @@ async def batallapokemon_command(update:Update, context:ContextTypes.DEFAULT_TYP
     uid=update.effective_user.id; target=_resolve_target(update,context)
     if target==uid:return await update.effective_message.reply_text('😂 No puedes retarte a ti mismo.')
     if context.args and context.args[0].startswith('@') and target is None:return await update.effective_message.reply_text('No encontré a ese usuario registrado. También puedes responderle con /batallapokemon.')
-    conn=_get_connection()
+    conn=_get_connection(); tournament_match=None
     try:
         c=conn.cursor(); c.execute("SELECT 1 FROM pokemon_battles_tb WHERE status IN ('open','active') AND (challenger_id=%s OR opponent_id=%s) LIMIT 1",(uid,uid))
         if c.fetchone():return await update.effective_message.reply_text('⚔️ Ya tienes un reto Pokémon pendiente o activo.')
         if _trade_busy_cursor(c,uid):return await update.effective_message.reply_text('🔄 Termina o cancela tu intercambio Pokémon antes de iniciar una batalla.')
-        c.execute("INSERT INTO pokemon_battles_tb(chat_id,thread_id,challenger_id,opponent_id) VALUES(%s,%s,%s,%s) RETURNING battle_id",(update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),uid,target)); bid=int(c.fetchone()[0]); conn.commit()
+        if target is not None:
+            tournament_match=_tournament_match_for_pair_cursor(c,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),uid,target)
+        if tournament_match:
+            mid,tid,tmode=map(int,tournament_match)
+            c.execute("INSERT INTO pokemon_battles_tb(chat_id,thread_id,challenger_id,opponent_id,mode,tournament_match_id) VALUES(%s,%s,%s,%s,%s,%s) RETURNING battle_id",(update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),uid,target,tmode,mid)); bid=int(c.fetchone()[0])
+            c.execute("UPDATE pokemon_tournament_matches_tb SET battle_id=%s,status='active' WHERE match_id=%s",(bid,mid))
+        else:
+            c.execute("INSERT INTO pokemon_battles_tb(chat_id,thread_id,challenger_id,opponent_id) VALUES(%s,%s,%s,%s) RETURNING battle_id",(update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),uid,target)); bid=int(c.fetchone()[0])
+        conn.commit()
     except Exception:conn.rollback(); raise
     finally:_put_connection(conn)
     who=f' para <b>{update.effective_message.reply_to_message.from_user.first_name}</b>' if target and update.effective_message.reply_to_message else (' dirigido a ese usuario' if target else ' abierto para quien quiera aceptar')
-    kb=InlineKeyboardMarkup([[InlineKeyboardButton('1️⃣ 1v1',callback_data=f'pk:accept:{bid}:1'),InlineKeyboardButton('2️⃣ 2v2',callback_data=f'pk:accept:{bid}:2'),InlineKeyboardButton('3️⃣ 3v3',callback_data=f'pk:accept:{bid}:3')],[InlineKeyboardButton('❌ Cancelar',callback_data=f'pk:cancelchallenge:{bid}')]])
-    await update.effective_message.reply_text(f'⚔️ <b>RETO POKÉMON</b>{who}\n\nEl rival elige formato. El equipo permanece privado y solo se revelan los Pokémon que salen a pelear.',reply_markup=kb,parse_mode='HTML')
+    if tournament_match:
+        tmode=int(tournament_match[2]); kb=InlineKeyboardMarkup([[InlineKeyboardButton(f'🏆 Aceptar torneo · {tmode}v{tmode}',callback_data=f'pk:accept:{bid}:{tmode}')],[InlineKeyboardButton('❌ Cancelar',callback_data=f'pk:cancelchallenge:{bid}')]])
+        text=f'🏆 <b>BATALLA DE TORNEO</b>{who}\n\nFormato obligatorio: {tmode}v{tmode}. El ganador avanzará automáticamente en el cuadro.'
+    else:
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton('1️⃣ 1v1',callback_data=f'pk:accept:{bid}:1'),InlineKeyboardButton('2️⃣ 2v2',callback_data=f'pk:accept:{bid}:2'),InlineKeyboardButton('3️⃣ 3v3',callback_data=f'pk:accept:{bid}:3')],[InlineKeyboardButton('❌ Cancelar',callback_data=f'pk:cancelchallenge:{bid}')]])
+        text=f'⚔️ <b>RETO POKÉMON</b>{who}\n\nEl rival elige formato. El equipo permanece privado y solo se revelan los Pokémon que salen a pelear.'
+    await update.effective_message.reply_text(text,reply_markup=kb,parse_mode='HTML')
 
 
 def _trade_busy_cursor(c, uid:int)->bool:
@@ -1045,17 +1359,68 @@ async def shinys_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
 
 
 async def rankingpokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
-    conn=_get_connection()
+    rollover=_ensure_pokemon_season(); uid=update.effective_user.id; conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("""SELECT r.user_id,r.rating,r.wins,r.losses,r.best_streak,COALESCE(NULLIF(p.nombre,''),p.username,'Jugador')
+        c=conn.cursor(); c.execute("""SELECT r.user_id,r.rating,r.wins,r.losses,r.season_best_streak,COALESCE(NULLIF(p.nombre,''),p.username,'Jugador')
                                    FROM pokemon_rank_tb r LEFT JOIN perfiles_tb p ON p.id_user=r.user_id
-                                   ORDER BY r.rating DESC,r.wins DESC,r.updated_at ASC LIMIT 10"""); rows=c.fetchall()
+                                   WHERE (r.wins+r.losses)>0
+                                   ORDER BY r.rating DESC,r.wins DESC,r.rating_reached_at ASC,r.user_id ASC LIMIT 10"""); rows=c.fetchall()
+        c.execute("SELECT COUNT(*) FROM pokemon_season_boxes_tb WHERE owner_id=%s AND opened=FALSE",(uid,)); pending=int(c.fetchone()[0])
+        c.execute("""SELECT season_key,position,rating,wins,losses FROM pokemon_rank_history_tb
+                     WHERE position<=3 ORDER BY season_key DESC,position ASC LIMIT 3"""); last_top=c.fetchall()
     finally:_put_connection(conn)
-    lines=['🏆 RANKING POKÉMON','']
-    if not rows:lines.append('Todavía no hay batallas clasificatorias.')
+    lines=[f'🏆 RANKING POKÉMON · {_pokemon_month_key()}','']
+    if not rows:lines.append('Todavía no hay batallas clasificatorias este mes.')
     medals=['🥇','🥈','🥉']
     for i,r in enumerate(rows,1):lines.append(f"{medals[i-1] if i<=3 else str(i)+'.'} {r[5]} · {r[1]} pts · {r[2]}V/{r[3]}D · 🔥{r[4]}")
+    lines += ['', '📅 El ranking se reinicia cada mes a 1,000 puntos.', '🥇 30,000 · 🥈 20,000 · 🥉 10,000 PiPesos', '🎁 Los 3 primeros reciben una Caja Pokémon de temporada con SHINY garantizado.']
+    if pending: lines += ['',f'🎁 Tienes {pending} Caja(s) Pokémon de temporada pendientes. Usa /cajapokemon.']
+    if rollover and rollover.get('closed'): lines += ['',f"✅ Se cerró la temporada {rollover['closed']}."]
     await update.effective_message.reply_text('\n'.join(lines))
+
+
+async def cajapokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
+    _ensure_pokemon_season(); uid=update.effective_user.id; boxes=_pending_season_boxes(uid)
+    if not boxes:
+        return await update.effective_message.reply_text('🎁 No tienes Cajas Pokémon de temporada pendientes.')
+    rows=[]
+    for box_id,season,placement in boxes[:10]:
+        medal={1:'🥇',2:'🥈',3:'🥉'}.get(int(placement),'🏆')
+        rows.append([InlineKeyboardButton(f'{medal} Caja {season} · SHINY garantizado',callback_data=f'pk:seasonbox:{box_id}')])
+    await update.effective_message.reply_text('🎁 CAJAS POKÉMON DE TEMPORADA\n\nCada una contiene 1 Pokémon SHINY garantizado.',reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def _is_pokemon_admin(update:Update, context:ContextTypes.DEFAULT_TYPE)->bool:
+    try:
+        if is_botmaster(update.effective_user.id):return True
+    except Exception:pass
+    try:
+        member=await context.bot.get_chat_member(update.effective_chat.id,update.effective_user.id)
+        return member.status in ('administrator','creator')
+    except Exception:return False
+
+
+async def torneopokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type=='private' or not _is_games_topic(update):
+        return await update.effective_message.reply_text('🏆 Los torneos Pokémon se organizan en Juegos y Casino.')
+    chat_id=update.effective_chat.id; thread_id=getattr(update.effective_message,'message_thread_id',None); conn=_get_connection()
+    try:
+        c=conn.cursor(); tr=_tournament_active_cursor(c,chat_id,thread_id)
+        if tr:
+            text=_tournament_round_text_cursor(c,int(tr[0])); tid=int(tr[0]); status=tr[2]
+            rows=[]
+            if status=='registration':
+                rows.append([InlineKeyboardButton('✅ Participar',callback_data=f'pk:tjoin:{tid}'),InlineKeyboardButton('🚪 Salirme',callback_data=f'pk:tleave:{tid}')])
+                rows.append([InlineKeyboardButton('📋 Participantes',callback_data=f'pk:tlist:{tid}'),InlineKeyboardButton('🏁 Iniciar',callback_data=f'pk:tstart:{tid}')])
+                rows.append([InlineKeyboardButton('❌ Cancelar torneo',callback_data=f'pk:tcancel:{tid}')])
+            else:
+                rows.append([InlineKeyboardButton('📋 Ver cuadro',callback_data=f'pk:tlist:{tid}'),InlineKeyboardButton('⚔️ Mi rival',callback_data=f'pk:tmatch:{tid}')])
+            return await update.effective_message.reply_text(text,reply_markup=InlineKeyboardMarkup(rows))
+    finally:_put_connection(conn)
+    if not await _is_pokemon_admin(update,context):
+        return await update.effective_message.reply_text('🏆 No hay torneo activo. Un admin puede crear uno con /torneopokemon.')
+    kb=InlineKeyboardMarkup([[InlineKeyboardButton('1️⃣ 1v1',callback_data='pk:tcreate:1'),InlineKeyboardButton('2️⃣ 2v2',callback_data='pk:tcreate:2'),InlineKeyboardButton('3️⃣ 3v3',callback_data='pk:tcreate:3')]])
+    await update.effective_message.reply_text('🏆 CREAR TORNEO POKÉMON\n\nElige el formato. Después se abrirán las inscripciones con botón.',reply_markup=kb)
 
 
 async def poketest_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
@@ -1137,14 +1502,17 @@ async def caramelospokemon_command(update:Update, context:ContextTypes.DEFAULT_T
 
 
 async def _trainer_profile_data(uid:int):
+    _ensure_pokemon_season()
     conn=_get_connection()
     try:
         c=conn.cursor(); _ensure_trainer_row_cursor(c,uid); _ensure_team_row_cursor(c,uid)
         name=_display_name_cursor(c,uid)
         c.execute("SELECT COUNT(*),COUNT(*) FILTER(WHERE shiny=TRUE) FROM pokemon_instances_tb WHERE owner_id=%s",(uid,)); total,shinys=c.fetchone()
         c.execute("SELECT COUNT(*) FROM pokemon_pokedex_tb WHERE owner_id=%s",(uid,)); dex=int(c.fetchone()[0])
-        c.execute("SELECT rating,wins,losses,best_streak FROM pokemon_rank_tb WHERE user_id=%s",(uid,)); rank=c.fetchone() or (1000,0,0,0)
-        c.execute("SELECT wild_catches,released,candies_earned,media_type,media_file_id FROM pokemon_trainer_tb WHERE user_id=%s",(uid,)); tr=c.fetchone() or (0,0,0,None,None)
+        c.execute("SELECT rating,wins,losses,best_streak,season_best_streak,peak_rating FROM pokemon_rank_tb WHERE user_id=%s",(uid,)); rank=c.fetchone() or (1000,0,0,0,0,1000)
+        c.execute("SELECT wild_catches,released,candies_earned,media_type,media_file_id,tournament_wins FROM pokemon_trainer_tb WHERE user_id=%s",(uid,)); tr=c.fetchone() or (0,0,0,None,None,0)
+        c.execute("SELECT COUNT(*) FILTER(WHERE position=1),COUNT(*) FILTER(WHERE position<=3) FROM pokemon_rank_history_tb WHERE user_id=%s",(uid,)); hist=c.fetchone() or (0,0)
+        c.execute("SELECT COUNT(*) FROM pokemon_season_boxes_tb WHERE owner_id=%s AND opened=FALSE",(uid,)); pending_boxes=int(c.fetchone()[0])
         c.execute("SELECT COALESCE(SUM(qty),0) FROM pokemon_candies_tb WHERE owner_id=%s",(uid,)); candies=int(c.fetchone()[0] or 0)
         c.execute("SELECT principal_pokemon_id FROM pokemon_team_tb WHERE owner_id=%s",(uid,)); pr=c.fetchone(); principal=int(pr[0]) if pr and pr[0] else None
         prow=None
@@ -1154,7 +1522,8 @@ async def _trainer_profile_data(uid:int):
         conn.commit()
         return {
             'name':name,'total':int(total),'shinys':int(shinys),'dex':dex,'rank':rank,'trainer':tr,
-            'candies':candies,'principal':prow,'media_type':tr[3],'media_file_id':tr[4]
+            'candies':candies,'principal':prow,'media_type':tr[3],'media_file_id':tr[4],
+            'history':hist,'pending_boxes':pending_boxes
         }
     except Exception:
         conn.rollback(); raise
@@ -1163,7 +1532,9 @@ async def _trainer_profile_data(uid:int):
 
 def _trainer_profile_text(data:dict)->str:
     rank=data['rank']; tr=data['trainer']; prow=data['principal']
-    lines=[f"🎒 ENTRENADOR POKÉMON · {data['name']}",'',f"📖 Pokédex: {data['dex']}/151",f"🎮 Pokémon: {data['total']}",f"✨ Shinys: {data['shinys']}",f"🎯 Capturas salvajes: {int(tr[0])}",f"🌿 Liberados: {int(tr[1])}",f"🍬 Caramelos disponibles: {data['candies']}",f"🏆 Ranking: {int(rank[0])} pts · {int(rank[1])}V/{int(rank[2])}D",f"🔥 Mejor racha: {int(rank[3])}"]
+    hist=data.get('history') or (0,0)
+    lines=[f"🎒 ENTRENADOR POKÉMON · {data['name']}",'',f"📖 Pokédex: {data['dex']}/151",f"🎮 Pokémon: {data['total']}",f"✨ Shinys: {data['shinys']}",f"🎯 Capturas salvajes: {int(tr[0])}",f"🌿 Liberados: {int(tr[1])}",f"🍬 Caramelos disponibles: {data['candies']}",f"🏆 Ranking {_pokemon_month_key()}: {int(rank[0])} pts · {int(rank[1])}V/{int(rank[2])}D",f"🔥 Mejor racha histórica: {int(rank[3])}",f"📈 Mejor rating histórico: {int(rank[5])}",f"👑 Campeón mensual: ×{int(hist[0])} · Top 3: ×{int(hist[1])}",f"🏟️ Torneos ganados: {int(tr[5])}"]
+    if int(data.get('pending_boxes',0))>0: lines.append(f"🎁 Cajas Pokémon pendientes: {int(data['pending_boxes'])}")
     if prow:
         ivpct=_iv_percent(_iv_values(prow)); lines += ['',f"⭐ Principal: {_pokemon_label(prow)}",f"🧬 IV {ivpct}% · {_iv_grade(ivpct)}"]
     else:lines += ['','⭐ Principal: todavía no elegido']
@@ -1210,7 +1581,8 @@ async def entrenador_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
 def _wild_text(species:int, level:int, shiny:bool)->str:
     rarity=rarity_for(species); threshold=WILD_CATCH_THRESHOLD[rarity]
     shiny_line='✨ SHINY ✨\n' if shiny else ''
-    return (f"🌿 ¡APARECIÓ UN POKÉMON SALVAJE!\n\n"
+    period=_wild_period(); period_line='☀️ Aparición diurna' if period=='day' else '🌙 Aparición nocturna'
+    return (f"🌿 ¡APARECIÓ UN POKÉMON SALVAJE!\n{period_line}\n\n"
             f"{shiny_line}"
             f"{rarity_emoji(rarity)} #{species:03d} {NAMES[species]} · Nv.{level}\n"
             f"{_types_text(species)}\n"
@@ -1263,11 +1635,11 @@ async def _expire_wild_spawn(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _spawn_wild(context:ContextTypes.DEFAULT_TYPE, chat_id:int, thread_id:int|None)->bool:
-    species=_wild_species(); level=min(MAX_LEVEL,_starting_level(species)+random.randint(0,5)); shiny=(random.randrange(WILD_SHINY_DENOMINATOR)==0)
-    conn=_get_connection(); spawn_id=None
+    conn=_get_connection(); spawn_id=None; species=None; level=None; shiny=None
     try:
         c=conn.cursor()
         c.execute("UPDATE pokemon_wild_spawns_tb SET status='expired',finished_at=NOW() WHERE chat_id=%s AND thread_id IS NOT DISTINCT FROM %s AND status='active'",(chat_id,thread_id))
+        species=_wild_species_cursor(c,chat_id,thread_id); level=min(MAX_LEVEL,_starting_level(species)+random.randint(0,5)); shiny=(random.randrange(WILD_SHINY_DENOMINATOR)==0)
         c.execute("INSERT INTO pokemon_wild_spawns_tb(chat_id,thread_id,species_id,level,shiny) VALUES(%s,%s,%s,%s,%s) RETURNING spawn_id",(chat_id,thread_id,species,level,shiny)); spawn_id=int(c.fetchone()[0]); conn.commit()
     except Exception as e:
         conn.rollback(); print('[PK wild spawn db]',type(e).__name__,e); return False
@@ -1318,6 +1690,87 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; p=q.data.split(':'); uid=q.from_user.id
     action=p[1]
     if action=='noop':return await q.answer()
+    if action=='seasonbox':
+        box_id=int(p[2]); _ensure_pokemon_season(); conn=_get_connection(); data=None
+        try:
+            c=conn.cursor(); c.execute("SELECT owner_id,season_key,placement,opened FROM pokemon_season_boxes_tb WHERE box_id=%s FOR UPDATE",(box_id,)); br=c.fetchone()
+            if not br or int(br[0])!=uid:conn.rollback(); return await q.answer('Esa caja no es tuya.',show_alert=True)
+            if br[3]:conn.rollback(); return await q.answer('Esa caja ya fue abierta.',show_alert=True)
+            species=roll_box_pokemon('legendary')
+            data=grant_pokemon_with_cursor(c,uid,species,f"season_box:{br[1]}:{br[2]}",force_shiny=True)
+            c.execute("UPDATE pokemon_season_boxes_tb SET opened=TRUE,pokemon_id=%s,opened_at=NOW() WHERE box_id=%s",(data['pokemon_id'],box_id)); conn.commit()
+        except Exception as e:
+            conn.rollback(); print('[PK season box]',type(e).__name__,e); return await q.answer('No pude abrir la caja.',show_alert=True)
+        finally:_put_connection(conn)
+        await q.answer('✨ ¡SHINY garantizado!',show_alert=True)
+        return await q.edit_message_text(f"🎁 CAJA POKÉMON DE TEMPORADA\n\n✨ ¡Te salió #{data['species_id']:03d} SHINY {data['name']}!\n⭐ Nv.{data['level']} · 🧬 IV {data['iv_percent']}% · {data['iv_grade']}\n\nSe agregó a tu colección, no a tu equipo.")
+    if action=='tcreate':
+        mode=int(p[2])
+        try:
+            member=await context.bot.get_chat_member(q.message.chat_id,uid); allowed=(member.status in ('administrator','creator')) or is_botmaster(uid)
+        except Exception:
+            try: allowed=is_botmaster(uid)
+            except Exception: allowed=False
+        if not allowed:return await q.answer('Solo admins pueden crear torneos.',show_alert=True)
+        conn=_get_connection(); tid=None
+        try:
+            c=conn.cursor(); existing=_tournament_active_cursor(c,q.message.chat_id,getattr(q.message,'message_thread_id',None))
+            if existing:conn.rollback(); return await q.answer('Ya hay un torneo abierto aquí.',show_alert=True)
+            c.execute("INSERT INTO pokemon_tournaments_tb(chat_id,thread_id,created_by,mode) VALUES(%s,%s,%s,%s) RETURNING tournament_id",(q.message.chat_id,getattr(q.message,'message_thread_id',None),uid,mode)); tid=int(c.fetchone()[0]); conn.commit()
+        except Exception as e:conn.rollback(); print('[PK tournament create]',type(e).__name__,e); return await q.answer('No pude crear el torneo.',show_alert=True)
+        finally:_put_connection(conn)
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton('✅ Participar',callback_data=f'pk:tjoin:{tid}'),InlineKeyboardButton('🚪 Salirme',callback_data=f'pk:tleave:{tid}')],[InlineKeyboardButton('📋 Participantes',callback_data=f'pk:tlist:{tid}'),InlineKeyboardButton('🏁 Iniciar',callback_data=f'pk:tstart:{tid}')],[InlineKeyboardButton('❌ Cancelar torneo',callback_data=f'pk:tcancel:{tid}')]])
+        await q.answer('Torneo creado.'); return await q.edit_message_text(f'🏆 TORNEO POKÉMON #{tid} · {mode}v{mode}\n\n👥 Inscripciones abiertas. Máximo {TOURNAMENT_MAX_PLAYERS} participantes.',reply_markup=kb)
+    if action in {'tjoin','tleave','tlist','tstart','tcancel','tmatch'}:
+        tid=int(p[2]); conn=_get_connection(); out=None; text=None
+        try:
+            c=conn.cursor(); c.execute("SELECT chat_id,thread_id,created_by,mode,status,round_no FROM pokemon_tournaments_tb WHERE tournament_id=%s FOR UPDATE",(tid,)); tr=c.fetchone()
+            if not tr:conn.rollback(); return await q.answer('Torneo no encontrado.',show_alert=True)
+            chat_id,thread_id,creator,mode,status,round_no=int(tr[0]),tr[1],int(tr[2]),int(tr[3]),tr[4],int(tr[5])
+            if action=='tjoin':
+                if status!='registration':conn.rollback(); return await q.answer('Las inscripciones ya cerraron.',show_alert=True)
+                c.execute("SELECT COUNT(*) FROM pokemon_tournament_players_tb WHERE tournament_id=%s",(tid,)); count=int(c.fetchone()[0])
+                if count>=TOURNAMENT_MAX_PLAYERS:conn.rollback(); return await q.answer('El torneo ya está lleno.',show_alert=True)
+                if not _team_for_battle_cursor(c,uid,mode):conn.rollback(); return await q.answer(f'Necesitas {mode} Pokémon en los primeros {mode} espacios de tu equipo.',show_alert=True)
+                c.execute("INSERT INTO pokemon_tournament_players_tb(tournament_id,user_id) VALUES(%s,%s) ON CONFLICT DO NOTHING",(tid,uid)); conn.commit(); out='✅ Quedaste inscrito.'
+            elif action=='tleave':
+                if status!='registration':conn.rollback(); return await q.answer('Ya no puedes salir: el torneo comenzó.',show_alert=True)
+                c.execute("DELETE FROM pokemon_tournament_players_tb WHERE tournament_id=%s AND user_id=%s",(tid,uid)); conn.commit(); out='🚪 Saliste del torneo.'
+            elif action=='tlist':
+                if status=='registration':
+                    c.execute("SELECT user_id FROM pokemon_tournament_players_tb WHERE tournament_id=%s ORDER BY joined_at",(tid,)); ids=[int(r[0]) for r in c.fetchall()]
+                    text=f'📋 PARTICIPANTES · TORNEO #{tid}\n\n'+('\n'.join(f'{i}. {_tournament_name_cursor(c,u)}' for i,u in enumerate(ids,1)) if ids else 'Todavía no hay participantes.')
+                else:text=_tournament_round_text_cursor(c,tid)
+                conn.commit()
+            elif action in ('tstart','tcancel'):
+                try:
+                    member=await context.bot.get_chat_member(chat_id,uid); allowed=(member.status in ('administrator','creator')) or is_botmaster(uid)
+                except Exception:
+                    try: allowed=is_botmaster(uid)
+                    except Exception: allowed=False
+                if not allowed:conn.rollback(); return await q.answer('Solo admins pueden hacer eso.',show_alert=True)
+                if action=='tcancel':
+                    if status=='finished':conn.rollback(); return await q.answer('El torneo ya terminó.',show_alert=True)
+                    c.execute("UPDATE pokemon_tournaments_tb SET status='cancelled',finished_at=NOW() WHERE tournament_id=%s",(tid,))
+                    c.execute("UPDATE pokemon_battles_tb SET status='cancelled',finished_at=NOW(),updated_at=NOW() WHERE tournament_match_id IN (SELECT match_id FROM pokemon_tournament_matches_tb WHERE tournament_id=%s) AND status='open'",(tid,))
+                    conn.commit(); text=f'❌ Torneo Pokémon #{tid} cancelado.'
+                else:
+                    if status!='registration':conn.rollback(); return await q.answer('Ese torneo ya comenzó.',show_alert=True)
+                    c.execute("SELECT user_id FROM pokemon_tournament_players_tb WHERE tournament_id=%s ORDER BY joined_at",(tid,)); players=[int(r[0]) for r in c.fetchall()]
+                    if len(players)<2:conn.rollback(); return await q.answer('Necesitas al menos 2 participantes.',show_alert=True)
+                    random.shuffle(players); _create_tournament_round_cursor(c,tid,1,players); c.execute("UPDATE pokemon_tournaments_tb SET status='active',round_no=1,started_at=NOW() WHERE tournament_id=%s",(tid,)); adv=_advance_tournament_cursor(c,tid); conn.commit(); text=_tournament_round_text_cursor(c,tid) if not (adv and adv.get('finished')) else f'👑 Torneo #{tid} finalizado.'
+            elif action=='tmatch':
+                if status!='active':conn.rollback(); return await q.answer('El torneo no está activo.',show_alert=True)
+                c.execute("""SELECT user_a,user_b FROM pokemon_tournament_matches_tb WHERE tournament_id=%s AND round_no=%s AND status='pending' AND (user_a=%s OR user_b=%s) LIMIT 1""",(tid,round_no,uid,uid)); mr=c.fetchone()
+                if not mr:conn.rollback(); return await q.answer('No tienes combate pendiente en esta ronda.',show_alert=True)
+                rival=int(mr[1]) if int(mr[0])==uid else int(mr[0]); rname=_tournament_name_cursor(c,rival); conn.commit(); text=f'⚔️ Tu rival es {rname}.\n\nResponde a uno de sus mensajes con /batallapokemon. PiBot detectará el torneo y fijará el formato {mode}v{mode}.'
+        except Exception as e:
+            conn.rollback(); print('[PK tournament cb]',type(e).__name__,e); return await q.answer('No pude actualizar el torneo.',show_alert=True)
+        finally:_put_connection(conn)
+        if out:return await q.answer(out,show_alert=True)
+        await q.answer()
+        if text:return await q.message.reply_text(text)
+        return
     if action in {'trainercollection','trainerbrag','trainermedia','trainerremovemedia','trainermediacancel'}:
         owner=int(p[2]) if len(p)>2 and str(p[2]).isdigit() else uid
         if uid!=owner:
@@ -1820,7 +2273,10 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
     if action=='cancelchallenge':
         bid=int(p[2]); conn=_get_connection()
         try:
-            c=conn.cursor(); c.execute("UPDATE pokemon_battles_tb SET status='cancelled',updated_at=NOW() WHERE battle_id=%s AND challenger_id=%s AND status='open' RETURNING battle_id",(bid,uid)); ok=c.fetchone(); conn.commit()
+            c=conn.cursor(); c.execute("SELECT tournament_match_id FROM pokemon_battles_tb WHERE battle_id=%s AND challenger_id=%s AND status='open' FOR UPDATE",(bid,uid)); rr=c.fetchone()
+            c.execute("UPDATE pokemon_battles_tb SET status='cancelled',updated_at=NOW() WHERE battle_id=%s AND challenger_id=%s AND status='open' RETURNING battle_id",(bid,uid)); ok=c.fetchone()
+            if ok and rr and rr[0]:c.execute("UPDATE pokemon_tournament_matches_tb SET battle_id=NULL,status='pending' WHERE match_id=%s AND status='active'",(int(rr[0]),))
+            conn.commit()
         except Exception:conn.rollback(); ok=None
         finally:_put_connection(conn)
         if not ok:return await q.answer('Ya no puedes cancelar ese reto.',show_alert=True)
@@ -1897,6 +2353,19 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             lines=[f"🏆 {wname} ganó la batalla Pokémon.",f"💰 {wname}: +{WIN_PIPESOS:,} PiPesos · ⭐ +{WIN_SEASON_XP} XP de temporada",f"💰 {lname}: +{LOSS_PIPESOS:,} PiPesos · ⭐ +{LOSS_SEASON_XP} XP de temporada",f"🎮 Pokémon: ganador +{WIN_POKEMON_XP} XP c/u · rival +{LOSS_POKEMON_XP} XP c/u",f"📈 Ranking: ±{final['elo']} puntos"]+final['notes'][:6]
             try:await context.bot.send_message(chat_id,'\n'.join(lines),message_thread_id=thread_id)
             except Exception:pass
+            tinfo=final.get('tournament')
+            if tinfo:
+                conn2=None
+                try:
+                    conn2=_get_connection(); c2=conn2.cursor(); ttext=_tournament_round_text_cursor(c2,int(tinfo['tournament_id'])); conn2.commit()
+                    adv=tinfo.get('advance') or {}
+                    if adv.get('finished'):
+                        champ=state['players'].get(str(adv['champion']),{}).get('name','Campeón')
+                        ttext += f"\n\n👑 ¡{champ} es campeón del torneo!"
+                    await context.bot.send_message(chat_id,ttext,message_thread_id=thread_id)
+                except Exception as e:print('[PK tournament announce]',type(e).__name__,e)
+                finally:
+                    if conn2 is not None:_put_connection(conn2)
         return
     if action=='bswitchmenu':
         bid=int(p[2]); br=_get_battle(bid)
