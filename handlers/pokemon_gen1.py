@@ -2275,6 +2275,24 @@ def _wild_reveal_text(species:int, level:int, shiny:bool)->str:
             f"⭐ Rareza: {rarity.upper()}")
 
 
+def _wild_ditto_disguise_species(spawn_id:int)->int:
+    # Disfraz visual estable por encuentro. Usa un RNG local para no tocar el RNG normal del juego.
+    pool=[i for i in range(1,152) if i!=132]
+    return random.Random(int(spawn_id) ^ 0xD1770).choice(pool)
+
+
+def _wild_attempt_reveal_text(spawn_id:int, species:int, level:int, shiny:bool)->str:
+    # Al pulsar Atrapar se revela la identidad. Ditto es la única excepción: muestra un disfraz visual.
+    shown_species=_wild_ditto_disguise_species(spawn_id) if int(species)==132 else int(species)
+    rarity=rarity_for(shown_species)
+    shiny_line='✨ SHINY ✨\n' if shiny else ''
+    return (f"👀 ¡El Pokémon misterioso era!\n"
+            f"{shiny_line}"
+            f"{rarity_emoji(rarity)} #{shown_species:03d} {NAMES[shown_species]} · Nv.{level}\n"
+            f"{_types_text(shown_species)}\n"
+            f"⭐ Rareza: {rarity.upper()}")
+
+
 async def _expire_wild_spawn(context: ContextTypes.DEFAULT_TYPE):
     data = getattr(context.job, 'data', None) or {}
     spawn_id = int(data.get('spawn_id') or 0)
@@ -2547,7 +2565,22 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             conn.rollback(); print('[PK wild attempt]',type(e).__name__,e); return await q.answer('No pude preparar tu Poké Ball.',show_alert=True)
         finally:_put_connection(conn)
+        # Desde que alguien pulsa Atrapar, el encuentro deja de ser anónimo para todos.
+        # Ditto conserva su identidad real internamente, pero muestra un disfraz visual estable.
+        species=int(spawn[2]); level=int(spawn[3]); shiny=bool(spawn[4])
+        trainer_name=q.from_user.first_name
+        reveal_text=_wild_attempt_reveal_text(spawn_id,species,level,shiny)
+        attempt_line=(f"🎲 Tiro {attempts}/{WILD_MAX_ATTEMPTS} en curso..." if attempts<WILD_MAX_ATTEMPTS
+                      else "🎲 Último tiro en curso...")
+        encounter_text=(f"🎯 {trainer_name} tomó el encuentro.\n\n{reveal_text}\n\n{attempt_line}")
         await q.answer(f'🎯 Tiro {attempts}/{WILD_MAX_ATTEMPTS}...')
+        try:
+            await q.edit_message_text(encounter_text,reply_markup=q.message.reply_markup)
+        except Exception:
+            try:
+                await context.bot.send_message(q.message.chat_id,encounter_text,message_thread_id=getattr(q.message,'message_thread_id',None))
+            except Exception:
+                pass
         try:
             dice_msg=await context.bot.send_dice(chat_id=q.message.chat_id,message_thread_id=getattr(q.message,'message_thread_id',None),emoji='🎲')
             value=int(dice_msg.dice.value)
@@ -2564,7 +2597,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             print('[PK wild dice]',type(e).__name__,e); return
         await asyncio.sleep(WILD_DICE_ANIMATION_SECONDS)
         effect={1:'PÉSIMO',2:'FLOJO',3:'BIEN',4:'MUY BIEN',5:'EXCELENTE',6:'PERFECTO'}[value]
-        species=int(spawn[2]); level=int(spawn[3]); shiny=bool(spawn[4]); threshold=WILD_CATCH_THRESHOLD[rarity_for(species)]
+        threshold=WILD_CATCH_THRESHOLD[rarity_for(species)]
         if value>=threshold:
             conn=_get_connection(); caught=None; trainer_name=q.from_user.first_name; drop=None; held_drop=None
             try:
@@ -2590,12 +2623,12 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             identity=(f"{shiny_line}{rarity_emoji(rarity)} #{species:03d} {NAMES[species]} · Nv.{level}\n"
                       f"{_types_text(species)}\n⭐ Rareza: {rarity.upper()}")
             if species==132:
-                # Trampa de Ditto: solo visual y sin consumir el RNG normal del juego.
-                fake_species=random.SystemRandom().choice([i for i in range(1,152) if i!=132])
+                # Trampa de Ditto: al pulsar Atrapar ya se mostró este mismo disfraz visual.
+                fake_species=_wild_ditto_disguise_species(spawn_id)
                 result=(f"🎲 {value}/6 · {effect}\n🎉 ¡Pokémon capturado!\n"
-                        f"👀 Parece que atrapaste un {NAMES[fake_species]}...\n"
-                        f"✨ Espera... algo está raro...\n💥 ¡ERA DITTO!\n\n"
-                        f"🎉 ¡{trainer_name} atrapó al Pokémon misterioso!\n\n{identity}\n"
+                        f"👀 Parecía ser {NAMES[fake_species]}...\n"
+                        f"✨ Espera... algo no cuadra...\n💥 ¡ERA DITTO!\n\n"
+                        f"🎉 ¡{trainer_name} atrapó a Ditto!\n\n{identity}\n"
                         f"🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}")
             else:
                 result=(f"🎲 {value}/6 · {effect}\n🎉 ¡{trainer_name} atrapó al Pokémon misterioso!\n\n{identity}\n"
@@ -2621,8 +2654,18 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             conn.rollback(); print('[PK wild miss]',type(e).__name__,e)
         finally:_put_connection(conn)
         if remaining>0:
-            text=(f"🎲 {value}/6 · {effect}\n💨 El Pokémon desconocido escapó de la Poké Ball.\n"
+            shown_species=_wild_ditto_disguise_species(spawn_id) if species==132 else species
+            shown_reveal=_wild_attempt_reveal_text(spawn_id,species,level,shiny)
+            text=(f"🎲 {value}/6 · {effect}\n💨 {NAMES[shown_species]} escapó de la Poké Ball.\n\n"
+                  f"{shown_reveal}\n"
                   f"🎯 {trainer_name} tiene 1 último tiro. Nadie más puede intentarlo.")
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=q.message.chat_id,message_id=q.message.message_id,
+                    text=f"🎯 {trainer_name} tomó el encuentro.\n\n{shown_reveal}\n\n🎲 Queda 1 último tiro.",
+                    reply_markup=q.message.reply_markup
+                )
+            except Exception:pass
         else:
             text=(f"🎲 {value}/6 · {effect}\n❌ Fallaron los 2 tiros. El Pokémon escapó.\n\n"
                   f"{_wild_reveal_text(species,level,shiny)}")
