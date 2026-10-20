@@ -15,6 +15,7 @@ el dado manualmente.
 from __future__ import annotations
 
 import secrets
+import asyncio
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -24,6 +25,7 @@ from src.database.database import _get_connection, _put_connection
 
 MIN_STAKE = 100
 SESSION_MINUTES = 10
+TRIPLE_ANIMATION_SECONDS = 3.6  # deja terminar la animación nativa de Telegram antes de revelar
 
 
 def ensure_triple_dice_tables() -> None:
@@ -372,6 +374,9 @@ async def triple_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_thread_id=thread_id,
         )
         rolled = int(dice_msg.dice.value)
+        # Telegram devuelve el valor antes de que el cliente termine de animar el dado.
+        # Esperamos de forma asíncrona para no spoilear el resultado visual.
+        await asyncio.sleep(TRIPLE_ANIMATION_SECONDS)
     except Exception as exc:
         print(f"[TRIPLE AUTO DICE] {type(exc).__name__}: {exc}")
         # Si Telegram no pudo lanzar el dado, devolvemos la apuesta.
@@ -487,6 +492,8 @@ async def process_triple_dice(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not msg or not user or not msg.dice or msg.dice.emoji != "🎲":
         return False
 
+    # El valor ya viene fijado por Telegram, pero el usuario aún está viendo la animación.
+    await asyncio.sleep(TRIPLE_ANIMATION_SECONDS)
     chat_id, thread_id = _location(update)
     conn = _get_connection()
     consumed = False

@@ -43,6 +43,7 @@ GIFTS = {
     "anillo_obsidiana":("💍 Anillo de Obsidiana","legendario",100000,["Un regalo oscuro para alguien difícil de ignorar.","BANKIU ya lo está mirando con interés."]),
 }
 RARE_EMOJI={"comun":"⚪","raro":"🔵","epico":"🟣","legendario":"🟡","mitico":"🔴"}
+TITLE_RESALE_PRICE=1000
 
 SEASONAL_TITLES = {
     "halloween": [("little_nightmare","Little Nightmare","raro",45000,10),("amo_carmesi","Amo Carmesí","epico",95000,5),("vampire_lord_halloween","Vampire Lord","legendario",275000,3),("nightmare_king","Nightmare King","mitico",750000,1)],
@@ -97,6 +98,28 @@ def buy_title(uid,code):
         conn.commit(); return "ok",(aid,name,rarity,serial,total,price)
     except Exception as e: conn.rollback(); print('[SOCIAL] buy title',e); return "error",None
     finally:_put_connection(conn)
+
+def sell_title_to_pibot(uid,aid):
+    """Retira un título disponible de la colección y paga 1,000 PiPesos. Conserva su historial."""
+    conn=_get_connection()
+    try:
+        c=conn.cursor()
+        c.execute("SELECT nombre,estado FROM social_assets_tb WHERE asset_id=%s AND propietario_id=%s AND asset_type='titulo' FOR UPDATE",(aid,uid)); row=c.fetchone()
+        if not row or row[1] != 'disponible':
+            conn.rollback(); return None
+        name=row[0]
+        # Si estaba equipado, se quita antes de devolverlo a PiBot.
+        c.execute("UPDATE perfiles_tb SET titulo_equipado_id=NULL WHERE id_user=%s AND titulo_equipado_id=%s",(uid,aid))
+        c.execute("UPDATE social_assets_tb SET propietario_id=NULL,estado='vendido_pibot' WHERE asset_id=%s AND propietario_id=%s AND estado='disponible'",(aid,uid))
+        if c.rowcount != 1:
+            conn.rollback(); return None
+        c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s RETURNING saldo",(TITLE_RESALE_PRICE,uid)); bal=c.fetchone()
+        c.execute("INSERT INTO social_asset_history_tb(asset_id,de_user,a_user,accion,precio) VALUES(%s,%s,NULL,'venta_pibot',%s)",(aid,uid,TITLE_RESALE_PRICE))
+        conn.commit(); return name,int(bal[0]) if bal else None
+    except Exception as e:
+        conn.rollback(); print('[SOCIAL] sell title to pibot',e); return None
+    finally:
+        _put_connection(conn)
 
 def buy_gift(sender,target,code,anonymous=False,private=False):
     item=GIFTS.get(code)
@@ -306,7 +329,7 @@ async def mistitulos(update:Update,context:ContextTypes.DEFAULT_TYPE):
         serial=f" #{sn}/{st}" if sn else ""; lock=" 🔒" if e!='disponible' else ""
         kb.append([InlineKeyboardButton(f"{RARE_EMOJI.get(r,'⚪')} {n}{serial}{lock}",callback_data=f"soc:title_info:{a}")])
     kb.append([InlineKeyboardButton("🛍️ Tienda",callback_data="soc:title_shop")])
-    await update.message.reply_text(f"🏷️✨ TUS TÍTULOS ✨🏷️\n\nTienes {len(rows)}. Toca uno para equiparlo o ver sus datos.",reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text(f"🏷️✨ TUS TÍTULOS ✨🏷️\n\nTienes {len(rows)}. Toca uno para equiparlo o venderlo por {TITLE_RESALE_PRICE:,} PiPesos.",reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def _safe_q_text(q, text, reply_markup=None):
@@ -337,14 +360,27 @@ async def social_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         if not rows:return await _safe_q_text(q, '🏷️ Aún no tienes títulos.',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍️ Tienda",callback_data="soc:title_shop")]]))
         kb=[[InlineKeyboardButton(f"{RARE_EMOJI.get(r,'⚪')} {n}"+(f" #{sn}/{st}" if sn else ''),callback_data=f"soc:title_info:{a}")] for a,n,r,sn,st,_,e in rows]
         kb.append([InlineKeyboardButton("🛍️ Tienda",callback_data="soc:title_shop"),InlineKeyboardButton("⬅️ Inicio",callback_data="soc:title_home")])
-        return await _safe_q_text(q, '🏷️✨ TUS TÍTULOS ✨🏷️\n\nToca uno para equiparlo.',reply_markup=InlineKeyboardMarkup(kb))
+        return await _safe_q_text(q, f'🏷️✨ TUS TÍTULOS ✨🏷️\n\nToca uno para equiparlo o venderlo por {TITLE_RESALE_PRICE:,} PiPesos.',reply_markup=InlineKeyboardMarkup(kb))
     if data.startswith('soc:title_info:'):
         aid=int(data.rsplit(':',1)[1]); row=next((x for x in list_assets(uid,'titulo') if x[0]==aid),None)
         if not row:return await q.answer('Ese título no está disponible.',show_alert=True)
         a,n,r,sn,st,v,e=row; ser=f' #{sn}/{st}' if sn else ''
-        kb=[[InlineKeyboardButton("✨ Equipar",callback_data=f"soc:title_equip:{aid}")]] if e=='disponible' else []
+        kb=[]
+        if e=='disponible':
+            kb.append([InlineKeyboardButton("✨ Equipar",callback_data=f"soc:title_equip:{aid}"),InlineKeyboardButton(f"💰 Vender · {TITLE_RESALE_PRICE:,}",callback_data=f"soc:title_sell:{aid}")])
         kb.append([InlineKeyboardButton("⬅️ Mis títulos",callback_data="soc:title_owned")])
-        return await _safe_q_text(q, f"{RARE_EMOJI.get(r,'⚪')} {n}{ser}\n✨ {r.title()}\n💎 Valor base: {v:,} PP\n📦 Estado: {e}",reply_markup=InlineKeyboardMarkup(kb))
+        return await _safe_q_text(q, f"{RARE_EMOJI.get(r,'⚪')} {n}{ser}\n✨ {r.title()}\n💎 Valor base: {v:,} PP\n📦 Estado: {e}\n💰 Reventa a PiBot: {TITLE_RESALE_PRICE:,} PP",reply_markup=InlineKeyboardMarkup(kb))
+    if data.startswith('soc:title_sell:'):
+        aid=int(data.rsplit(':',1)[1]); row=next((x for x in list_assets(uid,'titulo') if x[0]==aid and x[6]=='disponible'),None)
+        if not row:return await q.answer('Ese título ya no está disponible para vender.',show_alert=True)
+        n=row[1]
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton(f"✅ Sí, vender por {TITLE_RESALE_PRICE:,}",callback_data=f"soc:title_sellconfirm:{aid}")],[InlineKeyboardButton("❌ Conservar",callback_data=f"soc:title_info:{aid}")]])
+        return await _safe_q_text(q,f"💰 ¿VENDER {n.upper()}?\n\nRecibirás {TITLE_RESALE_PRICE:,} PiPesos. Si está equipado, se quitará automáticamente de tu perfil.",reply_markup=kb)
+    if data.startswith('soc:title_sellconfirm:'):
+        aid=int(data.rsplit(':',1)[1]); sold=sell_title_to_pibot(uid,aid)
+        if not sold:return await q.answer('Ese título ya no se puede vender.',show_alert=True)
+        name,balance=sold
+        return await _safe_q_text(q,f"✅ Vendiste {name} por {TITLE_RESALE_PRICE:,} PiPesos.\n💰 Saldo: {balance:,} PiPesos",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏷️ Volver a mis títulos",callback_data="soc:title_owned")]]))
     if data.startswith('soc:title_equip:'):
         from handlers.profile_social import _equip
         aid=int(data.rsplit(':',1)[1]); name=_equip(uid,aid)

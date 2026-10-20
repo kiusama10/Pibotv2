@@ -110,6 +110,22 @@ FONT_DECORATORS=[
     ("diamond","◇ {t} ◇"),("crown","♛ {t} ♛"),("chain","⛓ {t} ⛓"),("dot","• {t} •"),("wave","〜 {t} 〜"),
     ("cross","† {t} †"),("flower","❀ {t} ❀"),("arrow","➤ {t} ◀"),("bracket","【{t}】"),("angle","《{t}》"),
 ]
+FONT_BASE_NAMES={
+    "normal":"Normal","bold":"Negrita","italic":"Cursiva","bolditalic":"Negrita cursiva",
+    "script":"Script","boldscript":"Script fuerte","fraktur":"Gótica","boldfraktur":"Gótica fuerte",
+    "double":"Doble trazo","sans":"Sans","sansbold":"Sans negrita","sansitalic":"Sans cursiva",
+    "sansbolditalic":"Sans fuerte cursiva","mono":"Monoespaciada","smallcaps":"Versalitas",
+    "circled":"Círculos","fullwidth":"Ancha","parenthesized":"Paréntesis","negcircled":"Círculo sólido",
+    "squared":"Cuadros","negsquared":"Cuadros sólidos","underline":"Subrayada",
+    "doubleunderline":"Doble subrayada","strike":"Tachada","overline":"Línea superior",
+    "dotabove":"Punteada","slash":"Cortada",
+}
+FONT_DECO_NAMES={
+    "plain":"Simple","stars":"Estrellas","spark":"Brillos","moon":"Lunas","heart":"Corazones",
+    "diamond":"Diamantes","crown":"Corona","chain":"Cadenas","dot":"Puntos","wave":"Ondas",
+    "cross":"Cruces","flower":"Flores","arrow":"Flechas","bracket":"Corchetes","angle":"Ángulos",
+}
+FONT_RESALE_PRICE=1000
 # 27 estilos base reales x 15 acabados = 405 combinaciones. Las cajas priorizan bases nuevas antes de repetir adornos.
 FONTS=[f"{base}__{deco}" for base in FONT_BASES for deco,_ in FONT_DECORATORS]
 _DECO=dict(FONT_DECORATORS)
@@ -218,8 +234,17 @@ def style_text(text,code):
         out=raw
     return _DECO.get(deco,"{t}").format(t=out)
 
-# El botón enseña una muestra real; así no parece que haya 100 variantes de la misma fuente.
+# Muestra real + nombre humano: ya no aparece solamente "Kiu" sin saber qué estilo es.
 FONT_LABELS={code:style_text("Kiu",code) for code in FONTS}
+
+def font_name(code):
+    base,deco=(code.split('__',1)+['plain'])[:2] if '__' in code else (code,'plain')
+    b=FONT_BASE_NAMES.get(base,base.replace('_',' ').title())
+    d=FONT_DECO_NAMES.get(deco,deco.replace('_',' ').title())
+    return b if deco=='plain' else f"{b} · {d}"
+
+def font_button_label(code):
+    return f"{font_name(code)} — {FONT_LABELS.get(code,code)}"
 
 def owned_fonts(uid):
     """Tipografías desbloqueadas por cajas. Normal y la actualmente equipada se conservan siempre."""
@@ -249,7 +274,7 @@ def owned_fonts(uid):
 def font_markup(page=0,back_callback=None,uid=None):
     available=owned_fonts(uid) if uid is not None else FONTS
     pages=max(1,(len(available)+FONT_PAGE_SIZE-1)//FONT_PAGE_SIZE); page=max(0,min(page,pages-1)); subset=available[page*FONT_PAGE_SIZE:(page+1)*FONT_PAGE_SIZE]
-    kb=[[InlineKeyboardButton(FONT_LABELS[c],callback_data=f'ex:font:{c}')] for c in subset]
+    kb=[[InlineKeyboardButton(font_button_label(c),callback_data=f'ex:fontitem:{c}:{page}')] for c in subset]
     nav=[]
     if page>0: nav.append(InlineKeyboardButton('⬅️',callback_data=f'ex:fontpage:{page-1}'))
     nav.append(InlineKeyboardButton(f'{page+1}/{pages}',callback_data='ex:fontnoop'))
@@ -370,7 +395,7 @@ def _boxes_markup():
 
 def _boxes_text():
     season=current_season().replace('_',' ').upper(); jackpot=_jackpot_amount()
-    return (f"🎁 CAJAS · {season}\n\n💜 Épica: premios comunes, raros y hasta ÉPICOS.\n🌟 Legendaria: puede soltar todo lo anterior y premios LEGENDARIOS.\n\nDentro pueden salir PiPesos, títulos, tipografías, marcos de texto/emoji e insignias para el perfil. Cada compra suma +10,000 PiPesos al Jackpot y cada caja también da XP de temporada.\n\n🎰 Jackpot actual: {jackpot:,} PiPesos\n🎞️ El GIF de perfil por 10 días puede aparecer como bonus muy raro.\n💰 Marcos e insignias pueden venderse después por 1,000 PiPesos cada uno.\n\nSi repites un coleccionable, recibes 2,000 PiPesos.")
+    return (f"🎁 CAJAS · {season}\n\n💜 Épica: premios comunes, raros y hasta ÉPICOS.\n🌟 Legendaria: puede soltar todo lo anterior y premios LEGENDARIOS.\n\nDentro pueden salir PiPesos, títulos, tipografías, marcos de texto/emoji e insignias para el perfil. Cada compra suma +10,000 PiPesos al Jackpot y cada caja también da XP de temporada.\n\n🎰 Jackpot actual: {jackpot:,} PiPesos\n🎞️ El GIF de perfil por 10 días puede aparecer como bonus muy raro.\n💰 Títulos, tipografías, marcos e insignias se pueden vender por 1,000 PiPesos cada uno.\n\nSi repites un coleccionable, recibes 2,000 PiPesos.")
 
 
 def _font_reward_for(uid):
@@ -450,6 +475,25 @@ async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if p[1]=='fontnoop': return await q.answer()
     if p[1]=='fontpage':
         page=int(p[2]); return await q.edit_message_reply_markup(reply_markup=font_markup(page,'profile_editor',q.from_user.id))
+    if p[1]=='fontitem':
+        code=p[2]; page=int(p[3]) if len(p)>3 and str(p[3]).isdigit() else 0
+        if code not in owned_fonts(uid): return await q.answer('🔒 Esa tipografía ya no está en tu colección.',show_alert=True)
+        kb=[[InlineKeyboardButton('✨ Activar',callback_data=f'ex:font:{code}')]]
+        if code!='normal__plain': kb.append([InlineKeyboardButton(f'💰 Vender · {FONT_RESALE_PRICE:,} PP',callback_data=f'ex:fontsell:{code}:{page}')])
+        kb.append([InlineKeyboardButton('⬅️ Tipografías',callback_data=f'ex:fontpage:{page}')])
+        return await q.edit_message_text(f'🔤 {font_name(code)}\n\n👁️ Muestra: {FONT_LABELS.get(code,code)}\n\n💰 Reventa: '+('No vendible (estilo base)' if code=='normal__plain' else f'{FONT_RESALE_PRICE:,} PiPesos'),reply_markup=InlineKeyboardMarkup(kb))
+    if p[1]=='fontsell':
+        code=p[2]; page=int(p[3]) if len(p)>3 and str(p[3]).isdigit() else 0
+        if code=='normal__plain': return await q.answer('La tipografía Normal es la base del perfil y no se vende.',show_alert=True)
+        if code not in owned_fonts(uid): return await q.answer('Esa tipografía ya no está en tu colección.',show_alert=True)
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton(f'✅ Sí, vender por {FONT_RESALE_PRICE:,}',callback_data=f'ex:fontsellconfirm:{code}:{page}')],[InlineKeyboardButton('❌ Conservar',callback_data=f'ex:fontitem:{code}:{page}')]])
+        return await q.edit_message_text(f'💰 ¿VENDER {font_name(code).upper()}?\n\nRecibirás {FONT_RESALE_PRICE:,} PiPesos. Si la tienes activa, PiBot volverá automáticamente a la tipografía Normal.',reply_markup=kb)
+    if p[1]=='fontsellconfirm':
+        code=p[2]; page=int(p[3]) if len(p)>3 and str(p[3]).isdigit() else 0
+        balance=_sell_font(uid,code)
+        if balance is None: return await q.answer('Esa tipografía ya no se puede vender.',show_alert=True)
+        await q.answer('Tipografía vendida 💰',show_alert=True)
+        return await q.edit_message_text(f'✅ Vendiste {font_name(code)} por {FONT_RESALE_PRICE:,} PiPesos.\n💰 Saldo: {balance:,} PiPesos',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔤 Volver a tipografías',callback_data=f'ex:fontpage:{page}')]]))
     if p[1]=='font': return await font_callback(q,p[2])
     if p[1]=='pot':
         code=p[2]; price,mins,mult,name=POTIONS[code]; kind='xp' if code.startswith('xp') else 'money'; conn=_get_connection()
@@ -558,8 +602,35 @@ async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         await q.answer('Caja abierta 🎁',show_alert=True)
         return await q.message.reply_text('\n'.join(lines))
 
+def _sell_font(uid,code):
+    """Vende una tipografía conseguida en caja por 1,000 PP. La normal base nunca se vende."""
+    if code=='normal__plain':
+        return None
+    base,deco=(code.split('__',1)+['plain'])[:2] if '__' in code else (code,'plain')
+    variants=[code]
+    if deco=='plain':
+        variants.append(base)  # compatibilidad con premios antiguos guardados como solo la base
+    conn=_get_connection()
+    try:
+        c=conn.cursor()
+        c.execute("SELECT asset_id,asset_code FROM user_box_assets_tb WHERE user_id=%s AND asset_type='font' AND asset_code=ANY(%s) FOR UPDATE",(uid,variants))
+        row=c.fetchone()
+        if not row:
+            conn.rollback(); return None
+        c.execute("DELETE FROM user_box_assets_tb WHERE asset_id=%s AND user_id=%s",(row[0],uid))
+        c.execute("SELECT font_code FROM user_profile_style_tb WHERE user_id=%s FOR UPDATE",(uid,)); current=c.fetchone()
+        curcode=current[0] if current else 'normal__plain'
+        if curcode==code or (deco=='plain' and curcode==base):
+            c.execute("INSERT INTO user_profile_style_tb(user_id,font_code) VALUES(%s,'normal__plain') ON CONFLICT(user_id) DO UPDATE SET font_code='normal__plain',updated_at=NOW()",(uid,))
+        c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s RETURNING saldo",(FONT_RESALE_PRICE,uid)); bal=c.fetchone()
+        conn.commit(); return int(bal[0]) if bal else None
+    except Exception as exc:
+        conn.rollback(); print('[FONT SELL]',type(exc).__name__,exc); return None
+    finally:
+        _put_connection(conn)
+
 async def tipografias(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text('🔤 TIPOGRAFÍAS DE PERFIL\n\nAquí aparecen las tipografías que has conseguido en cajas. Equipar o cambiar entre las que ya tienes es gratis.',reply_markup=font_markup(0,uid=update.effective_user.id))
+    await update.effective_message.reply_text('🔤 TIPOGRAFÍAS DE PERFIL\n\nAhora verás el nombre del estilo y una muestra. Equipar es gratis y las tipografías ganadas en cajas se pueden vender por 1,000 PiPesos.',reply_markup=font_markup(0,uid=update.effective_user.id))
 
 async def font_callback(q,code):
     uid=q.from_user.id
@@ -746,7 +817,7 @@ async def baloncesto(update:Update,context:ContextTypes.DEFAULT_TYPE):
         dice=await context.bot.send_dice(chat_id=update.effective_chat.id,emoji='🏀',message_thread_id=getattr(update.effective_message,'message_thread_id',None)); value=dice.dice.value
         # La animación de 🏀 tarda unos segundos en Telegram. Esperamos antes de
         # revelar el premio para no spoilear el resultado visual.
-        await asyncio.sleep(6.5)
+        await asyncio.sleep(3.8)
     except Exception:
         # Give the reserved attempt back if Telegram itself could not send the dice.
         conn=_get_connection()
@@ -754,7 +825,7 @@ async def baloncesto(update:Update,context:ContextTypes.DEFAULT_TYPE):
             c=conn.cursor(); c.execute(f"UPDATE daily_basketball_tb SET plays=GREATEST(0,plays-1) WHERE user_id=%s AND play_date={_mx_day_sql()}",(uid,)); conn.commit()
         finally:_put_connection(conn)
         return await update.effective_message.reply_text('⚠️ Telegram no pudo lanzar el balón. Tu intento no fue consumido.')
-    rewards={1:-1000,2:-500,3:500,4:1500,5:3000}; delta=rewards.get(value,0); made_now=value>=4
+    rewards={1:-1000,2:-500,3:500,4:1500,5:3000}; delta=rewards.get(value,0); made_now=(value==5)
     conn=_get_connection()
     try:
         c=conn.cursor();
@@ -765,7 +836,7 @@ async def baloncesto(update:Update,context:ContextTypes.DEFAULT_TYPE):
     except Exception:
         conn.rollback(); return await update.effective_message.reply_text('⚠️ El tiro salió, pero no pude registrar el resultado. No se modificó tu saldo.')
     finally:_put_connection(conn)
-    label='🔥 ¡Tiro limpio!' if value==5 else ('🏀 ¡Encestaste!' if made_now else '💥 Fallaste el tiro.')
+    label='🔥 ¡Encestaste!' if value==5 else ('😮 Rozó el aro, pero no entró.' if value==4 else '💥 Fallaste el tiro.')
     await update.effective_message.reply_text(f'{label}\nResultado: {delta:+,} PiPesos\nIntentos de hoy: {stats[0]}/3 · Encestados: {stats[1]} · Balance: {stats[2]:+,}')
 
 def _challenge_target(update,context):

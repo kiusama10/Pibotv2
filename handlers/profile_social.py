@@ -630,7 +630,7 @@ async def profile_editor_callback(update: Update, context: ContextTypes.DEFAULT_
         return await q.edit_message_text("🏷️ TUS TÍTULOS\n\nAbre tu colección, toca el que quieras y equípalo.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏷️ Abrir mis títulos", callback_data="soc:title_owned")],[InlineKeyboardButton("⬅️ Volver",callback_data="profile_editor")]]))
     if data == "profile_help_fonts":
         from handlers.pipeso_extras import font_markup
-        return await q.edit_message_text("🔤 TIPOGRAFÍAS\n\nAquí aparecen las que has conseguido en cajas. Equiparlas es gratis.",reply_markup=font_markup(0,"profile_editor",q.from_user.id))
+        return await q.edit_message_text("🔤 TIPOGRAFÍAS\n\nAquí aparecen las que has conseguido en cajas. Verás el nombre + muestra; equiparlas es gratis y puedes vender cada una por 1,000 PiPesos.",reply_markup=font_markup(0,"profile_editor",q.from_user.id))
     if data == "profile_help_cosmetics":
         from handlers.profile_cosmetics import _home_text, _home_markup
         return await q.edit_message_text(_home_text(), reply_markup=_home_markup())
