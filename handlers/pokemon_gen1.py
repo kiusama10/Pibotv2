@@ -1382,12 +1382,68 @@ async def rankingpokemon_command(update:Update, context:ContextTypes.DEFAULT_TYP
 async def cajapokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
     _ensure_pokemon_season(); uid=update.effective_user.id; boxes=_pending_season_boxes(uid)
     if not boxes:
-        return await update.effective_message.reply_text('🎁 No tienes Cajas Pokémon de temporada pendientes.')
+        return await update.effective_message.reply_text('🎁 No tienes Cajas Pokémon pendientes.')
     rows=[]
     for box_id,season,placement in boxes[:10]:
-        medal={1:'🥇',2:'🥈',3:'🥉'}.get(int(placement),'🏆')
-        rows.append([InlineKeyboardButton(f'{medal} Caja {season} · SHINY garantizado',callback_data=f'pk:seasonbox:{box_id}')])
-    await update.effective_message.reply_text('🎁 CAJAS POKÉMON DE TEMPORADA\n\nCada una contiene 1 Pokémon SHINY garantizado.',reply_markup=InlineKeyboardMarkup(rows))
+        if str(season).startswith('regalo:'):
+            label='🎁 Caja de bienvenida · SHINY garantizado'
+        else:
+            medal={1:'🥇',2:'🥈',3:'🥉'}.get(int(placement),'🏆')
+            label=f'{medal} Caja {season} · SHINY garantizado'
+        rows.append([InlineKeyboardButton(label,callback_data=f'pk:seasonbox:{box_id}')])
+    await update.effective_message.reply_text('🎁 CAJAS POKÉMON\n\nCada una contiene 1 Pokémon SHINY garantizado.',reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def darcajapokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
+    """BotMaster: regala de 1 a 10 Cajas Pokémon respondiendo al usuario."""
+    try:
+        if not is_botmaster(update.effective_user.id):
+            return await update.effective_message.reply_text('🎁 Solo BotMaster puede regalar Cajas Pokémon.')
+    except Exception:
+        return await update.effective_message.reply_text('🎁 Solo BotMaster puede regalar Cajas Pokémon.')
+
+    msg=update.effective_message
+    reply=getattr(msg,'reply_to_message',None)
+    target=getattr(reply,'from_user',None) if reply else None
+    if not target or getattr(target,'is_bot',False):
+        return await msg.reply_text('🎁 Responde al mensaje de la persona con /darcajapokemon o /darcajapokemon 2.')
+
+    qty=1
+    if context.args:
+        try:
+            qty=int(context.args[0])
+        except Exception:
+            return await msg.reply_text('🎁 Usa una cantidad del 1 al 10. Ejemplo: /darcajapokemon 2')
+    if qty < 1 or qty > 10:
+        return await msg.reply_text('🎁 Puedes regalar entre 1 y 10 cajas por comando.')
+
+    giver_id=update.effective_user.id
+    now=datetime.now(timezone.utc)
+    conn=_get_connection()
+    try:
+        c=conn.cursor()
+        for i in range(qty):
+            gift_key=(
+                f"regalo:{now.strftime('%Y%m%d%H%M%S%f')}:"
+                f"{giver_id}:{random.randrange(100000,999999)}:{i}"
+            )
+            c.execute(
+                "INSERT INTO pokemon_season_boxes_tb(owner_id,season_key,placement) VALUES(%s,%s,3)",
+                (target.id,gift_key),
+            )
+        conn.commit()
+    except Exception as e:
+        conn.rollback(); print('[PK gift box]',type(e).__name__,e)
+        return await msg.reply_text('⚠️ No pude entregar la Caja Pokémon.')
+    finally:
+        _put_connection(conn)
+
+    cajas='Caja Pokémon' if qty==1 else 'Cajas Pokémon'
+    await msg.reply_text(
+        f'🎁 {target.first_name} recibió {qty} {cajas} de bienvenida.\n'
+        f'✨ Cada caja tiene 1 Pokémon SHINY garantizado.\n'
+        f'📦 Puede abrirla con /cajapokemon.'
+    )
 
 
 async def _is_pokemon_admin(update:Update, context:ContextTypes.DEFAULT_TYPE)->bool:
@@ -1697,13 +1753,16 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             if not br or int(br[0])!=uid:conn.rollback(); return await q.answer('Esa caja no es tuya.',show_alert=True)
             if br[3]:conn.rollback(); return await q.answer('Esa caja ya fue abierta.',show_alert=True)
             species=roll_box_pokemon('legendary')
-            data=grant_pokemon_with_cursor(c,uid,species,f"season_box:{br[1]}:{br[2]}",force_shiny=True)
+            gifted=str(br[1]).startswith('regalo:')
+            source='gift_box' if gifted else f"season_box:{br[1]}:{br[2]}"
+            data=grant_pokemon_with_cursor(c,uid,species,source,force_shiny=True)
             c.execute("UPDATE pokemon_season_boxes_tb SET opened=TRUE,pokemon_id=%s,opened_at=NOW() WHERE box_id=%s",(data['pokemon_id'],box_id)); conn.commit()
         except Exception as e:
             conn.rollback(); print('[PK season box]',type(e).__name__,e); return await q.answer('No pude abrir la caja.',show_alert=True)
         finally:_put_connection(conn)
         await q.answer('✨ ¡SHINY garantizado!',show_alert=True)
-        return await q.edit_message_text(f"🎁 CAJA POKÉMON DE TEMPORADA\n\n✨ ¡Te salió #{data['species_id']:03d} SHINY {data['name']}!\n⭐ Nv.{data['level']} · 🧬 IV {data['iv_percent']}% · {data['iv_grade']}\n\nSe agregó a tu colección, no a tu equipo.")
+        box_title='🎁 CAJA POKÉMON DE BIENVENIDA' if str(br[1]).startswith('regalo:') else '🎁 CAJA POKÉMON DE TEMPORADA'
+        return await q.edit_message_text(f"{box_title}\n\n✨ ¡Te salió #{data['species_id']:03d} SHINY {data['name']}!\n⭐ Nv.{data['level']} · 🧬 IV {data['iv_percent']}% · {data['iv_grade']}\n\nSe agregó a tu colección, no a tu equipo.")
     if action=='tcreate':
         mode=int(p[2])
         try:
