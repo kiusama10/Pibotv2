@@ -88,7 +88,7 @@ from handlers.batalla_naval import batalla_naval, cancelar_naval, naval_callback
 from handlers.gato import gato, cancelar_gato, ranking_gato, gato_callback, ensure_gato_tables
 from handlers.saocb_telegram import sao_command, sao_name_command, sao_callback, ensure_saocb_telegram_tables
 from handlers.saocb_mobile import sao_app_link_command, ensure_saocb_mobile_tables
-from handlers.pokemon_gen1 import (pokemon_command, pokedex_command, equipo_command, pokeobjetos_command, nombrarpokemon_command, fotopokemon_command, presumirpokemon_command, batallapokemon_command, intercambiopokemon_command, cancelarintercambiopokemon_command, shinys_command, rankingpokemon_command, cajapokemon_command, torneopokemon_command, poketest_command, entrenador_command, liberarpokemon_command, caramelospokemon_command, pokemonsalvaje_command, pokemon_wild_spawn_job, pokemon_callback, pokemon_text_input, pokemon_media_input, ensure_pokemon_tables)
+from handlers.pokemon_gen1 import (pokemon_command, pokedex_command, equipo_command, pokeobjetos_command, nombrarpokemon_command, fotopokemon_command, presumirpokemon_command, batallapokemon_command, intercambiopokemon_command, cancelarintercambiopokemon_command, shinys_command, rankingpokemon_command, cajapokemon_command, darcajapokemon_command, torneopokemon_command, poketest_command, entrenador_command, liberarpokemon_command, caramelospokemon_command, pokemonsalvaje_command, pokemon_wild_spawn_job, pokemon_callback, pokemon_text_input, pokemon_media_input, ensure_pokemon_tables)
 
 # Constants
 RUTA_CASTIGADOS = PUNISHMENT_FILE
@@ -686,6 +686,7 @@ def main() -> None:
     app.add_handler(CommandHandler("shinys", shinys_command), group=2)
     app.add_handler(CommandHandler("rankingpokemon", rankingpokemon_command), group=2)
     app.add_handler(CommandHandler("cajapokemon", cajapokemon_command), group=2)
+    app.add_handler(CommandHandler("darcajapokemon", darcajapokemon_command), group=2)
     app.add_handler(CommandHandler("torneopokemon", torneopokemon_command), group=2)
     app.add_handler(CommandHandler("entrenador", entrenador_command), group=2)
     app.add_handler(CommandHandler("liberarpokemon", liberarpokemon_command), group=2)
