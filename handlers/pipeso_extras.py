@@ -395,7 +395,7 @@ def _boxes_markup():
 
 def _boxes_text():
     season=current_season().replace('_',' ').upper(); jackpot=_jackpot_amount()
-    return (f"🎁 CAJAS · {season}\n\n💜 Épica: premios comunes, raros y hasta ÉPICOS.\n🌟 Legendaria: puede soltar todo lo anterior y premios LEGENDARIOS.\n\nDentro pueden salir PiPesos, títulos, tipografías, marcos de texto/emoji e insignias para el perfil. Cada compra suma +10,000 PiPesos al Jackpot y cada caja también da XP de temporada.\n\n🎰 Jackpot actual: {jackpot:,} PiPesos\n🎞️ El GIF de perfil por 10 días puede aparecer como bonus muy raro.\n💰 Títulos, tipografías, marcos e insignias se pueden vender por 1,000 PiPesos cada uno.\n\nSi repites un coleccionable, recibes 2,000 PiPesos.")
+    return (f"🎁 CAJAS · {season}\n\n💜 Épica: premios comunes, raros y hasta ÉPICOS.\n🌟 Legendaria: puede soltar todo lo anterior y premios LEGENDARIOS.\n\nDentro pueden salir PiPesos, títulos, tipografías, marcos de texto/emoji, insignias, Pokémon de Kanto y objetos Pokémon. Los Pokémon tienen una posibilidad base de 1 entre 4096 de salir ✨ SHINY. Cada compra suma +10,000 PiPesos al Jackpot y cada caja también da XP de temporada.\n\n🎰 Jackpot actual: {jackpot:,} PiPesos\n🎞️ El GIF de perfil por 10 días puede aparecer como bonus muy raro.\n💰 Títulos, tipografías, marcos e insignias se pueden vender por 1,000 PiPesos cada uno.\n\nSi repites un coleccionable, recibes 2,000 PiPesos.")
 
 
 def _font_reward_for(uid):
@@ -440,7 +440,20 @@ def _roll_box(code,uid=None):
     else:
         rarity=random.choices(['comun','raro','epico','legendario'],weights=[36,31,23,10],k=1)[0]
         money_by_rarity={'comun':[4000,6000,8000],'raro':[9000,12000,15000],'epico':[18000,22000,28000],'legendario':[35000,45000,60000]}
-    kind=random.choices(['title','font','cosmetic','money'],weights=[30,28,20,22],k=1)[0]
+    if code=='epic':
+        kind=random.choices(['title','font','cosmetic','money','pokemon','pokeitem'],weights=[25,23,17,20,12,3],k=1)[0]
+    else:
+        kind=random.choices(['title','font','cosmetic','money','pokemon','pokeitem'],weights=[22,20,15,18,20,5],k=1)[0]
+    if kind=='pokemon':
+        from handlers.pokemon_gen1 import roll_box_pokemon
+        from handlers.pokemon_gen1_data import NAMES, rarity_for
+        sid=roll_box_pokemon(code); pr=rarity_for(sid)
+        return 'pokemon',str(sid),f'Pokémon #{sid:03d} {NAMES[sid]} · {pr.upper()}'
+    if kind=='pokeitem':
+        from handlers.pokemon_gen1 import roll_box_item
+        from handlers.pokemon_gen1_data import ITEMS
+        item=roll_box_item(code); name,em,_,_=ITEMS[item]
+        return 'pokeitem',item,f'{em} Objeto Pokémon: {name}'
     if kind=='title':
         val=random.choice(title_pool()); return 'title',val,f'{val} · {rarity.upper()}'
     if kind=='font':
@@ -535,6 +548,15 @@ async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
             if kind=='money':
                 c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(int(val),uid))
+            elif kind=='pokemon':
+                from handlers.pokemon_gen1 import grant_pokemon_with_cursor
+                pdata=grant_pokemon_with_cursor(c,uid,int(val),'caja_'+code)
+                label += f" · ejemplar #{pdata['pokemon_id']} · Nv.{pdata['level']}"
+                if pdata.get('shiny'):
+                    label += " · ✨ SHINY"
+            elif kind=='pokeitem':
+                from handlers.pokemon_gen1 import grant_item_with_cursor
+                grant_item_with_cursor(c,uid,val,1)
             elif kind=='potion':
                 _,mins,mult,pname=POTIONS[val]; k='xp' if val.startswith('xp') else 'money'
                 c.execute("""INSERT INTO user_boosters_tb(user_id,kind,multiplier,expires_at) VALUES(%s,%s,%s,NOW()+(%s||' minutes')::interval) ON CONFLICT(user_id,kind) DO UPDATE SET multiplier=EXCLUDED.multiplier,expires_at=GREATEST(user_boosters_tb.expires_at,NOW())+(%s||' minutes')::interval""",(uid,k,mult,mins,mins))

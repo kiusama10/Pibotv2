@@ -236,27 +236,6 @@ def _equip(uid: int, aid: int):
         _put_connection(conn)
 
 
-def _gift_summary(uid: int, viewer: int):
-    conn = _get_connection()
-    try:
-        c = conn.cursor()
-        # Los regalos marcados como privados solo aparecen al propietario.
-        if viewer == uid:
-            c.execute(
-                """SELECT nombre, COUNT(*) FROM social_assets_tb
-                   WHERE propietario_id=%s AND asset_type='regalo'
-                   GROUP BY nombre ORDER BY COUNT(*) DESC, nombre LIMIT 20""", (uid,)
-            )
-        else:
-            c.execute(
-                """SELECT nombre, COUNT(*) FROM social_assets_tb
-                   WHERE propietario_id=%s AND asset_type='regalo'
-                     AND COALESCE(regalo_privado,FALSE)=FALSE
-                   GROUP BY nombre ORDER BY COUNT(*) DESC, nombre LIMIT 20""", (uid,)
-            )
-        return c.fetchall()
-    finally:
-        _put_connection(conn)
 
 
 def _save_profile_photo(uid: int, file_id: str | None):
@@ -359,7 +338,7 @@ def _ranking_profile_info(uid: int):
 
     Lee las tablas históricas que ya existen, por lo que también recupera
     ediciones pasadas si quedaron registradas. Los rankings sin temporadas
-    (PiPesos, Naval, Gato y Regalos) muestran su posición actual.
+    (PiPesos, Naval y Gato) muestran su posición actual.
     """
     history_lines = []
     current_lines = []
@@ -430,12 +409,6 @@ def _ranking_profile_info(uid: int):
                     SELECT user_id,wins,losses,draws,ROW_NUMBER() OVER(ORDER BY wins DESC,games DESC,user_id ASC) pos
                     FROM gato_stats_tb
                 ) r WHERE user_id=%s""", (uid,), lambda r: f"#{r[0]} · {r[1]}V/{r[2]}D/{r[3]}E"),
-            ("🎁 Regalos", """SELECT pos,total FROM (
-                    SELECT propietario_id,COUNT(*) total,
-                           ROW_NUMBER() OVER(ORDER BY COUNT(*) DESC,propietario_id ASC) pos
-                    FROM social_assets_tb WHERE asset_type='regalo'
-                    GROUP BY propietario_id
-                ) r WHERE propietario_id=%s""", (uid,), lambda r: f"#{r[0]} · {r[1]} recibidos"),
         ]
         for label, query, params, formatter in current_specs:
             try:
@@ -801,23 +774,6 @@ def _draw_frame_details(d, code, c1, c2, W, H):
         for x in (110,880):
             d.ellipse((x,H-170,x+90,H-80),outline=c1,width=5); d.ellipse((x+20,H-145,x+35,H-130),fill=c2); d.ellipse((x+55,H-145,x+70,H-130),fill=c2)
 
-def _gift_icon(d, x, y, name, c1, c2):
-    n=str(name).lower(); box=(x,y,x+64,y+64)
-    d.rounded_rectangle(box,radius=14,fill=(18,18,38),outline=c1,width=2)
-    if "rosa" in n:
-        d.ellipse((x+18,y+12,x+46,y+40),fill=(220,45,80)); d.line((x+32,y+38,x+32,y+56),fill=(70,190,90),width=4)
-    elif "chocolate" in n:
-        d.rectangle((x+14,y+16,x+50,y+50),fill=(110,62,38)); d.line((x+32,y+16,x+32,y+50),fill=(180,120,80),width=2); d.line((x+14,y+33,x+50,y+33),fill=(180,120,80),width=2)
-    elif "peluche" in n:
-        d.ellipse((x+18,y+18,x+46,y+50),fill=(190,135,85)); d.ellipse((x+12,y+12,x+27,y+27),fill=(190,135,85)); d.ellipse((x+37,y+12,x+52,y+27),fill=(190,135,85))
-    elif "collar" in n or "cuerda" in n:
-        d.arc((x+10,y+10,x+54,y+54),20,330,fill=c2,width=6); d.ellipse((x+27,y+42,x+37,y+52),fill=c1)
-    elif "corona" in n:
-        d.polygon([(x+10,y+45),(x+16,y+18),(x+30,y+35),(x+40,y+14),(x+53,y+45)],fill=(235,195,55))
-    elif "anillo" in n:
-        d.ellipse((x+15,y+18,x+49,y+52),outline=(210,210,230),width=7); d.polygon([(x+25,y+16),(x+32,y+7),(x+40,y+16),(x+32,y+24)],fill=c2)
-    else:
-        d.polygon([(x+32,y+10),(x+52,y+28),(x+32,y+54),(x+12,y+28)],fill=c2,outline=c1)
 
 def _wrap(draw, text, font, max_width):
     words = str(text).split(); lines=[]; current=""
