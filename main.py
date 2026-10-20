@@ -51,7 +51,7 @@ from handlers.theme_juegosYcasino import (
     apostar, aceptar, detectar_dado, cancelar_apuesta, jugar, robar, reiniciar_apuesta_callback, aceptar_apuesta_callback, recuperar_apuestas_al_iniciar
 )
 from handlers.rewards import manejar_imagenes
-from handlers.social_economy import titulos, comprartitulo, regalos, regalo, misregalos, mistitulos, rankingregalos, mercado, vender, comprarmercado, empenar, desempenar, social_callback, process_social_input
+from handlers.social_economy import titulos, comprartitulo, mistitulos, mercado, vender, comprarmercado, empenar, desempenar, social_callback, process_social_input
 from handlers.profile_social import perfil, editarperfil, privacidadperfil, equipartitulo, fotoperfil, profile_editor_callback, profile_text_input, profile_photo_input
 from handlers.profile_cosmetics import cosmeticos, comprarcosmetico, miscosmeticos, equiparmarco, equiparinsignia, cosmetics_callback
 from handlers.global_events import seasonal_event_tick
@@ -88,6 +88,7 @@ from handlers.batalla_naval import batalla_naval, cancelar_naval, naval_callback
 from handlers.gato import gato, cancelar_gato, ranking_gato, gato_callback, ensure_gato_tables
 from handlers.saocb_telegram import sao_command, sao_name_command, sao_callback, ensure_saocb_telegram_tables
 from handlers.saocb_mobile import sao_app_link_command, ensure_saocb_mobile_tables
+from handlers.pokemon_gen1 import (pokemon_command, pokedex_command, equipo_command, pokeobjetos_command, nombrarpokemon_command, fotopokemon_command, presumirpokemon_command, batallapokemon_command, intercambiopokemon_command, cancelarintercambiopokemon_command, shinys_command, rankingpokemon_command, poketest_command, pokemon_callback, pokemon_text_input, pokemon_media_input, ensure_pokemon_tables)
 
 # Constants
 RUTA_CASTIGADOS = PUNISHMENT_FILE
@@ -509,6 +510,7 @@ def main() -> None:
     ensure_gato_tables()
     ensure_saocb_telegram_tables()
     ensure_saocb_mobile_tables()
+    ensure_pokemon_tables()
     
     print("[INIT] Restarting active combats...")
     restart_all_combats()
@@ -666,6 +668,19 @@ def main() -> None:
     app.add_handler(CommandHandler("separarse", separarse), group=2)
     app.add_handler(CommandHandler("activarmusica", activarmusica), group=2)
     app.add_handler(CommandHandler("desactivarmusica", desactivarmusica), group=2)
+    app.add_handler(CommandHandler("pokemon", pokemon_command), group=2)
+    app.add_handler(CommandHandler("pokedex", pokedex_command), group=2)
+    app.add_handler(CommandHandler("equipo", equipo_command), group=2)
+    app.add_handler(CommandHandler("pokeobjetos", pokeobjetos_command), group=2)
+    app.add_handler(CommandHandler("nombrarpokemon", nombrarpokemon_command), group=2)
+    app.add_handler(CommandHandler("fotopokemon", fotopokemon_command), group=2)
+    app.add_handler(CommandHandler("presumirpokemon", presumirpokemon_command), group=2)
+    app.add_handler(CommandHandler("batallapokemon", batallapokemon_command), group=2)
+    app.add_handler(CommandHandler("intercambiopokemon", intercambiopokemon_command), group=2)
+    app.add_handler(CommandHandler("cancelarintercambiopokemon", cancelarintercambiopokemon_command), group=2)
+    app.add_handler(CommandHandler("shinys", shinys_command), group=2)
+    app.add_handler(CommandHandler("rankingpokemon", rankingpokemon_command), group=2)
+    app.add_handler(CommandHandler("poketest", poketest_command), group=2)
     app.add_handler(CommandHandler("dibujar", dibujar), group=2)
     app.add_handler(CommandHandler("matardibujo", matar_dibujo), group=2)
     app.add_handler(CommandHandler("titulos", titulos), group=2)
@@ -764,6 +779,7 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(assassin_callback, pattern="^as:"), group=5)
     app.add_handler(CallbackQueryHandler(naval_callback, pattern="^nv:"), group=5)
     app.add_handler(CallbackQueryHandler(gato_callback, pattern="^gt:"), group=5)
+    app.add_handler(CallbackQueryHandler(pokemon_callback, pattern="^pk:"), group=5)
     app.add_handler(CallbackQueryHandler(emoji_game_callback, pattern="^eg:"), group=5)
     app.add_handler(CallbackQueryHandler(ranking_callback, pattern="^cr:rank$"), group=5)
     app.add_handler(CallbackQueryHandler(drawing_callback, pattern="^draw:"), group=5)
@@ -781,6 +797,8 @@ def main() -> None:
     # Turtle UI text input (rename/custom stake). It ignores users without a pending turtle action.
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_turtle_input), group=8)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_social_input), group=9)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, pokemon_text_input), group=12)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.PHOTO | filters.ANIMATION), pokemon_media_input), group=12)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gif_admin_text_input), group=10)
 
     # Group 6: Punishment filter (prevents messages outside punishment corner)
