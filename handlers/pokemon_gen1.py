@@ -34,7 +34,7 @@ WILD_MAX_ATTEMPTS = 2
 WILD_DICE_ANIMATION_SECONDS = 4.2  # espera a que termine la animacion del dado en Telegram
 WILD_LIFETIME_SECONDS = 600  # 10 minutos visible antes de irse
 WILD_CATCH_THRESHOLD = {"comun": 3, "raro": 4, "epico": 5, "legendario": 6}
-CANDIES_PER_LEVEL = 10
+CANDIES_PER_LEVEL = 1
 
 POKEMON_TZ = ZoneInfo("America/Mexico_City")
 POKEMON_SEASON_PRIZES = {1: 30000, 2: 20000, 3: 10000}
@@ -52,6 +52,115 @@ NIGHT_PREFERRED = {
     19,20,23,24,27,28,35,36,39,40,41,42,48,49,50,51,52,53,63,64,65,
     66,67,68,74,75,76,79,80,88,89,90,91,92,93,94,95,96,97,104,105,
     109,110,116,117,120,121,124,129,130,137,138,139,140,141,142
+}
+
+# Evoluciones por piedra de TODOS los Pokémon de la Pokédex Gen 1 compatibles.
+# Se mantiene aquí como garantía aunque pokemon_gen1_data.py ya tenga la tabla.
+GEN1_STONE_EVOLUTIONS = {
+    25:{"thunder_stone":26},
+    30:{"moon_stone":31}, 33:{"moon_stone":34}, 35:{"moon_stone":36},
+    37:{"fire_stone":38}, 39:{"moon_stone":40}, 44:{"leaf_stone":45},
+    58:{"fire_stone":59}, 61:{"water_stone":62}, 70:{"leaf_stone":71},
+    90:{"water_stone":91}, 102:{"leaf_stone":103}, 120:{"water_stone":121},
+    133:{"water_stone":134,"thunder_stone":135,"fire_stone":136},
+}
+STONE_CODES = ("fire_stone","water_stone","thunder_stone","leaf_stone","moon_stone")
+
+# Afinidades temáticas para drops de piedras. No garantizan el objeto: solo
+# aumentan su peso cuando ya se decidió que la captura soltará una piedra.
+STONE_DROP_AFFINITY = {
+    # Fuego
+    37:("fire_stone",),38:("fire_stone",),58:("fire_stone",),59:("fire_stone",),
+    # Agua
+    60:("water_stone",),61:("water_stone",),62:("water_stone",),
+    90:("water_stone",),91:("water_stone",),120:("water_stone",),121:("water_stone",),
+    # Trueno
+    25:("thunder_stone",),26:("thunder_stone",),
+    # Hoja
+    43:("leaf_stone",),44:("leaf_stone",),45:("leaf_stone",),
+    69:("leaf_stone",),70:("leaf_stone",),71:("leaf_stone",),
+    102:("leaf_stone",),103:("leaf_stone",),
+    # Lunar
+    29:("moon_stone",),30:("moon_stone",),31:("moon_stone",),
+    32:("moon_stone",),33:("moon_stone",),34:("moon_stone",),
+    35:("moon_stone",),36:("moon_stone",),39:("moon_stone",),40:("moon_stone",),
+    # Eevee puede relacionarse con cualquiera de sus tres piedras Gen 1.
+    133:("water_stone","thunder_stone","fire_stone"),
+    134:("water_stone",),135:("thunder_stone",),136:("fire_stone",),
+}
+
+WILD_DROP_CHANCE = {"comun":0.18,"raro":0.30,"epico":0.45,"legendario":0.60}
+WILD_DROP_KIND_WEIGHTS = {
+    "comun":      (("rare_candy","stone","tm"),(50,40,10)),
+    "raro":       (("rare_candy","stone","tm"),(40,35,25)),
+    "epico":      (("rare_candy","stone","tm"),(30,30,40)),
+    "legendario": (("rare_candy","stone","tm"),(20,25,55)),
+}
+TM_LOW = ("tm12","tm30","tm39","tm45")
+TM_MID = ("tm06","tm08","tm11","tm17","tm19","tm21","tm28","tm35","tm42","tm48")
+TM_HIGH = ("tm13","tm14","tm15","tm22","tm24","tm25","tm26","tm29","tm38")
+
+# Centro de Entrenamiento Pokémon: no usa cron ni proceso adicional.
+TRAINING_DAILY_LIMIT = 3
+TRAINING_BOT_ID = 0
+TRAINING_WIN_PIPESOS = 1000
+TRAINING_LOSS_PIPESOS = 300
+TRAINING_HELD_DROP_CHANCE = 0.08
+
+# Objetos equipables reales. El inventario sigue siendo pokemon_items_tb; cuando
+# uno se equipa se descuenta del inventario y queda ligado al ejemplar mediante
+# pokemon_instances_tb.held_item_code. Así un objeto equipado no puede entregarse.
+HELD_ITEMS = {
+    'light_ball':      {'name':'Bola Luminosa','emoji':'🔆','rarity':'epico','description':'Solo en Pikachu: duplica ATQ y ESP durante el combate.'},
+    'leftovers':       {'name':'Restos','emoji':'🍎','rarity':'raro','description':'Recupera 1/16 de los PS máximos al final de cada ronda.'},
+    'quick_claw':      {'name':'Garra Rápida','emoji':'⚡','rarity':'raro','description':'20% de probabilidad de actuar primero en la ronda.'},
+    'focus_band':      {'name':'Banda Focus','emoji':'🎗️','rarity':'raro','description':'10% de probabilidad de sobrevivir con 1 PS a un golpe que debilitaría.'},
+    'choice_band':     {'name':'Cinta Elegida','emoji':'🎀','rarity':'epico','description':'ATQ ×1.5; bloquea al primer movimiento elegido hasta cambiar de Pokémon.'},
+    'choice_specs':    {'name':'Gafas Elegidas','emoji':'👓','rarity':'epico','description':'ESP ×1.5; bloquea al primer movimiento elegido hasta cambiar de Pokémon.'},
+    'choice_scarf':    {'name':'Pañuelo Elegido','emoji':'🧣','rarity':'epico','description':'VEL ×1.5; bloquea al primer movimiento elegido hasta cambiar de Pokémon.'},
+    'life_orb':        {'name':'Vidaesfera','emoji':'🔮','rarity':'epico','description':'Daño ×1.3; después de dañar pierde 1/10 de sus PS máximos.'},
+    'expert_belt':     {'name':'Cinta Experto','emoji':'🥋','rarity':'raro','description':'Daño ×1.2 cuando el movimiento es súper eficaz.'},
+    'shell_bell':      {'name':'Cascabel Concha','emoji':'🔔','rarity':'raro','description':'Recupera 1/8 del daño causado.'},
+    'charcoal':        {'name':'Carbón','emoji':'🔥','rarity':'comun','description':'Potencia los movimientos de tipo Fuego ×1.2.'},
+    'mystic_water':    {'name':'Agua Mística','emoji':'💧','rarity':'comun','description':'Potencia los movimientos de tipo Agua ×1.2.'},
+    'magnet':          {'name':'Imán','emoji':'🧲','rarity':'comun','description':'Potencia los movimientos de tipo Eléctrico ×1.2.'},
+    'miracle_seed':    {'name':'Semilla Milagro','emoji':'🌱','rarity':'comun','description':'Potencia los movimientos de tipo Planta ×1.2.'},
+    'twisted_spoon':   {'name':'Cuchara Torcida','emoji':'🥄','rarity':'comun','description':'Potencia los movimientos de tipo Psíquico ×1.2.'},
+    'sharp_beak':      {'name':'Pico Afilado','emoji':'🪶','rarity':'comun','description':'Potencia los movimientos de tipo Volador ×1.2.'},
+    'hard_stone':      {'name':'Roca Dura','emoji':'🪨','rarity':'comun','description':'Potencia los movimientos de tipo Roca ×1.2.'},
+    'poison_barb':     {'name':'Veneno Barbado','emoji':'☠️','rarity':'comun','description':'Potencia los movimientos de tipo Veneno ×1.2.'},
+    'soft_sand':       {'name':'Arena Suave','emoji':'🏜️','rarity':'comun','description':'Potencia los movimientos de tipo Tierra ×1.2.'},
+    'black_belt':      {'name':'Cinturón Negro','emoji':'🥋','rarity':'comun','description':'Potencia los movimientos de tipo Lucha ×1.2.'},
+    'silver_powder':   {'name':'Polvo Plata','emoji':'✨','rarity':'comun','description':'Potencia los movimientos de tipo Bicho ×1.2.'},
+    'thick_club':      {'name':'Hueso Grueso','emoji':'🦴','rarity':'epico','description':'Solo Cubone/Marowak: duplica el ATQ durante el combate.'},
+    'never_melt_ice':  {'name':'Antiderretir','emoji':'🧊','rarity':'comun','description':'Potencia los movimientos de tipo Hielo ×1.2.'},
+    'dragon_fang':     {'name':'Colmillo Dragón','emoji':'🐉','rarity':'raro','description':'Potencia los movimientos de tipo Dragón ×1.2.'},
+    'spell_tag':       {'name':'Hechizo','emoji':'👻','rarity':'raro','description':'Potencia los movimientos de tipo Fantasma ×1.2.'},
+    'silk_scarf':      {'name':'Pañuelo Seda','emoji':'🧵','rarity':'comun','description':'Potencia los movimientos de tipo Normal ×1.2.'},
+    'muscle_band':     {'name':'Cinta Fuerte','emoji':'💪','rarity':'raro','description':'Potencia los movimientos físicos ×1.1.'},
+    'wise_glasses':    {'name':'Gafas Especiales','emoji':'🤓','rarity':'raro','description':'Potencia los movimientos especiales ×1.1.'},
+    'bright_powder':   {'name':'Polvo Brillo','emoji':'🌟','rarity':'raro','description':'Reduce aproximadamente 10% la precisión de los ataques rivales.'},
+    'razor_claw':      {'name':'Garra Afilada','emoji':'🗡️','rarity':'epico','description':'Duplica la probabilidad base de golpe crítico.'},
+}
+HELD_RARITY_EMOJI = {'comun':'⚪','raro':'🔵','epico':'🟣'}
+HELD_TYPE_BOOSTS = {
+    'charcoal':'Fire','mystic_water':'Water','magnet':'Electric','miracle_seed':'Grass',
+    'twisted_spoon':'Psychic','sharp_beak':'Flying','hard_stone':'Rock','poison_barb':'Poison',
+    'soft_sand':'Ground','black_belt':'Fighting','silver_powder':'Bug','never_melt_ice':'Ice',
+    'dragon_fang':'Dragon','spell_tag':'Ghost','silk_scarf':'Normal',
+}
+WILD_HELD_DROP_CHANCE = {'comun':0.12,'raro':0.22,'epico':0.35,'legendario':0.50}
+HELD_QUALITY_WEIGHTS = {
+    'comun':      {'comun':82,'raro':17,'epico':1},
+    'raro':       {'comun':55,'raro':40,'epico':5},
+    'epico':      {'comun':28,'raro':55,'epico':17},
+    'legendario': {'comun':12,'raro':53,'epico':35},
+}
+TYPE_HELD_AFFINITY = {
+    'Fire':'charcoal','Water':'mystic_water','Electric':'magnet','Grass':'miracle_seed',
+    'Psychic':'twisted_spoon','Flying':'sharp_beak','Rock':'hard_stone','Poison':'poison_barb',
+    'Ground':'soft_sand','Fighting':'black_belt','Bug':'silver_powder','Ice':'never_melt_ice',
+    'Dragon':'dragon_fang','Ghost':'spell_tag','Normal':'silk_scarf',
 }
 
 
@@ -85,6 +194,7 @@ def ensure_pokemon_tables():
         c.execute("ALTER TABLE pokemon_instances_tb ADD COLUMN IF NOT EXISTS iv_spd SMALLINT")
         c.execute("ALTER TABLE pokemon_instances_tb ADD COLUMN IF NOT EXISTS iv_spc SMALLINT")
         c.execute("ALTER TABLE pokemon_instances_tb ADD COLUMN IF NOT EXISTS iv_hp SMALLINT")
+        c.execute("ALTER TABLE pokemon_instances_tb ADD COLUMN IF NOT EXISTS held_item_code TEXT")
         c.execute("""
             UPDATE pokemon_instances_tb SET
               iv_atk=COALESCE(iv_atk,FLOOR(random()*16)::int),
@@ -274,6 +384,27 @@ def ensure_pokemon_tables():
             )
         """)
         c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_settings_tb(
+              setting_key TEXT PRIMARY KEY,
+              setting_value TEXT,
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        # Compatibilidad: convierte una sola vez los viejos caramelos universales
+        # en Caramelos Raros, 1:1, para no perder saldos existentes.
+        c.execute("SELECT setting_value FROM pokemon_settings_tb WHERE setting_key='rare_candy_migration_v1'")
+        if not c.fetchone():
+            c.execute("""
+                INSERT INTO pokemon_items_tb(owner_id,item_code,qty)
+                SELECT owner_id,'rare_candy',SUM(qty)::int
+                FROM pokemon_candies_tb WHERE qty>0 GROUP BY owner_id
+                ON CONFLICT(owner_id,item_code) DO UPDATE
+                SET qty=pokemon_items_tb.qty+EXCLUDED.qty
+            """)
+            c.execute("UPDATE pokemon_candies_tb SET qty=0 WHERE qty>0")
+            c.execute("""INSERT INTO pokemon_settings_tb(setting_key,setting_value) VALUES('rare_candy_migration_v1','done')
+                         ON CONFLICT(setting_key) DO UPDATE SET setting_value='done',updated_at=NOW()""")
+        c.execute("""
             CREATE TABLE IF NOT EXISTS pokemon_wild_spawns_tb(
               spawn_id BIGSERIAL PRIMARY KEY,
               chat_id BIGINT NOT NULL,
@@ -297,6 +428,46 @@ def ensure_pokemon_tables():
               PRIMARY KEY(spawn_id,user_id)
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_training_daily_tb(
+              user_id BIGINT NOT NULL,
+              training_date DATE NOT NULL,
+              completed SMALLINT NOT NULL DEFAULT 0 CHECK(completed BETWEEN 0 AND 3),
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              PRIMARY KEY(user_id,training_date)
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_training_sessions_tb(
+              training_id BIGSERIAL PRIMARY KEY,
+              battle_id BIGINT NOT NULL UNIQUE,
+              user_id BIGINT NOT NULL,
+              training_date DATE NOT NULL,
+              rival_avg_level SMALLINT NOT NULL CHECK(rival_avg_level BETWEEN 1 AND 100),
+              status TEXT NOT NULL DEFAULT 'active',
+              result TEXT,
+              xp_per_pokemon INT,
+              pipesos_reward INT,
+              held_item_drop TEXT,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              finished_at TIMESTAMPTZ
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_pokemon_training_user_date ON pokemon_training_sessions_tb(user_id,training_date,status)")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_item_transfers_tb(
+              transfer_id BIGSERIAL PRIMARY KEY,
+              sender_id BIGINT NOT NULL,
+              recipient_id BIGINT NOT NULL,
+              item_code TEXT NOT NULL,
+              qty INT NOT NULL CHECK(qty>0),
+              category TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending',
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              finished_at TIMESTAMPTZ
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_pokemon_transfer_pending ON pokemon_item_transfers_tb(sender_id,status,created_at)")
         _pokemon_season_rollover_cursor(c)
         conn.commit()
     except Exception as e:
@@ -531,13 +702,23 @@ def _is_games_topic(update:Update)->bool:
     return getattr(msg, 'message_thread_id', None) == _games_topic(chat.id)
 
 
+def _stone_evolution_target(species_id:int, item_code:str)->int|None:
+    # Combina la tabla de datos con la garantía local completa de Gen 1.
+    mapping=dict(STONE_EVOLUTIONS.get(int(species_id),{}))
+    mapping.update(GEN1_STONE_EVOLUTIONS.get(int(species_id),{}))
+    target=mapping.get(str(item_code))
+    return int(target) if target else None
+
+
 def _family_root(species_id:int)->int:
     # Raíz de familia evolutiva Gen 1. Eevee y evoluciones por piedra/intercambio
     # quedan en la misma familia para que los repetidos siempre tengan utilidad.
     reverse = {}
     for src, (_, dst) in LEVEL_EVOLUTIONS.items():
         reverse[int(dst)] = int(src)
-    for src, mapping in STONE_EVOLUTIONS.items():
+    stone_sources=set(STONE_EVOLUTIONS) | set(GEN1_STONE_EVOLUTIONS)
+    for src in stone_sources:
+        mapping=dict(STONE_EVOLUTIONS.get(src,{})); mapping.update(GEN1_STONE_EVOLUTIONS.get(src,{}))
         for dst in mapping.values():
             reverse[int(dst)] = int(src)
     for src, dst in TRADE_EVOLUTIONS.items():
@@ -551,7 +732,7 @@ def _family_root(species_id:int)->int:
 
 
 def _release_candies(species_id:int)->int:
-    # Caramelos universales: 1 por Pokémon liberado; 2 si es rareza alta.
+    # Caramelos Raros: 1 por Pokémon Común/Raro; 2 si es Épico/Legendario.
     return 2 if rarity_for(int(species_id)) in ('epico', 'legendario') else 1
 
 
@@ -680,14 +861,160 @@ def grant_pokemon_with_cursor(c, uid:int, species_id:int, source:str='caja', for
     }
 
 
+def _item_info(item_code:str):
+    if item_code in HELD_ITEMS:
+        x=HELD_ITEMS[item_code]
+        return x['name'],x['emoji'],0,'held'
+    if item_code in ITEMS:
+        return ITEMS[item_code]
+    return None
+
+
+def _item_name(item_code:str)->str:
+    info=_item_info(item_code)
+    return str(info[0]) if info else str(item_code)
+
+
+def _held_item_text(item_code:str|None)->str:
+    if not item_code or item_code not in HELD_ITEMS:return 'Ninguno'
+    x=HELD_ITEMS[item_code]
+    return f"{x['emoji']} {x['name']} · {HELD_RARITY_EMOJI.get(x['rarity'],'')} {x['rarity'].title()}\n   {x['description']}"
+
+
 def grant_item_with_cursor(c, uid:int, item_code:str, qty:int=1):
-    if item_code not in ITEMS:
+    if item_code not in ITEMS and item_code not in HELD_ITEMS:
         return False
     c.execute("""
         INSERT INTO pokemon_items_tb(owner_id,item_code,qty) VALUES(%s,%s,%s)
         ON CONFLICT(owner_id,item_code) DO UPDATE SET qty=pokemon_items_tb.qty+EXCLUDED.qty
     """, (uid,item_code,max(1,int(qty))))
     return True
+
+
+def _held_pool_for_quality(quality:str)->list[str]:
+    return [code for code,data in HELD_ITEMS.items() if data['rarity']==quality and code!='light_ball']
+
+
+def _choose_held_by_source_rarity(source_rarity:str)->str|None:
+    weights=HELD_QUALITY_WEIGHTS.get(source_rarity,HELD_QUALITY_WEIGHTS['comun'])
+    qualities=[q for q,w in weights.items() if w>0 and _held_pool_for_quality(q)]
+    if not qualities:return None
+    quality=random.choices(qualities,weights=[weights[q] for q in qualities],k=1)[0]
+    pool=_held_pool_for_quality(quality)
+    return random.choice(pool) if pool else None
+
+
+def _species_held_affinities(species_id:int)->list[str]:
+    species_id=int(species_id); out=[]
+    # Hueso Grueso tiene afinidad directa con Cubone/Marowak.
+    if species_id in (104,105):out.append('thick_club')
+    # Bola Luminosa NO entra aquí: Pikachu la obtiene mediante su tirada especial rara.
+    for tp in TYPES.get(species_id,()):
+        code=TYPE_HELD_AFFINITY.get(tp)
+        if code and code not in out:out.append(code)
+    return out
+
+
+def _roll_wild_held_item(species_id:int, shiny:bool=False)->str|None:
+    species_id=int(species_id)
+    # Tirada especial e independiente: aproximadamente 1% en Pikachu salvaje.
+    if species_id==25 and random.random()<0.01:
+        return 'light_ball'
+    rarity=rarity_for(species_id)
+    chance=float(WILD_HELD_DROP_CHANCE.get(rarity,0.12)) + (0.05 if shiny else 0.0)
+    if random.random()>=min(0.75,chance):return None
+    affinities=_species_held_affinities(species_id)
+    if affinities and random.random()<0.35:
+        # La afinidad ayuda, pero sigue respetando la calidad asociada a la rareza del encuentro.
+        allowed=[]; affinity_weights=[]
+        source_weights=HELD_QUALITY_WEIGHTS.get(rarity,HELD_QUALITY_WEIGHTS['comun'])
+        for code in affinities:
+            q=HELD_ITEMS.get(code,{}).get('rarity'); w=int(source_weights.get(q,0)) if q else 0
+            if w>0:allowed.append(code); affinity_weights.append(w)
+        if allowed:return random.choices(allowed,weights=affinity_weights,k=1)[0]
+    return _choose_held_by_source_rarity(rarity)
+
+
+def _roll_box_held_item(box_code:str)->str|None:
+    legendary=(box_code=='legendary')
+    if random.random()>=(0.55 if legendary else 0.22):return None
+    return _choose_held_by_source_rarity('legendario' if legendary else 'raro')
+
+
+def _roll_training_held_item()->str|None:
+    if random.random()>=TRAINING_HELD_DROP_CHANCE:return None
+    # Entrenar puede dar objeto, pero deliberadamente no es una granja de épicos.
+    return random.choices(
+        [_choose_held_by_source_rarity('comun'),_choose_held_by_source_rarity('raro')],
+        weights=[80,20],k=1
+    )[0]
+
+
+def _setting_get_cursor(c,key:str)->str|None:
+    c.execute("SELECT setting_value FROM pokemon_settings_tb WHERE setting_key=%s",(str(key),))
+    r=c.fetchone(); return str(r[0]) if r and r[0] else None
+
+
+def _setting_set_cursor(c,key:str,value:str|None):
+    if value is None:
+        c.execute("DELETE FROM pokemon_settings_tb WHERE setting_key=%s",(str(key),))
+    else:
+        c.execute("""INSERT INTO pokemon_settings_tb(setting_key,setting_value) VALUES(%s,%s)
+                     ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()""",(str(key),str(value)))
+
+
+def _trade_gif_file_id()->str|None:
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); return _setting_get_cursor(c,'trade_gif_file_id')
+    finally:_put_connection(conn)
+
+
+def _choose_tm_drop(rarity:str)->str|None:
+    pools={
+        'comun':((TM_LOW,TM_MID),(75,25)),
+        'raro':((TM_LOW,TM_MID,TM_HIGH),(30,55,15)),
+        'epico':((TM_MID,TM_HIGH),(45,55)),
+        'legendario':((TM_MID,TM_HIGH),(20,80)),
+    }
+    groups,weights=pools.get(rarity,pools['comun'])
+    available_groups=[]; available_weights=[]
+    for group,w in zip(groups,weights):
+        valid=[code for code in group if code in TM_ITEMS]
+        if valid:
+            available_groups.append(valid); available_weights.append(w)
+    if not available_groups:
+        all_codes=list(TM_ITEMS)
+        return random.choice(all_codes) if all_codes else None
+    return random.choice(random.choices(available_groups,weights=available_weights,k=1)[0])
+
+
+def _roll_wild_drop(species_id:int, shiny:bool=False)->tuple[str,int]|None:
+    rarity=rarity_for(int(species_id))
+    chance=float(WILD_DROP_CHANCE.get(rarity,0.18)) + (0.05 if shiny else 0.0)
+    if random.random() >= min(0.80,chance):
+        return None
+    kinds,weights=WILD_DROP_KIND_WEIGHTS.get(rarity,WILD_DROP_KIND_WEIGHTS['comun'])
+    kind=random.choices(kinds,weights=weights,k=1)[0]
+    if kind=='rare_candy':
+        return ('rare_candy',1)
+    if kind=='stone':
+        affinity=[x for x in STONE_DROP_AFFINITY.get(int(species_id),()) if x in ITEMS]
+        if affinity and random.random()<0.70:
+            return (random.choice(affinity),1)
+        valid=[x for x in STONE_CODES if x in ITEMS]
+        return (random.choice(valid),1) if valid else None
+    code=_choose_tm_drop(rarity)
+    return (code,1) if code else None
+
+
+def _drop_label(drop:tuple[str,int]|None)->str:
+    if not drop:return ''
+    code,qty=drop
+    if code in ITEMS:
+        name,emoji,_,_=ITEMS[code]
+        return f'{emoji} {name}' + (f' ×{qty}' if int(qty)>1 else '')
+    return str(code)
 
 
 def roll_box_pokemon(box_code:str)->int:
@@ -728,7 +1055,7 @@ def _get_owned(uid:int, limit:int=200):
     conn = _get_connection()
     try:
         c = conn.cursor()
-        c.execute("""SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp
+        c.execute("""SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code
                      FROM pokemon_instances_tb WHERE owner_id=%s ORDER BY pokemon_id LIMIT %s""", (uid,limit))
         return c.fetchall()
     finally:
@@ -739,7 +1066,7 @@ def _get_instance(uid:int, pid:int):
     conn = _get_connection()
     try:
         c = conn.cursor()
-        c.execute("""SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp
+        c.execute("""SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code
                      FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s""", (uid,pid))
         return c.fetchone()
     finally:
@@ -813,7 +1140,7 @@ def _team_rows(uid:int):
         out=[]
         for pid in team:
             if pid is None: out.append(None); continue
-            c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); out.append(c.fetchone())
+            c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); out.append(c.fetchone())
         conn.commit(); return out
     except Exception:
         conn.rollback(); return [None,None,None]
@@ -850,9 +1177,13 @@ def _items_text(uid:int)->str:
     lines=['🎒 OBJETOS POKÉMON · PRIVADO','']
     if not rows: lines.append('Todavía no tienes objetos Pokémon.')
     for code,qty in rows:
-        if code in ITEMS:
+        if code in HELD_ITEMS:
+            x=HELD_ITEMS[code]; lines.append(f"{x['emoji']} {x['name']} ×{qty} · {HELD_RARITY_EMOJI.get(x['rarity'],'')} {x['rarity'].title()}")
+        elif code in ITEMS:
             name,em,_,kind=ITEMS[code]; lines.append(f'{em} {name} ×{qty}')
-    lines += ['', 'Las piedras, Cable Link, Caramelo Raro y MT se usan fuera de combate. Las MT enseñan un movimiento compatible y se consumen al usarlas. Las pociones/Revivir aparecen durante una batalla.']
+        else:
+            lines.append(f'🎒 {code} ×{qty}')
+    lines += ['', 'Los objetos equipables se ponen desde la ficha de cada Pokémon. Las piedras, Cable Link, Caramelo Raro y MT se usan fuera de combate. Las MT enseñan un movimiento compatible y se consumen al usarlas.']
     return '\n'.join(lines)
 
 
@@ -964,14 +1295,15 @@ def _stat_value(species:int,level:int,key:str,iv:int=0)->int:
 
 
 def _battle_mon(row)->dict:
-    pid,species,nick,level,xp,moves_json,_,_,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp=row
+    pid,species,nick,level,xp,moves_json,_,_,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp=row[:16]
+    held_item=row[16] if len(row)>16 else None
     species=int(species); level=int(level)
     try:moves=json.loads(moves_json or '[]')
     except Exception:moves=[]
     if not moves:moves=available_moves(species,level)
     ivs={'atk':int(iv_atk or 0),'def':int(iv_def or 0),'spd':int(iv_spd or 0),'spc':int(iv_spc or 0),'hp':int(iv_hp or 0)}
     hp=_stat_value(species,level,'hp',ivs['hp'])
-    return {'pid':int(pid),'species':species,'nickname':nick,'level':level,'hp':hp,'max_hp':hp,'moves':moves,'pp':{m:MOVES[m][4] for m in moves if m in MOVES},'status':None,'sleep':0,'stages':{'atk':0,'def':0,'spd':0},'shiny':bool(shiny),'ivs':ivs}
+    return {'pid':int(pid),'species':species,'nickname':nick,'level':level,'hp':hp,'max_hp':hp,'moves':moves,'pp':{m:MOVES[m][4] for m in moves if m in MOVES},'status':None,'sleep':0,'stages':{'atk':0,'def':0,'spd':0},'shiny':bool(shiny),'ivs':ivs,'held_item':held_item,'choice_lock':None}
 
 
 def _team_for_battle_cursor(c,uid:int,mode:int):
@@ -980,7 +1312,7 @@ def _team_for_battle_cursor(c,uid:int,mode:int):
     if len(slots)<mode or any(x is None for x in slots):return None
     mons=[]
     for pid in slots:
-        c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); r=c.fetchone()
+        c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); r=c.fetchone()
         if not r:return None
         mons.append(_battle_mon(r))
     return mons
@@ -1020,8 +1352,9 @@ def _battle_markup(bid:int):
 
 def _move_menu(bid:int,mon:dict):
     rows=[]
+    locked=mon.get('choice_lock') if mon.get('held_item') in ('choice_band','choice_specs','choice_scarf') else None
     for i,code in enumerate(mon['moves']):
-        if code not in MOVES:continue
+        if code not in MOVES or (locked and code!=locked):continue
         name,tp,power,acc,pp,kind=MOVES[code]; left=int(mon.get('pp',{}).get(code,pp))
         rows.append([InlineKeyboardButton(f"{type_emoji(tp)} {name} · PP {left}/{pp}",callback_data=f'pk:move:{bid}:{i}')])
     rows.append([InlineKeyboardButton('🔄 Cambiar Pokémon',callback_data=f'pk:bswitchmenu:{bid}'),InlineKeyboardButton('🎒 Objeto',callback_data=f'pk:bitemmenu:{bid}')])
@@ -1041,23 +1374,69 @@ def _stage_mult(stage:int)->float:
     return {-2:0.6,-1:0.8,0:1.0,1:1.25,2:1.5}[stage]
 
 
+def _held_stat_multiplier(mon:dict,key:str)->float:
+    held=mon.get('held_item')
+    species=int(mon.get('species',0))
+    if held=='light_ball' and species==25 and key in ('atk','spc'):return 2.0
+    if held=='thick_club' and species in (104,105) and key=='atk':return 2.0
+    if held=='choice_band' and key=='atk':return 1.5
+    if held=='choice_specs' and key=='spc':return 1.5
+    return 1.0
+
+
 def _effective_speed(mon):
     val=_stat_value(mon['species'],mon['level'],'spd',mon.get('ivs',{}).get('spd',0))*_stage_mult(mon['stages'].get('spd',0))
+    if mon.get('held_item')=='choice_scarf':val*=1.5
     if mon.get('status')=='paralyze':val*=0.5
     return val
 
 
-def _do_move(att:dict,defn:dict,move_code:str)->list[str]:
+def _held_damage_multiplier(att:dict,tp:str,eff:float,physical:bool)->float:
+    held=att.get('held_item'); mult=1.0
+    if HELD_TYPE_BOOSTS.get(held)==tp:mult*=1.2
+    if held=='muscle_band' and physical:mult*=1.1
+    if held=='wise_glasses' and not physical:mult*=1.1
+    if held=='life_orb':mult*=1.3
+    if held=='expert_belt' and eff>1:mult*=1.2
+    return mult
+
+
+def _apply_held_end_round(state:dict,logs:list[str]):
+    for player in state.get('players',{}).values():
+        if not player.get('mons'):continue
+        mon=player['mons'][player['active']]
+        if mon.get('hp',0)>0 and mon.get('held_item')=='leftovers' and mon['hp']<mon['max_hp']:
+            heal=max(1,mon['max_hp']//16); old=mon['hp']; mon['hp']=min(mon['max_hp'],mon['hp']+heal)
+            logs.append(f"🍎 Restos: {_battle_title_mon(mon)} recuperó {mon['hp']-old} HP.")
+
+
+def _mark_training_participant(state:dict,uid,mon:dict):
+    if state.get('battle_kind')!='training':return
+    if int(uid)!=int(state.get('training_user_id',-1)):return
+    pid=int(mon.get('pid',0))
+    if pid<=0:return
+    ids=state.setdefault('training_participants',[])
+    if pid not in ids:ids.append(pid)
+
+
+def _do_move(att:dict,defn:dict,move_code:str,_called_move:bool=False)->list[str]:
     if move_code not in MOVES:return ['El movimiento falló.']
     name,tp,power,acc,maxpp,kind=MOVES[move_code]
     logs=[]
+    held=att.get('held_item')
+    if not _called_move and held in ('choice_band','choice_specs','choice_scarf'):
+        locked=att.get('choice_lock')
+        if locked and locked!=move_code:
+            return [f"🔒 {_item_name(held)} mantiene a {_battle_title_mon(att)} usando {MOVES.get(locked,(locked,))[0]} hasta que cambie."]
+        if not locked:att['choice_lock']=move_code
     if att.get('sleep',0)>0:
         att['sleep']-=1
         if att['sleep']>0:return [f"💤 {_battle_title_mon(att)} está dormido."]
         logs.append(f"✨ {_battle_title_mon(att)} despertó.")
     if att.get('status')=='paralyze' and random.random()<0.25:
         return logs+[f"⚡ {_battle_title_mon(att)} está paralizado y no puede moverse."]
-    if acc<100 and random.randint(1,100)>acc:
+    effective_acc=float(acc)*(0.90 if defn.get('held_item')=='bright_powder' else 1.0)
+    if effective_acc<100 and random.uniform(0,100)>effective_acc:
         return logs+[f"💨 {name} falló."]
     if kind=='nothing': return logs+[f"… {_battle_title_mon(att)} usó {name}. No pasó nada."]
     if kind=='heal':
@@ -1084,28 +1463,38 @@ def _do_move(att:dict,defn:dict,move_code:str)->list[str]:
     if kind=='metronome':
         pool=[m for m,v in MOVES.items() if v[5] in ('damage','drain','fixed','fixed40') and m!='metronome']
         picked=random.choice(pool); logs.append(f"🎲 Metrónomo eligió {MOVES[picked][0]}.")
-        return logs+_do_move(att,defn,picked)
+        return logs+_do_move(att,defn,picked,True)
 
+    eff=effectiveness(tp,TYPES.get(defn['species'],('Normal',)))
     if kind=='fixed': dmg=max(1,int(att['level']))
     elif kind=='fixed40': dmg=40
     else:
-        atk_key='atk' if tp in PHYSICAL_TYPES else 'spc'; def_key='def' if tp in PHYSICAL_TYPES else 'spc'
-        A=_stat_value(att['species'],att['level'],atk_key,att.get('ivs',{}).get(atk_key,0))*_stage_mult(att['stages'].get('atk',0) if atk_key=='atk' else 0)
+        physical=tp in PHYSICAL_TYPES
+        atk_key='atk' if physical else 'spc'; def_key='def' if physical else 'spc'
+        A=_stat_value(att['species'],att['level'],atk_key,att.get('ivs',{}).get(atk_key,0))*_stage_mult(att['stages'].get('atk',0) if atk_key=='atk' else 0)*_held_stat_multiplier(att,atk_key)
         D=_stat_value(defn['species'],defn['level'],def_key,defn.get('ivs',{}).get(def_key,0))*_stage_mult(defn['stages'].get('def',0) if def_key=='def' else 0)
         base=((((2*att['level']/5)+2)*max(1,power)*max(1,A)/max(1,D))/50)+2
         stab=1.5 if tp in TYPES.get(att['species'],()) else 1.0
-        eff=effectiveness(tp,TYPES.get(defn['species'],('Normal',)))
         crit_chance=0.25 if move_code=='slash' else 0.0625
+        if held=='razor_claw':crit_chance=min(1.0,crit_chance*2)
         crit=random.random()<crit_chance
-        dmg=max(1,int(base*stab*eff*random.uniform(0.85,1.0)*(1.5 if crit else 1.0))) if eff>0 else 0
+        dmg=max(1,int(base*stab*eff*_held_damage_multiplier(att,tp,eff,physical)*random.uniform(0.85,1.0)*(1.5 if crit else 1.0))) if eff>0 else 0
         if crit:logs.append('💥 ¡Golpe crítico!')
         if eff==0:logs.append('🚫 No afecta al rival.')
         elif eff>=2:logs.append('🔥 ¡Es súper eficaz!')
         elif eff<1:logs.append('🛡️ No es muy eficaz.')
-    before=defn['hp']; defn['hp']=max(0,defn['hp']-dmg); dealt=before-defn['hp']
+    before=defn['hp']
+    if defn.get('held_item')=='focus_band' and before>1 and dmg>=before and random.random()<0.10:
+        dmg=max(0,before-1); logs.append(f"🎗️ Banda Focus dejó a {_battle_title_mon(defn)} con 1 PS.")
+    defn['hp']=max(0,defn['hp']-dmg); dealt=before-defn['hp']
     logs.insert(0,f"⚔️ {_battle_title_mon(att)} usó {name}: -{dealt} HP.")
     if kind=='drain' and dealt>0:
         heal=max(1,dealt//2); old=att['hp']; att['hp']=min(att['max_hp'],att['hp']+heal); logs.append(f"💚 Recuperó {att['hp']-old} HP.")
+    if held=='shell_bell' and dealt>0 and att['hp']>0:
+        heal=max(1,dealt//8); old=att['hp']; att['hp']=min(att['max_hp'],att['hp']+heal)
+        if att['hp']>old:logs.append(f"🔔 Cascabel Concha: recuperó {att['hp']-old} HP.")
+    if held=='life_orb' and dealt>0 and att['hp']>0:
+        recoil=max(1,att['max_hp']//10); att['hp']=max(0,att['hp']-recoil); logs.append(f"🔮 Vidaesfera: perdió {recoil} HP.")
     return logs
 
 
@@ -1120,7 +1509,8 @@ def _choice_speed(player,choice):
     mon=player['mons'][player['active']]
     code=choice.get('move')
     priority=1 if code=='quick_attack' else 0
-    return _effective_speed(mon)+priority*1000
+    quick=5000 if mon.get('held_item')=='quick_claw' and random.random()<0.20 else 0
+    return _effective_speed(mon)+priority*1000+quick
 
 
 def _apply_item_action(player:dict,choice:dict,c,uid:int)->str:
@@ -1183,7 +1573,8 @@ def _resolve_round_cursor(c,bid:int,state:dict)->tuple[str|None,list[str],dict]:
         if choice['type']=='switch':
             idx=int(choice['index'])
             if 0<=idx<len(p['mons']) and p['mons'][idx]['hp']>0 and idx!=p['active']:
-                p['active']=idx; logs.append(f"🔄 {p['name']} cambió a {_battle_title_mon(p['mons'][idx])}.")
+                p['mons'][p['active']]['choice_lock']=None
+                p['active']=idx; _mark_training_participant(state,uid,p['mons'][idx]); logs.append(f"🔄 {p['name']} cambió a {_battle_title_mon(p['mons'][idx])}.")
             continue
         if choice['type']=='item':
             logs.append(f"{p['name']}: {_apply_item_action(p,choice,c,int(uid))}")
@@ -1198,10 +1589,19 @@ def _resolve_round_cursor(c,bid:int,state:dict)->tuple[str|None,list[str],dict]:
         logs += _do_move(mon,target,code)
         if target['hp']<=0:
             logs.append(f"💫 {_battle_title_mon(target)} quedó debilitado.")
+            target['choice_lock']=None
             nxt=_next_alive(o)
             if nxt is None:
                 state['status']='finished'; state['winner']=uid; state['loser']=oppid; break
-            o['active']=nxt; logs.append(f"➡️ {o['name']} envía a {_battle_title_mon(o['mons'][nxt])}.")
+            o['active']=nxt; _mark_training_participant(state,oppid,o['mons'][nxt]); logs.append(f"➡️ {o['name']} envía a {_battle_title_mon(o['mons'][nxt])}.")
+        # Efectos como Vidaesfera pueden debilitar al atacante después de golpear.
+        if state.get('status')=='active' and mon['hp']<=0:
+            logs.append(f"💫 {_battle_title_mon(mon)} quedó debilitado.")
+            mon['choice_lock']=None
+            nxt=_next_alive(p)
+            if nxt is None:
+                state['status']='finished'; state['winner']=oppid; state['loser']=uid; break
+            p['active']=nxt; _mark_training_participant(state,uid,p['mons'][nxt]); logs.append(f"➡️ {p['name']} envía a {_battle_title_mon(p['mons'][nxt])}.")
     # daño de veneno al final de ronda
     if state.get('status')=='active':
         for uid in ids:
@@ -1209,10 +1609,12 @@ def _resolve_round_cursor(c,bid:int,state:dict)->tuple[str|None,list[str],dict]:
             if mon.get('status')=='poison' and mon['hp']>0:
                 dmg=max(1,mon['max_hp']//8); mon['hp']=max(0,mon['hp']-dmg); logs.append(f"☠️ {_battle_title_mon(mon)} perdió {dmg} HP por veneno.")
                 if mon['hp']<=0:
+                    mon['choice_lock']=None
                     nxt=_next_alive(p)
                     if nxt is None:
                         other=ids[1] if uid==ids[0] else ids[0]; state['status']='finished'; state['winner']=other; state['loser']=uid; break
-                    p['active']=nxt; logs.append(f"➡️ {p['name']} envía a {_battle_title_mon(p['mons'][nxt])}.")
+                    p['active']=nxt; _mark_training_participant(state,uid,p['mons'][nxt]); logs.append(f"➡️ {p['name']} envía a {_battle_title_mon(p['mons'][nxt])}.")
+    if state.get('status')=='active':_apply_held_end_round(state,logs)
     state['choices']={}; state['round']=int(state.get('round',1))+1
     return state.get('winner'),logs,state
 
@@ -1231,6 +1633,152 @@ def _finish_battle_cursor(c,bid:int,state:dict)->dict:
     c.execute("UPDATE pokemon_battles_tb SET status='finished',winner_id=%s,state_json=%s,finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s",(winner,json.dumps(state,ensure_ascii=False),bid))
     tournament=_record_tournament_battle_cursor(c,bid,winner)
     return {'winner':winner,'loser':loser,'elo':delta,'notes':level_notes,'tournament':tournament}
+
+
+def _today_pokemon_date():
+    return datetime.now(POKEMON_TZ).date()
+
+
+def _training_used_cursor(c,uid:int,day=None,lock:bool=False)->int:
+    day=day or _today_pokemon_date()
+    c.execute("INSERT INTO pokemon_training_daily_tb(user_id,training_date,completed) VALUES(%s,%s,0) ON CONFLICT DO NOTHING",(uid,day))
+    c.execute("SELECT completed FROM pokemon_training_daily_tb WHERE user_id=%s AND training_date=%s"+(' FOR UPDATE' if lock else ''),(uid,day))
+    r=c.fetchone(); return int(r[0]) if r else 0
+
+
+def _make_training_bot_mon(level:int)->dict:
+    level=max(1,min(MAX_LEVEL,int(level)))
+    # Evita llenar el entrenamiento de legendarios; el reto se balancea por nivel.
+    pool=[i for i in range(1,152) if i not in LEGENDARY_IDS]
+    species=random.choice(pool)
+    ivs=_roll_ivs(False); moves=available_moves(species,level)
+    hp=_stat_value(species,level,'hp',ivs['hp'])
+    return {'pid':-random.randint(100000,999999999),'species':species,'nickname':None,'level':level,'hp':hp,'max_hp':hp,
+            'moves':moves,'pp':{m:MOVES[m][4] for m in moves if m in MOVES},'status':None,'sleep':0,
+            'stages':{'atk':0,'def':0,'spd':0},'shiny':False,'ivs':ivs,'held_item':None,'choice_lock':None}
+
+
+def _training_bot_choice(state:dict)->dict:
+    bot=state['players'][str(TRAINING_BOT_ID)]; mon=bot['mons'][bot['active']]
+    usable=[m for m in mon.get('moves',[]) if m in MOVES and int(mon.get('pp',{}).get(m,0))>0]
+    if not usable:
+        usable=[m for m in mon.get('moves',[]) if m in MOVES]
+        if usable:mon.setdefault('pp',{})[usable[0]]=1
+    if not usable:return {'type':'move','move':next(iter(MOVES))}
+    damaging=[m for m in usable if MOVES[m][5] in ('damage','drain','fixed','fixed40')]
+    pick=random.choice(damaging if damaging and random.random()<0.80 else usable)
+    return {'type':'move','move':pick}
+
+
+def _finish_training_cursor(c,bid:int,state:dict)->dict:
+    uid=int(state['training_user_id'])
+    c.execute("SELECT training_id,training_date,rival_avg_level,status FROM pokemon_training_sessions_tb WHERE battle_id=%s FOR UPDATE",(bid,))
+    sr=c.fetchone()
+    if not sr or sr[3]!='active':
+        return {'training':True,'duplicate':True,'winner':int(state.get('winner',-1)),'loser':int(state.get('loser',-1)),'xp_lines':[],'notes':[]}
+    training_id=int(sr[0]); day=sr[1]; avg=int(sr[2]); won=int(state['winner'])==uid
+    xp_amount=(30+avg*3) if won else int(math.floor(15+avg*1.5+0.5))
+    reward=TRAINING_WIN_PIPESOS if won else TRAINING_LOSS_PIPESOS
+    participants=[]; seen=set()
+    for raw in state.get('training_participants',[]):
+        pid=int(raw)
+        if pid>0 and pid not in seen:seen.add(pid); participants.append(pid)
+    xp_lines=[]; notes=[]
+    for pid in participants:
+        c.execute("SELECT species_id,nickname,level FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); rr=c.fetchone()
+        if not rr:continue
+        before_name=rr[1] or NAMES[int(rr[0])]
+        xp_lines.append(f"{before_name} +{xp_amount} XP")
+        notes += _grant_pokemon_xp_cursor(c,pid,xp_amount)
+    c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(reward,uid))
+    held_drop=None
+    if won:
+        held_drop=_roll_training_held_item()
+        if held_drop:grant_item_with_cursor(c,uid,held_drop,1)
+    used=_training_used_cursor(c,uid,day,lock=True)
+    if used<TRAINING_DAILY_LIMIT:
+        c.execute("UPDATE pokemon_training_daily_tb SET completed=completed+1,updated_at=NOW() WHERE user_id=%s AND training_date=%s",(uid,day))
+        used+=1
+    result='win' if won else 'loss'
+    c.execute("""UPDATE pokemon_training_sessions_tb SET status='finished',result=%s,xp_per_pokemon=%s,pipesos_reward=%s,
+                 held_item_drop=%s,finished_at=NOW() WHERE training_id=%s AND status='active'""",
+              (result,xp_amount,reward,held_drop,training_id))
+    c.execute("UPDATE pokemon_battles_tb SET status='finished',winner_id=%s,state_json=%s,finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s AND status='active'",
+              (int(state['winner']),json.dumps(state,ensure_ascii=False),bid))
+    return {'training':True,'duplicate':False,'winner':int(state['winner']),'loser':int(state['loser']),'won':won,
+            'xp':xp_amount,'xp_lines':xp_lines,'notes':notes,'pipesos':reward,'used':used,'held_drop':held_drop,'avg':avg}
+
+
+def _training_result_lines(final:dict)->list[str]:
+    if final.get('duplicate'):return ['🏋️ Este entrenamiento ya había sido procesado.']
+    lines=['🏋️ Entrenamiento terminado']
+    lines += final.get('xp_lines',[])
+    lines.append(f"💰 +{int(final.get('pipesos',0)):,} PiPesos")
+    if final.get('held_drop'):
+        code=final['held_drop']; x=HELD_ITEMS.get(code)
+        if x:lines.append(f"🎁 Encontraste: {x['emoji']} {x['name']}")
+    lines += final.get('notes',[])[:6]
+    lines.append(f"Entrenamientos de hoy: {int(final.get('used',0))}/{TRAINING_DAILY_LIMIT}")
+    return lines
+
+
+async def entrenamientopokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type!='private' and not _is_games_topic(update):
+        return await update.effective_message.reply_text('🏋️ El Centro de Entrenamiento Pokémon se usa por privado o en Juegos y Casino.')
+    uid=update.effective_user.id; conn=_get_connection(); state=None; bid=None
+    try:
+        c=conn.cursor(); day=_today_pokemon_date(); used=_training_used_cursor(c,uid,day,lock=True)
+        if used>=TRAINING_DAILY_LIMIT:
+            conn.rollback(); return await update.effective_message.reply_text('Ya completaste tus 3 entrenamientos Pokémon de hoy. Vuelve mañana.')
+        if _battle_busy_cursor(c,uid):
+            conn.rollback(); return await update.effective_message.reply_text('⚔️ Ya tienes una batalla Pokémon pendiente o activa.')
+        if _trade_busy_cursor(c,uid):
+            conn.rollback(); return await update.effective_message.reply_text('🔄 Termina tu intercambio Pokémon antes de entrenar.')
+        _ensure_team_row_cursor(c,uid); c.execute("SELECT slot1,slot2,slot3 FROM pokemon_team_tb WHERE owner_id=%s",(uid,)); slots=list(c.fetchone() or (None,None,None))
+        mode=0
+        for slot in slots:
+            if slot is None:break
+            mode+=1
+        if mode<1:
+            conn.rollback(); return await update.effective_message.reply_text('🏋️ Necesitas al menos un Pokémon en el primer espacio de /equipo.')
+        user_mons=_team_for_battle_cursor(c,uid,mode)
+        if not user_mons:
+            conn.rollback(); return await update.effective_message.reply_text('🏋️ No pude preparar tu equipo. Revisa /equipo.')
+        bot_mons=[]
+        for mon in user_mons:
+            rival_level=max(1,min(MAX_LEVEL,int(mon['level'])+random.choice([-2,-1,0,0,0,1,2])))
+            bot_mons.append(_make_training_bot_mon(rival_level))
+        avg=max(1,min(MAX_LEVEL,int(math.floor(sum(m['level'] for m in bot_mons)/len(bot_mons)+0.5))))
+        state={'status':'active','battle_kind':'training','training_user_id':uid,'training_participants':[int(user_mons[0]['pid'])],
+               'mode':mode,'round':1,'choices':{},'players':{
+                   str(uid):{'name':_display_name_cursor(c,uid),'mons':user_mons,'active':0},
+                   str(TRAINING_BOT_ID):{'name':'Entrenador Pi','mons':bot_mons,'active':0}}}
+        c.execute("""INSERT INTO pokemon_battles_tb(chat_id,thread_id,challenger_id,opponent_id,mode,status,state_json)
+                     VALUES(%s,%s,%s,%s,%s,'active',%s) RETURNING battle_id""",
+                  (update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),uid,TRAINING_BOT_ID,mode,json.dumps(state,ensure_ascii=False)))
+        bid=int(c.fetchone()[0])
+        c.execute("INSERT INTO pokemon_training_sessions_tb(battle_id,user_id,training_date,rival_avg_level,status) VALUES(%s,%s,%s,%s,'active')",
+                  (bid,uid,day,avg))
+        conn.commit()
+    except Exception as e:
+        conn.rollback(); print('[PK training start]',type(e).__name__,e)
+        return await update.effective_message.reply_text('No pude iniciar el entrenamiento Pokémon. No se gastó ningún intento.')
+    finally:_put_connection(conn)
+    try:
+        msg=await update.effective_message.reply_text(_battle_text(state,f'🏋️ Centro de Entrenamiento · rival promedio Nv.{avg}\nIntentos completados hoy: {used}/{TRAINING_DAILY_LIMIT}'),reply_markup=_battle_markup(bid))
+    except Exception as e:
+        conn=_get_connection()
+        try:
+            c=conn.cursor(); c.execute("UPDATE pokemon_battles_tb SET status='cancelled',finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s AND status='active'",(bid,))
+            c.execute("UPDATE pokemon_training_sessions_tb SET status='technical_error',finished_at=NOW() WHERE battle_id=%s AND status='active'",(bid,)); conn.commit()
+        except Exception:conn.rollback()
+        finally:_put_connection(conn)
+        print('[PK training telegram]',type(e).__name__,e); return
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("UPDATE pokemon_battles_tb SET message_id=%s,updated_at=NOW() WHERE battle_id=%s",(msg.message_id,bid)); conn.commit()
+    except Exception:conn.rollback()
+    finally:_put_connection(conn)
 
 
 async def batallapokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
@@ -1301,6 +1849,40 @@ def _trade_mon_text_cursor(c, owner:int, pid:int|None)->str:
     return _pokemon_label(r) if r else '— ya no disponible —'
 
 
+async def gifintercambio_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
+    try:
+        if not is_botmaster(update.effective_user.id):
+            return await update.effective_message.reply_text('Solo BotMaster puede cambiar el GIF global de intercambio.')
+    except Exception:
+        return await update.effective_message.reply_text('Solo BotMaster puede cambiar el GIF global de intercambio.')
+    msg=update.effective_message; replied=msg.reply_to_message if msg else None
+    animation=getattr(replied,'animation',None) if replied else None
+    if not animation:
+        return await msg.reply_text('Responde a un GIF de Telegram con /gifintercambio.')
+    file_id=str(animation.file_id); conn=_get_connection()
+    try:
+        c=conn.cursor(); _setting_set_cursor(c,'trade_gif_file_id',file_id); conn.commit()
+    except Exception as e:
+        conn.rollback(); print('[PK trade gif set]',type(e).__name__,e); return await msg.reply_text('No pude guardar el GIF de intercambio.')
+    finally:_put_connection(conn)
+    await msg.reply_text('✅ GIF global de intercambio guardado por file_id.')
+
+
+async def quitargifintercambio_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
+    try:
+        if not is_botmaster(update.effective_user.id):
+            return await update.effective_message.reply_text('Solo BotMaster puede quitar el GIF global de intercambio.')
+    except Exception:
+        return await update.effective_message.reply_text('Solo BotMaster puede quitar el GIF global de intercambio.')
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); _setting_set_cursor(c,'trade_gif_file_id',None); conn.commit()
+    except Exception as e:
+        conn.rollback(); print('[PK trade gif remove]',type(e).__name__,e); return await update.effective_message.reply_text('No pude quitar el GIF de intercambio.')
+    finally:_put_connection(conn)
+    await update.effective_message.reply_text('🗑️ GIF global de intercambio eliminado.')
+
+
 async def intercambiopokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type=='private':
         return await update.effective_message.reply_text('🔄 Inicia el intercambio en el grupo respondiendo al mensaje de la otra persona con /intercambiopokemon.')
@@ -1342,6 +1924,54 @@ async def cancelarintercambiopokemon_command(update:Update, context:ContextTypes
         conn.rollback(); print('[PK trade cancel command]',type(e).__name__,e); n=0
     finally:_put_connection(conn)
     await update.effective_message.reply_text('❌ Intercambio Pokémon cancelado.' if n else 'No tienes ningún intercambio Pokémon pendiente.')
+
+
+def _inventory_category(code:str)->str:
+    if code in HELD_ITEMS:return 'held'
+    if code in TM_ITEMS:return 'tm'
+    if code in STONE_CODES:return 'stone'
+    if code=='rare_candy':return 'candy'
+    return 'other'
+
+
+def _transfer_category_label(cat:str)->str:
+    return {'held':'🎒 Objetos equipables','tm':'💿 MT','stone':'🪨 Piedras evolutivas','candy':'🍬 Caramelos Raros','box':'📦 Cajas Pokémon','other':'📁 Otros objetos Pokémon'}.get(cat,cat)
+
+
+def _transfer_available_cursor(c,uid:int,cat:str)->list[tuple[str,int]]:
+    if cat=='box':
+        c.execute("SELECT COUNT(*) FROM pokemon_season_boxes_tb WHERE owner_id=%s AND opened=FALSE",(uid,)); n=int(c.fetchone()[0]); return [('pokemon_box',n)] if n>0 else []
+    c.execute("SELECT item_code,qty FROM pokemon_items_tb WHERE owner_id=%s AND qty>0 ORDER BY item_code",(uid,)); out=[]
+    for code,qty in c.fetchall():
+        code=str(code); qty=int(qty)
+        if _inventory_category(code)==cat:out.append((code,qty))
+    return out
+
+
+def _transfer_item_label(code:str)->str:
+    if code=='pokemon_box':return '📦 Caja Pokémon'
+    if code in HELD_ITEMS:
+        x=HELD_ITEMS[code]; return f"{x['emoji']} {x['name']}"
+    if code in ITEMS:
+        name,em,_,_=ITEMS[code]; return f'{em} {name}'
+    return f'🎒 {code}'
+
+
+async def entregar_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
+    msg=update.effective_message
+    if not msg.reply_to_message or not msg.reply_to_message.from_user:
+        return await msg.reply_text('🎁 Responde al mensaje de otra persona con /entregar.')
+    target=msg.reply_to_message.from_user
+    if target.is_bot or target.id==update.effective_user.id:return await msg.reply_text('🎁 Elige a otra persona real.')
+    uid=update.effective_user.id; conn=_get_connection(); cats=[]
+    try:
+        c=conn.cursor()
+        for cat in ('held','tm','stone','candy','box','other'):
+            if _transfer_available_cursor(c,uid,cat):cats.append(cat)
+    finally:_put_connection(conn)
+    if not cats:return await msg.reply_text('🎒 No tienes objetos Pokémon disponibles para entregar.')
+    rows=[[InlineKeyboardButton(_transfer_category_label(cat),callback_data=f'pk:gcat:{uid}:{target.id}:{cat}')] for cat in cats]
+    await msg.reply_text(f'🎁 Entregar a {target.first_name}\n\nElige una categoría:',reply_markup=InlineKeyboardMarkup(rows))
 
 
 async def shinys_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
@@ -1497,29 +2127,19 @@ async def poketest_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
 
 
 def _candy_total(uid:int)->int:
-    # La tabla histórica se conserva para no perder caramelos existentes,
-    # pero desde ahora todos cuentan como una sola moneda universal.
     conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("SELECT COALESCE(SUM(qty),0) FROM pokemon_candies_tb WHERE owner_id=%s",(uid,)); r=c.fetchone()
+        c=conn.cursor(); c.execute("SELECT qty FROM pokemon_items_tb WHERE owner_id=%s AND item_code='rare_candy'",(uid,)); r=c.fetchone()
         return int(r[0] or 0) if r else 0
     finally:_put_connection(conn)
 
 
-def _spend_universal_candies_cursor(c, uid:int, amount:int)->bool:
+def _spend_rare_candies_cursor(c, uid:int, amount:int)->bool:
     amount=max(0,int(amount))
-    c.execute("SELECT family_species_id,qty FROM pokemon_candies_tb WHERE owner_id=%s AND qty>0 ORDER BY family_species_id FOR UPDATE",(uid,))
-    rows=c.fetchall()
-    if sum(int(r[1]) for r in rows) < amount:
-        return False
-    left=amount
-    for family_id,qty in rows:
-        if left<=0:
-            break
-        qty=int(qty); take=min(qty,left); new_qty=qty-take
-        c.execute("UPDATE pokemon_candies_tb SET qty=%s WHERE owner_id=%s AND family_species_id=%s",(new_qty,uid,int(family_id)))
-        left-=take
-    return left==0
+    if amount<=0:return True
+    c.execute("""UPDATE pokemon_items_tb SET qty=qty-%s
+                 WHERE owner_id=%s AND item_code='rare_candy' AND qty>=%s RETURNING qty""",(amount,uid,amount))
+    return bool(c.fetchone())
 
 
 def _release_markup(uid:int, page:int=0):
@@ -1539,7 +2159,7 @@ async def liberarpokemon_command(update:Update, context:ContextTypes.DEFAULT_TYP
     uid=update.effective_user.id
     try:
         await context.bot.send_message(uid,
-            '🌿 LIBERAR POKÉMON\n\nElige uno. Liberarlo es permanente y te dará caramelos universales.\n\n🍬 Normal/Raro: 1 caramelo · Épico/Legendario: 2 caramelos.\n⭐ El principal y los Pokémon de tu equipo no se pueden liberar.',
+            '🌿 LIBERAR POKÉMON\n\nElige uno. Liberarlo es permanente y te dará Caramelos Raros.\n\n🍬 Común/Raro: 1 Caramelo Raro · Épico/Legendario: 2 Caramelos Raros.\n⭐ El principal y los Pokémon de tu equipo no se pueden liberar.',
             reply_markup=_release_markup(uid,0))
     except Exception:
         return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
@@ -1549,12 +2169,12 @@ async def liberarpokemon_command(update:Update, context:ContextTypes.DEFAULT_TYP
 
 async def caramelospokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id; total=_candy_total(uid)
-    lines=['🍬 CARAMELOS POKÉMON','',f'🍬 Caramelos universales: {total}','','Sirven para cualquier Pokémon.',f'Cada {CANDIES_PER_LEVEL} caramelos = +1 nivel.']
+    lines=['🍬 CARAMELOS POKÉMON','',f'🍬 Caramelos Raros: {total}','','1 Caramelo Raro = +1 nivel, hasta nivel 100.','Puedes conseguirlos liberando Pokémon o como drop de algunas capturas salvajes.']
     if total<=0:
-        lines.insert(2,'Todavía no tienes caramelos. Puedes conseguirlos liberando Pokémon repetidos.')
+        lines.insert(2,'Todavía no tienes Caramelos Raros.')
     try:await context.bot.send_message(uid,'\n'.join(lines))
     except Exception:return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
-    if update.effective_chat.type!='private':await update.effective_message.reply_text('📩 Te mandé tus caramelos Pokémon por privado.')
+    if update.effective_chat.type!='private':await update.effective_message.reply_text('📩 Te mandé tus Caramelos Raros por privado.')
 
 
 async def _trainer_profile_data(uid:int):
@@ -1569,7 +2189,7 @@ async def _trainer_profile_data(uid:int):
         c.execute("SELECT wild_catches,released,candies_earned,media_type,media_file_id,tournament_wins FROM pokemon_trainer_tb WHERE user_id=%s",(uid,)); tr=c.fetchone() or (0,0,0,None,None,0)
         c.execute("SELECT COUNT(*) FILTER(WHERE position=1),COUNT(*) FILTER(WHERE position<=3) FROM pokemon_rank_history_tb WHERE user_id=%s",(uid,)); hist=c.fetchone() or (0,0)
         c.execute("SELECT COUNT(*) FROM pokemon_season_boxes_tb WHERE owner_id=%s AND opened=FALSE",(uid,)); pending_boxes=int(c.fetchone()[0])
-        c.execute("SELECT COALESCE(SUM(qty),0) FROM pokemon_candies_tb WHERE owner_id=%s",(uid,)); candies=int(c.fetchone()[0] or 0)
+        c.execute("SELECT COALESCE(qty,0) FROM pokemon_items_tb WHERE owner_id=%s AND item_code='rare_candy'",(uid,)); cr=c.fetchone(); candies=int(cr[0] or 0) if cr else 0
         c.execute("SELECT principal_pokemon_id FROM pokemon_team_tb WHERE owner_id=%s",(uid,)); pr=c.fetchone(); principal=int(pr[0]) if pr and pr[0] else None
         prow=None
         if principal:
@@ -1589,7 +2209,7 @@ async def _trainer_profile_data(uid:int):
 def _trainer_profile_text(data:dict)->str:
     rank=data['rank']; tr=data['trainer']; prow=data['principal']
     hist=data.get('history') or (0,0)
-    lines=[f"🎒 ENTRENADOR POKÉMON · {data['name']}",'',f"📖 Pokédex: {data['dex']}/151",f"🎮 Pokémon: {data['total']}",f"✨ Shinys: {data['shinys']}",f"🎯 Capturas salvajes: {int(tr[0])}",f"🌿 Liberados: {int(tr[1])}",f"🍬 Caramelos disponibles: {data['candies']}",f"🏆 Ranking {_pokemon_month_key()}: {int(rank[0])} pts · {int(rank[1])}V/{int(rank[2])}D",f"🔥 Mejor racha histórica: {int(rank[3])}",f"📈 Mejor rating histórico: {int(rank[5])}",f"👑 Campeón mensual: ×{int(hist[0])} · Top 3: ×{int(hist[1])}",f"🏟️ Torneos ganados: {int(tr[5])}"]
+    lines=[f"🎒 ENTRENADOR POKÉMON · {data['name']}",'',f"📖 Pokédex: {data['dex']}/151",f"🎮 Pokémon: {data['total']}",f"✨ Shinys: {data['shinys']}",f"🎯 Capturas salvajes: {int(tr[0])}",f"🌿 Liberados: {int(tr[1])}",f"🍬 Caramelos Raros: {data['candies']}",f"🏆 Ranking {_pokemon_month_key()}: {int(rank[0])} pts · {int(rank[1])}V/{int(rank[2])}D",f"🔥 Mejor racha histórica: {int(rank[3])}",f"📈 Mejor rating histórico: {int(rank[5])}",f"👑 Campeón mensual: ×{int(hist[0])} · Top 3: ×{int(hist[1])}",f"🏟️ Torneos ganados: {int(tr[5])}"]
     if int(data.get('pending_boxes',0))>0: lines.append(f"🎁 Cajas Pokémon pendientes: {int(data['pending_boxes'])}")
     if prow:
         ivpct=_iv_percent(_iv_values(prow)); lines += ['',f"⭐ Principal: {_pokemon_label(prow)}",f"🧬 IV {ivpct}% · {_iv_grade(ivpct)}"]
@@ -1724,7 +2344,7 @@ async def _spawn_wild(context:ContextTypes.DEFAULT_TYPE, chat_id:int, thread_id:
 
 
 async def pokemon_wild_spawn_job(context:ContextTypes.DEFAULT_TYPE):
-    # Solo se ejecuta cada 2 horas; no observa mensajes ni hace polling continuo.
+    # Solo se ejecuta cada 30 minutos; no observa mensajes ni hace polling continuo.
     for community in COMUNIDADES:
         try:
             chat_id=int(community.get('id_comunidad')); thread_id=_games_topic(chat_id)
@@ -1756,13 +2376,19 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             gifted=str(br[1]).startswith('regalo:')
             source='gift_box' if gifted else f"season_box:{br[1]}:{br[2]}"
             data=grant_pokemon_with_cursor(c,uid,species,source,force_shiny=True)
+            held_drop=_roll_box_held_item('legendary')
+            if held_drop:grant_item_with_cursor(c,uid,held_drop,1)
+            data['held_drop']=held_drop
             c.execute("UPDATE pokemon_season_boxes_tb SET opened=TRUE,pokemon_id=%s,opened_at=NOW() WHERE box_id=%s",(data['pokemon_id'],box_id)); conn.commit()
         except Exception as e:
             conn.rollback(); print('[PK season box]',type(e).__name__,e); return await q.answer('No pude abrir la caja.',show_alert=True)
         finally:_put_connection(conn)
         await q.answer('✨ ¡SHINY garantizado!',show_alert=True)
         box_title='🎁 CAJA POKÉMON DE BIENVENIDA' if str(br[1]).startswith('regalo:') else '🎁 CAJA POKÉMON DE TEMPORADA'
-        return await q.edit_message_text(f"{box_title}\n\n✨ ¡Te salió #{data['species_id']:03d} SHINY {data['name']}!\n⭐ Nv.{data['level']} · 🧬 IV {data['iv_percent']}% · {data['iv_grade']}\n\nSe agregó a tu colección, no a tu equipo.")
+        extra=''
+        if data.get('held_drop') in HELD_ITEMS:
+            x=HELD_ITEMS[data['held_drop']]; extra=f"\n🎁 Objeto equipable: {x['emoji']} {x['name']}"
+        return await q.edit_message_text(f"{box_title}\n\n✨ ¡Te salió #{data['species_id']:03d} SHINY {data['name']}!\n⭐ Nv.{data['level']} · 🧬 IV {data['iv_percent']}% · {data['iv_grade']}{extra}\n\nSe agregó a tu colección, no a tu equipo.")
     if action=='tcreate':
         mode=int(p[2])
         try:
@@ -1935,7 +2561,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         effect={1:'PÉSIMO',2:'FLOJO',3:'BIEN',4:'MUY BIEN',5:'EXCELENTE',6:'PERFECTO'}[value]
         species=int(spawn[2]); level=int(spawn[3]); shiny=bool(spawn[4]); threshold=WILD_CATCH_THRESHOLD[rarity_for(species)]
         if value>=threshold:
-            conn=_get_connection(); caught=None; trainer_name=q.from_user.first_name
+            conn=_get_connection(); caught=None; trainer_name=q.from_user.first_name; drop=None; held_drop=None
             try:
                 c=conn.cursor(); c.execute("SELECT status,species_id,level,shiny,chat_id,thread_id,message_id,caught_by FROM pokemon_wild_spawns_tb WHERE spawn_id=%s FOR UPDATE",(spawn_id,)); fresh=c.fetchone()
                 if not fresh or fresh[0]!='throwing' or fresh[7] is None or int(fresh[7])!=uid:
@@ -1943,6 +2569,10 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                 else:
                     species=int(fresh[1]); level=int(fresh[2]); shiny=bool(fresh[3]); trainer_name=_display_name_cursor(c,uid)
                     caught=grant_pokemon_with_cursor(c,uid,species,f'wild:{spawn_id}',level_override=level,shiny_override=shiny)
+                    drop=_roll_wild_drop(species,shiny)
+                    if drop:grant_item_with_cursor(c,uid,drop[0],drop[1])
+                    held_drop=_roll_wild_held_item(species,shiny)
+                    if held_drop:grant_item_with_cursor(c,uid,held_drop,1)
                     _ensure_trainer_row_cursor(c,uid); c.execute("UPDATE pokemon_trainer_tb SET wild_catches=wild_catches+1,updated_at=NOW() WHERE user_id=%s",(uid,))
                     c.execute("UPDATE pokemon_wild_spawns_tb SET status='caught',finished_at=NOW() WHERE spawn_id=%s",(spawn_id,)); conn.commit()
             except Exception as e:
@@ -1952,6 +2582,9 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                 return await context.bot.send_message(q.message.chat_id,'💨 Ese Pokémon ya no está disponible.',message_thread_id=getattr(q.message,'message_thread_id',None))
             result=(f"🎲 {value}/6 · {effect}\n🎉 ¡{trainer_name} atrapó a #{species:03d} {'✨ SHINY ' if shiny else ''}{NAMES[species]} Nv.{level}!\n"
                     f"🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}")
+            if drop:result += f"\n🎁 Soltó: {_drop_label(drop)}"
+            if held_drop in HELD_ITEMS:
+                x=HELD_ITEMS[held_drop]; result += f"\n🎒 Objeto equipable: {x['emoji']} {x['name']}"
             try:
                 await context.bot.edit_message_text(chat_id=q.message.chat_id,message_id=q.message.message_id,text=_wild_text(species,level,shiny)+f'\n\n🏆 CAPTURADO POR {trainer_name}',reply_markup=None)
             except Exception:pass
@@ -1978,6 +2611,85 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                 await context.bot.edit_message_text(chat_id=q.message.chat_id,message_id=q.message.message_id,text=_wild_text(species,level,shiny)+f'\n\n💨 #{species:03d} {NAMES[species]} escapó después de los 2 intentos de {trainer_name}.',reply_markup=None)
             except Exception:pass
         return await context.bot.send_message(q.message.chat_id,text,message_thread_id=getattr(q.message,'message_thread_id',None))
+    if action=='gcat':
+        if len(p)<5:return await q.answer('Este menú de entrega no es tuyo.',show_alert=True)
+        sender=int(p[2])
+        if uid!=sender:return await q.answer('Este menú de entrega no es tuyo.',show_alert=True)
+        target=int(p[3]); cat=p[4]; conn=_get_connection()
+        try:c=conn.cursor(); inv=_transfer_available_cursor(c,uid,cat)
+        finally:_put_connection(conn)
+        if not inv:return await q.answer('Ya no tienes objetos en esa categoría.',show_alert=True)
+        rows=[[InlineKeyboardButton(f'{_transfer_item_label(code)} ×{qty}',callback_data=f'pk:gitem:{sender}:{target}:{code}')] for code,qty in inv[:40]]
+        await q.answer(); return await q.edit_message_text(f'🎁 {_transfer_category_label(cat)}\nElige objeto:',reply_markup=InlineKeyboardMarkup(rows))
+    if action=='gitem':
+        if len(p)<5:return await q.answer('Este menú de entrega no es tuyo.',show_alert=True)
+        sender=int(p[2])
+        if uid!=sender:return await q.answer('Este menú de entrega no es tuyo.',show_alert=True)
+        target=int(p[3]); code=p[4]; cat='box' if code=='pokemon_box' else _inventory_category(code); conn=_get_connection(); available=0
+        try:
+            c=conn.cursor(); inv=dict(_transfer_available_cursor(c,uid,cat)); available=int(inv.get(code,0))
+        finally:_put_connection(conn)
+        if available<=0:return await q.answer('Ya no tienes ese objeto disponible.',show_alert=True)
+        amounts=list(range(1,min(available,5)+1))
+        if available>5:amounts.append(available)
+        rows=[]
+        for i in range(0,len(amounts),3):rows.append([InlineKeyboardButton(str(n),callback_data=f'pk:gqty:{sender}:{target}:{code}:{n}') for n in amounts[i:i+3]])
+        await q.answer(); return await q.edit_message_text(f'🎁 {_transfer_item_label(code)}\nDisponible: {available}\nElige cantidad:',reply_markup=InlineKeyboardMarkup(rows))
+    if action=='gqty':
+        if len(p)<6:return await q.answer('Este menú de entrega no es tuyo.',show_alert=True)
+        sender=int(p[2])
+        if uid!=sender:return await q.answer('Este menú de entrega no es tuyo.',show_alert=True)
+        target=int(p[3]); code=p[4]; qty=int(p[5]); cat='box' if code=='pokemon_box' else _inventory_category(code); conn=_get_connection(); tid=None; available=0; target_name=f'Usuario {target}'
+        try:
+            c=conn.cursor(); inv=dict(_transfer_available_cursor(c,uid,cat)); available=int(inv.get(code,0))
+            if qty<=0 or qty>available:conn.rollback(); return await q.answer('Cantidad inválida o inventario insuficiente.',show_alert=True)
+            target_name=_display_name_cursor(c,target)
+            c.execute("INSERT INTO pokemon_item_transfers_tb(sender_id,recipient_id,item_code,qty,category,status) VALUES(%s,%s,%s,%s,%s,'pending') RETURNING transfer_id",(uid,target,code,qty,cat)); tid=int(c.fetchone()[0]); conn.commit()
+        except Exception as e:conn.rollback(); print('[PK transfer draft]',type(e).__name__,e); return await q.answer('No pude preparar la entrega.',show_alert=True)
+        finally:_put_connection(conn)
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton('✅ Confirmar entrega',callback_data=f'pk:gconfirm:{tid}'),InlineKeyboardButton('❌ Cancelar',callback_data=f'pk:gcancel:{tid}')]])
+        await q.answer(); return await q.edit_message_text(f'Entregar a {target_name}\nObjeto: {_transfer_item_label(code)}\nCantidad: {qty}\nDisponible al preparar: {available}',reply_markup=kb)
+    if action=='gcancel':
+        tid=int(p[2]); conn=_get_connection(); ok=False
+        try:
+            c=conn.cursor(); c.execute("SELECT sender_id,status FROM pokemon_item_transfers_tb WHERE transfer_id=%s FOR UPDATE",(tid,)); tr=c.fetchone()
+            if not tr:conn.rollback(); return await q.answer('La entrega ya no estaba pendiente.',show_alert=True)
+            if int(tr[0])!=uid:conn.rollback(); return await q.answer('Este menú de entrega no es tuyo.',show_alert=True)
+            if tr[1]!='pending':conn.rollback(); return await q.answer('La entrega ya no estaba pendiente.',show_alert=True)
+            c.execute("UPDATE pokemon_item_transfers_tb SET status='cancelled',finished_at=NOW() WHERE transfer_id=%s AND sender_id=%s AND status='pending' RETURNING transfer_id",(tid,uid)); ok=bool(c.fetchone()); conn.commit()
+        except Exception:conn.rollback()
+        finally:_put_connection(conn)
+        if not ok:return await q.answer('La entrega ya no estaba pendiente.',show_alert=True)
+        await q.answer('Entrega cancelada.'); return await q.edit_message_text('❌ Entrega Pokémon cancelada.')
+    if action=='gconfirm':
+        tid=int(p[2]); conn=_get_connection(); result=None
+        try:
+            c=conn.cursor(); c.execute("SELECT sender_id,recipient_id,item_code,qty,category,status FROM pokemon_item_transfers_tb WHERE transfer_id=%s FOR UPDATE",(tid,)); tr=c.fetchone()
+            if not tr:conn.rollback(); return await q.answer('Entrega no disponible.',show_alert=True)
+            if int(tr[0])!=uid:conn.rollback(); return await q.answer('Este menú de entrega no es tuyo.',show_alert=True)
+            if tr[5]!='pending':conn.rollback(); return await q.answer('Esta entrega ya fue procesada.',show_alert=True)
+            sender,target,code,qty,cat=int(tr[0]),int(tr[1]),str(tr[2]),int(tr[3]),str(tr[4])
+            if sender==target or qty<=0:conn.rollback(); return await q.answer('Entrega inválida.',show_alert=True)
+            if cat=='box' and code=='pokemon_box':
+                c.execute("SELECT box_id,placement FROM pokemon_season_boxes_tb WHERE owner_id=%s AND opened=FALSE ORDER BY box_id FOR UPDATE",(sender,)); boxes=c.fetchall()[:qty]
+                if len(boxes)<qty:conn.rollback(); return await q.answer('Ya no tienes suficientes cajas.',show_alert=True)
+                for box_id,placement in boxes:
+                    c.execute("UPDATE pokemon_season_boxes_tb SET opened=TRUE,opened_at=NOW() WHERE box_id=%s AND owner_id=%s AND opened=FALSE",(box_id,sender))
+                    key=f'transfer:{tid}:{int(box_id)}'
+                    c.execute("""INSERT INTO pokemon_season_boxes_tb(owner_id,season_key,placement,opened) VALUES(%s,%s,%s,FALSE)""",(target,key,int(placement)))
+            else:
+                c.execute("UPDATE pokemon_items_tb SET qty=qty-%s WHERE owner_id=%s AND item_code=%s AND qty>=%s RETURNING qty",(qty,sender,code,qty))
+                if not c.fetchone():conn.rollback(); return await q.answer('Ya no tienes suficiente cantidad de ese objeto.',show_alert=True)
+                c.execute("""INSERT INTO pokemon_items_tb(owner_id,item_code,qty) VALUES(%s,%s,%s)
+                             ON CONFLICT(owner_id,item_code) DO UPDATE SET qty=pokemon_items_tb.qty+EXCLUDED.qty""",(target,code,qty))
+            c.execute("UPDATE pokemon_item_transfers_tb SET status='completed',finished_at=NOW() WHERE transfer_id=%s AND status='pending'",(tid,))
+            c.execute("UPDATE pokemon_item_transfers_tb SET status='cancelled',finished_at=NOW() WHERE sender_id=%s AND recipient_id=%s AND item_code=%s AND status='pending' AND transfer_id<>%s",(sender,target,code,tid))
+            sender_name=_display_name_cursor(c,sender); target_name=_display_name_cursor(c,target); conn.commit(); result=(sender_name,target_name,code,qty)
+        except Exception as e:conn.rollback(); print('[PK transfer confirm]',type(e).__name__,e); return await q.answer('No pude completar la entrega.',show_alert=True)
+        finally:_put_connection(conn)
+        await q.answer('Entrega completada ✅',show_alert=True)
+        return await q.edit_message_text(f'{result[0]} entregó {_transfer_item_label(result[2])} ×{result[3]} a {result[1]}.')
+
     if action=='releasepage':
         page=int(p[2]); await q.answer(); return await q.edit_message_text('🌿 Elige el Pokémon que quieres liberar:',reply_markup=_release_markup(uid,page))
     if action=='releasepick':
@@ -1990,26 +2702,26 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         if blocked:return await q.answer('Primero quítalo del equipo o cambia tu Pokémon principal.',show_alert=True)
         ivpct=_iv_percent(_iv_values(row)); amount=_release_candies(int(row[1]))
         kb=InlineKeyboardMarkup([[InlineKeyboardButton(f'✅ Liberar · +{amount} 🍬',callback_data=f'pk:releaseconfirm:{pid}'),InlineKeyboardButton('❌ Cancelar',callback_data=f'pk:detail:{pid}:{page}')]])
-        await q.answer(); return await q.message.reply_text(f"🌿 ¿Liberar a {_pokemon_label(row)}?\n🧬 IV {ivpct}% · {_iv_grade(ivpct)}\n🍬 Recibirás {amount} caramelo{'s' if amount!=1 else ''} universal{'es' if amount!=1 else ''}.\n\nEsto es permanente.",reply_markup=kb)
+        await q.answer(); return await q.message.reply_text(f"🌿 ¿Liberar a {_pokemon_label(row)}?\n🧬 IV {ivpct}% · {_iv_grade(ivpct)}\n🍬 Recibirás {amount} Caramelo{'s' if amount!=1 else ''} Raro{'s' if amount!=1 else ''}.\n\nEsto es permanente.",reply_markup=kb)
     if action=='releaseconfirm':
         pid=int(p[2]); conn=_get_connection(); result=None
         try:
-            c=conn.cursor(); c.execute("""SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s FOR UPDATE""",(uid,pid)); row=c.fetchone()
+            c=conn.cursor(); c.execute("""SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s FOR UPDATE""",(uid,pid)); row=c.fetchone()
             if not row:conn.rollback(); return await q.answer('Ese Pokémon ya no está en tu colección.',show_alert=True)
             if _battle_busy_cursor(c,uid) or _trade_busy_cursor(c,uid):conn.rollback(); return await q.answer('Termina tu batalla/intercambio antes de liberar Pokémon.',show_alert=True)
             _ensure_team_row_cursor(c,uid); c.execute("SELECT slot1,slot2,slot3,principal_pokemon_id FROM pokemon_team_tb WHERE owner_id=%s FOR UPDATE",(uid,)); team=c.fetchone() or (None,None,None,None)
             if pid in [int(x) for x in team if x is not None]:conn.rollback(); return await q.answer('Primero quítalo del equipo o cambia tu principal.',show_alert=True)
-            amount=_release_candies(int(row[1])); root=_family_root(int(row[1])); shown=row[2] or NAMES[int(row[1])]
+            amount=_release_candies(int(row[1])); shown=row[2] or NAMES[int(row[1])]; held=row[16] if len(row)>16 else None
+            if held in HELD_ITEMS:grant_item_with_cursor(c,uid,held,1)
             c.execute("DELETE FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid))
-            # Se guarda en la tabla histórica para compatibilidad, pero el saldo es universal.
-            c.execute("INSERT INTO pokemon_candies_tb(owner_id,family_species_id,qty) VALUES(%s,%s,%s) ON CONFLICT(owner_id,family_species_id) DO UPDATE SET qty=pokemon_candies_tb.qty+EXCLUDED.qty",(uid,root,amount))
+            grant_item_with_cursor(c,uid,'rare_candy',amount)
             _ensure_trainer_row_cursor(c,uid); c.execute("UPDATE pokemon_trainer_tb SET released=released+1,candies_earned=candies_earned+%s,updated_at=NOW() WHERE user_id=%s",(amount,uid)); conn.commit(); result=(shown,amount)
         except Exception as e:
             conn.rollback(); print('[PK release]',type(e).__name__,e)
         finally:_put_connection(conn)
         if not result:return await q.answer('No pude liberarlo.',show_alert=True)
         await q.answer('Pokémon liberado.',show_alert=True)
-        try:return await q.edit_message_text(f"🌿 Liberaste a {result[0]}.\n🍬 +{result[1]} caramelo{'s' if result[1]!=1 else ''} universal{'es' if result[1]!=1 else ''}.")
+        try:return await q.edit_message_text(f"🌿 Liberaste a {result[0]}.\n🍬 +{result[1]} Caramelo{'s' if result[1]!=1 else ''} Raro{'s' if result[1]!=1 else ''}.")
         except Exception:return
     if action=='candyup':
         pid=int(p[2]); conn=_get_connection(); notes=[]
@@ -2018,8 +2730,8 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             if not r:conn.rollback(); return await q.answer('Pokémon no encontrado.',show_alert=True)
             species,level,xp,nick=int(r[0]),int(r[1]),int(r[2]),r[3]
             if level>=MAX_LEVEL:conn.rollback(); return await q.answer('Ya está en nivel 100.',show_alert=True)
-            if not _spend_universal_candies_cursor(c,uid,CANDIES_PER_LEVEL):
-                conn.rollback(); return await q.answer(f'Necesitas {CANDIES_PER_LEVEL} caramelos universales.',show_alert=True)
+            if not _spend_rare_candies_cursor(c,uid,CANDIES_PER_LEVEL):
+                conn.rollback(); return await q.answer('Necesitas 1 Caramelo Raro.',show_alert=True)
             needed=max(1,_xp_floor(level+1)-xp); notes=_grant_pokemon_xp_cursor(c,pid,needed); conn.commit()
         except Exception as e:
             conn.rollback(); print('[PK candy level]',type(e).__name__,e)
@@ -2059,7 +2771,9 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             'spd':_stat_value(species,level,'spd',ivs['spd']),
         }
         principal=_is_principal(uid,pid)
-        universal_candies=_candy_total(uid)
+        rare_candies=_candy_total(uid)
+        held_code=row[16] if len(row)>16 else None
+        held_line=f"🎒 Equipado: {_held_item_text(held_code)}\n"
         principal_line='⭐ Pokémon PRINCIPAL\n' if principal else ''
         txt=(f"{rarity_emoji(rarity_for(species))} {_pokemon_label(row)}\n"
              f"📖 Pokédex: #{species:03d} · 🎮 Ejemplar: #{int(row[0])}\n"
@@ -2070,16 +2784,19 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
              f"🧬 IV: {ivpct}% · {_iv_grade(ivpct)}\n"
              f"📊 PS {stats['hp']} · ATQ {stats['atk']} · DEF {stats['def']} · ESP {stats['spc']} · VEL {stats['spd']}\n"
              f"🔬 DVs: PS {ivs['hp']}/15 · ATQ {ivs['atk']}/15 · DEF {ivs['def']}/15 · ESP {ivs['spc']}/15 · VEL {ivs['spd']}/15\n"
-             f"🍬 Caramelos universales: {universal_candies}\n"
+             f"🍬 Caramelos Raros: {rare_candies}\n"
+             f"{held_line}"
              f"⚔️ {row[8]}V / {row[9]}D\n"
              f"🎯 Movimientos: {move_names or '—'}\n"
              f"🎞️ Multimedia: {'GIF' if row[6]=='animation' else 'Video' if row[6]=='video' else 'Foto' if row[6]=='photo' else 'Sin asignar'}")
         principal_btn=InlineKeyboardButton('⭐ Principal ✓' if principal else '⭐ Hacer principal',callback_data='pk:noop' if principal else f'pk:setprincipal:{pid}')
         extra_row=[]
         if level<MAX_LEVEL:
-            extra_row.append(InlineKeyboardButton(f'🍬 Subir nivel · {universal_candies}/{CANDIES_PER_LEVEL}',callback_data=f'pk:candyup:{pid}'))
+            extra_row.append(InlineKeyboardButton(f'🍬 Subir nivel · {rare_candies}',callback_data=f'pk:candyup:{pid}'))
         extra_row.append(InlineKeyboardButton('🌿 Liberar',callback_data=f'pk:releasepick:{pid}:{page}'))
-        kb_rows=[[InlineKeyboardButton('🏷️ Apodo',callback_data=f'pk:nickselect:{pid}:{page}'),InlineKeyboardButton('🎞️ Foto/GIF/Video',callback_data=f'pk:mediaselect:{pid}:{page}')],[InlineKeyboardButton('👥 Meter al equipo',callback_data=f'pk:addteam:{pid}'),principal_btn],[InlineKeyboardButton('😎 Presumir aquí',callback_data=f'pk:braghere:{pid}'),InlineKeyboardButton('🗑 Quitar multimedia',callback_data=f'pk:removemedia:{pid}')],extra_row,[InlineKeyboardButton('⬅️ Volver',callback_data=f'pk:list:{page}')]]
+        held_buttons=[InlineKeyboardButton('🎒 Equipar objeto',callback_data=f'pk:holdequipmenu:{pid}:0')]
+        if held_code:held_buttons.append(InlineKeyboardButton('🗑 Quitar objeto',callback_data=f'pk:holdremove:{pid}'))
+        kb_rows=[[InlineKeyboardButton('🏷️ Apodo',callback_data=f'pk:nickselect:{pid}:{page}'),InlineKeyboardButton('🎞️ Foto/GIF/Video',callback_data=f'pk:mediaselect:{pid}:{page}')],[InlineKeyboardButton('👥 Meter al equipo',callback_data=f'pk:addteam:{pid}'),principal_btn],held_buttons,[InlineKeyboardButton('😎 Presumir aquí',callback_data=f'pk:braghere:{pid}'),InlineKeyboardButton('🗑 Quitar multimedia',callback_data=f'pk:removemedia:{pid}')],extra_row,[InlineKeyboardButton('⬅️ Volver',callback_data=f'pk:list:{page}')]]
         kb=InlineKeyboardMarkup(kb_rows)
         await q.answer()
         # Si ya tiene multimedia, al seleccionarlo se muestra inmediatamente con su ficha.
@@ -2094,6 +2811,58 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         return await q.edit_message_text(txt,reply_markup=kb)
+    if action=='holdequipmenu':
+        pid=int(p[2]); page=int(p[3]) if len(p)>3 else 0; row=_get_instance(uid,pid)
+        if not row:return await q.answer('Ese Pokémon ya no está en tu colección.',show_alert=True)
+        conn=_get_connection()
+        try:
+            c=conn.cursor(); c.execute("SELECT item_code,qty FROM pokemon_items_tb WHERE owner_id=%s AND qty>0 ORDER BY item_code",(uid,)); inv=[(str(a),int(b)) for a,b in c.fetchall() if str(a) in HELD_ITEMS]
+        finally:_put_connection(conn)
+        if not inv:return await q.answer('No tienes objetos equipables libres en tu inventario.',show_alert=True)
+        pages=max(1,math.ceil(len(inv)/PAGE_SIZE)); page=max(0,min(page,pages-1)); chunk=inv[page*PAGE_SIZE:(page+1)*PAGE_SIZE]
+        rows=[]
+        for code,qty in chunk:
+            x=HELD_ITEMS[code]; rows.append([InlineKeyboardButton(f"{x['emoji']} {x['name']} ×{qty}",callback_data=f'pk:holdequip:{pid}:{code}')])
+        nav=[]
+        if page>0:nav.append(InlineKeyboardButton('⬅️',callback_data=f'pk:holdequipmenu:{pid}:{page-1}'))
+        if page<pages-1:nav.append(InlineKeyboardButton('➡️',callback_data=f'pk:holdequipmenu:{pid}:{page+1}'))
+        if nav:rows.append(nav)
+        rows.append([InlineKeyboardButton('❌ Cancelar',callback_data=f'pk:detail:{pid}:0')])
+        await q.answer(); return await q.message.reply_text('🎒 Elige el objeto equipable:',reply_markup=InlineKeyboardMarkup(rows))
+    if action=='holdequip':
+        pid=int(p[2]); code=p[3]
+        if code not in HELD_ITEMS:return await q.answer('Objeto equipable inválido.',show_alert=True)
+        conn=_get_connection(); note=None
+        try:
+            c=conn.cursor()
+            if _battle_busy_cursor(c,uid) or _trade_busy_cursor(c,uid):conn.rollback(); return await q.answer('Termina tu batalla/intercambio antes de cambiar objetos equipados.',show_alert=True)
+            c.execute("SELECT held_item_code,species_id,nickname FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s FOR UPDATE",(uid,pid)); mon=c.fetchone()
+            if not mon:conn.rollback(); return await q.answer('Ese Pokémon ya no está en tu colección.',show_alert=True)
+            old=mon[0]
+            if old==code:conn.rollback(); return await q.answer('Ese objeto ya está equipado.',show_alert=True)
+            c.execute("UPDATE pokemon_items_tb SET qty=qty-1 WHERE owner_id=%s AND item_code=%s AND qty>0 RETURNING qty",(uid,code))
+            if not c.fetchone():conn.rollback(); return await q.answer('Ya no tienes ese objeto libre.',show_alert=True)
+            if old in HELD_ITEMS:grant_item_with_cursor(c,uid,old,1)
+            c.execute("UPDATE pokemon_instances_tb SET held_item_code=%s,updated_at=NOW() WHERE owner_id=%s AND pokemon_id=%s",(code,uid,pid)); conn.commit()
+            note=f"🎒 {mon[2] or NAMES[int(mon[1])]} equipó {_item_name(code)}."
+        except Exception as e:conn.rollback(); print('[PK held equip]',type(e).__name__,e)
+        finally:_put_connection(conn)
+        return await q.answer(note or 'No pude equiparlo.',show_alert=True)
+    if action=='holdremove':
+        pid=int(p[2]); conn=_get_connection(); note=None
+        try:
+            c=conn.cursor()
+            if _battle_busy_cursor(c,uid) or _trade_busy_cursor(c,uid):conn.rollback(); return await q.answer('Termina tu batalla/intercambio antes de cambiar objetos equipados.',show_alert=True)
+            c.execute("SELECT held_item_code,species_id,nickname FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s FOR UPDATE",(uid,pid)); mon=c.fetchone()
+            if not mon:conn.rollback(); return await q.answer('Ese Pokémon ya no está en tu colección.',show_alert=True)
+            old=mon[0]
+            if old not in HELD_ITEMS:conn.rollback(); return await q.answer('Ese Pokémon no tiene objeto equipado.',show_alert=True)
+            c.execute("UPDATE pokemon_instances_tb SET held_item_code=NULL,updated_at=NOW() WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); grant_item_with_cursor(c,uid,old,1); conn.commit()
+            note=f"🎒 {_item_name(old)} volvió a tu inventario."
+        except Exception as e:conn.rollback(); print('[PK held remove]',type(e).__name__,e)
+        finally:_put_connection(conn)
+        return await q.answer(note or 'No pude quitarlo.',show_alert=True)
+
     if action=='setprincipal':
         pid=int(p[2]); conn=_get_connection(); name=None
         try:
@@ -2150,7 +2919,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         for r in mons:
             sid=int(r[1]); level=int(r[3])
             tm_move=TM_ITEMS.get(code,(None,None,None))[2] if code in TM_ITEMS else None
-            ok=(code in STONE_EVOLUTIONS.get(sid,{})) or (code=='link_cable' and sid in TRADE_EVOLUTIONS) or (code=='rare_candy' and level<MAX_LEVEL) or (tm_move is not None and can_learn_tm(sid,tm_move))
+            ok=(_stone_evolution_target(sid,code) is not None) or (code=='link_cable' and sid in TRADE_EVOLUTIONS) or (code=='rare_candy' and level<MAX_LEVEL) or (tm_move is not None and can_learn_tm(sid,tm_move))
             if ok:eligible.append(r)
         if not eligible:return await q.answer('No tienes ningún Pokémon compatible con ese objeto/MT.',show_alert=True)
         pages=max(1,math.ceil(len(eligible)/PAGE_SIZE)); page=max(0,min(page,pages-1)); chunk=eligible[page*PAGE_SIZE:(page+1)*PAGE_SIZE]
@@ -2202,7 +2971,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                 c.execute("INSERT INTO pokemon_pokedex_tb(owner_id,species_id,obtained_count) VALUES(%s,%s,1) ON CONFLICT(owner_id,species_id) DO UPDATE SET last_obtained_at=NOW()",(uid,target))
                 conn.commit(); note=f"🍬 {r[1] or NAMES[sid]} subió a Nv.{new_level}." + (f" ✨ Evolucionó a {NAMES[target]}." if target!=sid else '')
             else:
-                target=STONE_EVOLUTIONS.get(sid,{}).get(code) if code!='link_cable' else TRADE_EVOLUTIONS.get(sid)
+                target=_stone_evolution_target(sid,code) if code!='link_cable' else TRADE_EVOLUTIONS.get(sid)
                 if not target:conn.rollback(); return await q.answer('Ese objeto no sirve para este Pokémon.',show_alert=True)
                 c.execute("UPDATE pokemon_items_tb SET qty=qty-1 WHERE owner_id=%s AND item_code=%s AND qty>0 RETURNING qty",(uid,code))
                 if not c.fetchone():conn.rollback(); return await q.answer('Ya no tienes ese objeto.',show_alert=True)
@@ -2302,6 +3071,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             else:
                 c.execute("SELECT pokemon_id,owner_id,species_id,nickname,level,shiny FROM pokemon_instances_tb WHERE pokemon_id IN (%s,%s) FOR UPDATE",(pa,pb)); rr={int(x[0]):x for x in c.fetchall()}
                 if pa not in rr or pb not in rr or int(rr[pa][1])!=ua or int(rr[pb][1])!=ub:conn.rollback(); return await q.answer('Una de las ofertas ya no está disponible.',show_alert=True)
+                offered_a=rr[pa][3] or NAMES[int(rr[pa][2])]; offered_b=rr[pb][3] or NAMES[int(rr[pb][2])]
                 # Los sacamos de sus equipos viejos para no dejar referencias cruzadas.
                 for owner,pid in ((ua,pa),(ub,pb)):
                     for slot in (1,2,3):c.execute(f"UPDATE pokemon_team_tb SET slot{slot}=NULL,updated_at=NOW() WHERE owner_id=%s AND slot{slot}=%s",(owner,pid))
@@ -2317,15 +3087,24 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                     c.execute("""INSERT INTO pokemon_pokedex_tb(owner_id,species_id,obtained_count) VALUES(%s,%s,1)
                                  ON CONFLICT(owner_id,species_id) DO UPDATE SET obtained_count=pokemon_pokedex_tb.obtained_count+1,last_obtained_at=NOW()""",(new_owner,finalsid))
                 c.execute("UPDATE pokemon_trades_tb SET status='done',finished_at=NOW(),updated_at=NOW() WHERE trade_id=%s",(tid,)); conn.commit(); finished=True
-                result_text='🔄 ¡INTERCAMBIO COMPLETADO!\n\nLos Pokémon conservaron nivel, XP, apodo, foto/GIF/video y Shiny.'+('\n\n'+'\n'.join(evo_notes) if evo_notes else '')
+                result_text=(f'🔄 ¡INTERCAMBIO COMPLETADO!\n\n{offered_a} ↔ {offered_b}\n'
+                             'Conservan nivel, XP, apodo, multimedia, Shiny, IV/DVs, estadísticas y objeto equipado.')
         except Exception as e:conn.rollback(); print('[PK trade confirm]',type(e).__name__,e); return await q.answer('No pude completar el intercambio.',show_alert=True)
         finally:_put_connection(conn)
         await q.answer('Confirmado ✅',show_alert=True)
         if finished:
-            try:await context.bot.edit_message_text(chat_id=chat_id,message_id=msgid,text=result_text)
-            except Exception:
-                try:await context.bot.send_message(chat_id,result_text,message_thread_id=thread_id)
+            # Orden visible solicitado: GIF -> resultado -> evolución por intercambio.
+            gif_id=_trade_gif_file_id()
+            if gif_id:
+                try:await context.bot.send_animation(chat_id=chat_id,animation=gif_id,message_thread_id=thread_id)
+                except Exception as e:print('[PK trade gif send]',type(e).__name__,e)
+            try:await context.bot.send_message(chat_id,result_text,message_thread_id=thread_id)
+            except Exception:pass
+            if evo_notes:
+                try:await context.bot.send_message(chat_id,'✨ EVOLUCIÓN POR INTERCAMBIO\n\n'+'\n'.join(evo_notes),message_thread_id=thread_id)
                 except Exception:pass
+            try:await context.bot.edit_message_text(chat_id=chat_id,message_id=msgid,text='✅ Intercambio Pokémon completado.')
+            except Exception:pass
         return
 
     # ---- callbacks de batalla ----
@@ -2377,6 +3156,8 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                 idx=int(p[3]); mon=player['mons'][player['active']]
                 if idx<0 or idx>=len(mon['moves']):conn.rollback(); return await q.answer('Movimiento inválido.',show_alert=True)
                 code=mon['moves'][idx]
+                locked=mon.get('choice_lock') if mon.get('held_item') in ('choice_band','choice_specs','choice_scarf') else None
+                if locked and code!=locked:conn.rollback(); return await q.answer(f"{_item_name(mon.get('held_item'))} te mantiene usando {MOVES.get(locked,(locked,))[0]}.",show_alert=True)
                 if int(mon.get('pp',{}).get(code,0))<=0:conn.rollback(); return await q.answer('Ese movimiento ya no tiene PP.',show_alert=True)
                 state.setdefault('choices',{})[key]={'type':'move','move':code}
             elif action=='bswitch':
@@ -2387,9 +3168,11 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                 code=p[3]
                 if code not in ITEMS or ITEMS[code][3] not in ('heal','revive'):conn.rollback(); return await q.answer('Ese objeto no se usa en batalla.',show_alert=True)
                 state.setdefault('choices',{})[key]={'type':'item','item':code}
+            if state.get('battle_kind')=='training' and str(TRAINING_BOT_ID) in state['players'] and str(TRAINING_BOT_ID) not in state.get('choices',{}):
+                state.setdefault('choices',{})[str(TRAINING_BOT_ID)]=_training_bot_choice(state)
             winner,logs,state=_resolve_round_cursor(c,bid,state)
             if winner is not None:
-                final=_finish_battle_cursor(c,bid,state)
+                final=_finish_training_cursor(c,bid,state) if state.get('battle_kind')=='training' else _finish_battle_cursor(c,bid,state)
             else:
                 c.execute("UPDATE pokemon_battles_tb SET state_json=%s,updated_at=NOW() WHERE battle_id=%s",(json.dumps(state,ensure_ascii=False),bid))
             conn.commit(); chat_id=int(br[2]); thread_id=br[3]; msgid=br[4]
@@ -2404,6 +3187,10 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             try:await context.bot.send_message(chat_id, _battle_text(state,note),message_thread_id=thread_id,reply_markup=None if final else _battle_markup(bid))
             except Exception:pass
         if final:
+            if final.get('training'):
+                try:await context.bot.send_message(chat_id,'\n'.join(_training_result_lines(final)),message_thread_id=thread_id)
+                except Exception:pass
+                return
             try:
                 from handlers.season_pass import grant_season_xp
                 wx=grant_season_xp(final['winner'],WIN_SEASON_XP,'pokemon_battle'); lx=grant_season_xp(final['loser'],LOSS_SEASON_XP,'pokemon_battle')
@@ -2453,11 +3240,15 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             if not br or br[1]!='active':conn.rollback(); return await q.answer('Ya terminó.',show_alert=True)
             state=json.loads(br[0]); key=str(uid)
             if key not in state['players']:conn.rollback(); return await q.answer('No participas.',show_alert=True)
-            ids=list(state['players'].keys()); other=int(ids[1] if key==ids[0] else ids[0]); state['status']='finished'; state['winner']=other; state['loser']=uid; final=_finish_battle_cursor(c,bid,state); conn.commit(); chat_id=int(br[2]); thread_id=br[3]
+            ids=list(state['players'].keys()); other=int(ids[1] if key==ids[0] else ids[0]); state['status']='finished'; state['winner']=other; state['loser']=uid; final=_finish_training_cursor(c,bid,state) if state.get('battle_kind')=='training' else _finish_battle_cursor(c,bid,state); conn.commit(); chat_id=int(br[2]); thread_id=br[3]
         except Exception:conn.rollback(); return await q.answer('No pude rendirte.',show_alert=True)
         finally:_put_connection(conn)
         await q.answer('Te rendiste.',show_alert=True)
-        try:await context.bot.send_message(chat_id,f"🏳 {state['players'][str(uid)]['name']} se rindió.\n🏆 Gana {state['players'][str(final['winner'])]['name']}.",message_thread_id=thread_id)
+        try:
+            if final.get('training'):
+                await context.bot.send_message(chat_id,'\n'.join(_training_result_lines(final)),message_thread_id=thread_id)
+            else:
+                await context.bot.send_message(chat_id,f"🏳 {state['players'][str(uid)]['name']} se rindió.\n🏆 Gana {state['players'][str(final['winner'])]['name']}.",message_thread_id=thread_id)
         except Exception:pass
         return
 
