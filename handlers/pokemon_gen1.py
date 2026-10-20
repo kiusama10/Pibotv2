@@ -2255,19 +2255,24 @@ async def entrenador_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
 
 
 def _wild_text(species:int, level:int, shiny:bool)->str:
-    rarity=rarity_for(species); threshold=WILD_CATCH_THRESHOLD[rarity]
-    shiny_line='✨ SHINY ✨\n' if shiny else ''
+    # La identidad real permanece oculta mientras el encuentro siga activo.
     period=_wild_period(); period_line='☀️ Aparición diurna' if period=='day' else '🌙 Aparición nocturna'
     return (f"🌿 ¡APARECIÓ UN POKÉMON SALVAJE!\n{period_line}\n\n"
+            f"❓ Un Pokémon desconocido apareció...\n\n"
+            f"🎯 El primer entrenador que pulse Atrapar se queda con el intento.\n"
+            f"🎲 Tiene {WILD_MAX_ATTEMPTS} tiros; si falla los dos, el Pokémon se va.\n"
+            f"⏳ La aparición dura 10 minutos.\n\n"
+            f"🎲 ¡Atrévete a descubrir cuál es!")
+
+
+def _wild_reveal_text(species:int, level:int, shiny:bool)->str:
+    rarity=rarity_for(species)
+    shiny_line='✨ SHINY ✨\n' if shiny else ''
+    return (f"👀 El Pokémon misterioso era:\n"
             f"{shiny_line}"
             f"{rarity_emoji(rarity)} #{species:03d} {NAMES[species]} · Nv.{level}\n"
             f"{_types_text(species)}\n"
-            f"⭐ Rareza: {rarity.upper()}\n\n"
-            f"🎯 El primer entrenador que pulse Atrapar se queda con el intento.\n"
-            f"🎲 Tiene {WILD_MAX_ATTEMPTS} tiros; si falla los dos, el Pokémon se va.\n"
-            f"⏳ La aparición dura 10 minutos.\n"
-            f"Necesitas {threshold} o más para capturarlo.\n"
-            f"1️⃣ pésimo · 2️⃣ flojo · 3️⃣ bien · 4️⃣ muy bien · 5️⃣ excelente · 6️⃣ perfecto")
+            f"⭐ Rareza: {rarity.upper()}")
 
 
 async def _expire_wild_spawn(context: ContextTypes.DEFAULT_TYPE):
@@ -2302,8 +2307,8 @@ async def _expire_wild_spawn(context: ContextTypes.DEFAULT_TYPE):
         await context.bot.edit_message_text(
             chat_id=int(chat_id),
             message_id=int(message_id),
-            text=_wild_text(int(species), int(level), bool(shiny)) +
-                 '\n\n⌛ Pasaron 10 minutos y el Pokémon se fue.',
+            text='⌛ Pasaron 10 minutos y el Pokémon se fue.\n\n' +
+                 _wild_reveal_text(int(species), int(level), bool(shiny)),
             reply_markup=None,
         )
     except Exception:
@@ -2513,7 +2518,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             if bool(spawn[8]) and spawn[5]=='active':
                 c.execute("UPDATE pokemon_wild_spawns_tb SET status='expired',finished_at=NOW() WHERE spawn_id=%s",(spawn_id,)); conn.commit()
                 try:
-                    await q.edit_message_text(_wild_text(int(spawn[2]),int(spawn[3]),bool(spawn[4]))+'\n\n⌛ Pasaron 10 minutos y el Pokémon se fue.',reply_markup=None)
+                    await q.edit_message_text('⌛ Pasaron 10 minutos y el Pokémon se fue.\n\n'+_wild_reveal_text(int(spawn[2]),int(spawn[3]),bool(spawn[4])),reply_markup=None)
                 except Exception:pass
                 return await q.answer('Llegaste tarde: ya pasaron los 10 minutos.',show_alert=True)
             if spawn[5]=='throwing':
@@ -2580,13 +2585,26 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             finally:_put_connection(conn)
             if not caught:
                 return await context.bot.send_message(q.message.chat_id,'💨 Ese Pokémon ya no está disponible.',message_thread_id=getattr(q.message,'message_thread_id',None))
-            result=(f"🎲 {value}/6 · {effect}\n🎉 ¡{trainer_name} atrapó a #{species:03d} {'✨ SHINY ' if shiny else ''}{NAMES[species]} Nv.{level}!\n"
-                    f"🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}")
+            rarity=rarity_for(species)
+            shiny_line='✨ SHINY ✨\n' if shiny else ''
+            identity=(f"{shiny_line}{rarity_emoji(rarity)} #{species:03d} {NAMES[species]} · Nv.{level}\n"
+                      f"{_types_text(species)}\n⭐ Rareza: {rarity.upper()}")
+            if species==132:
+                # Trampa de Ditto: solo visual y sin consumir el RNG normal del juego.
+                fake_species=random.SystemRandom().choice([i for i in range(1,152) if i!=132])
+                result=(f"🎲 {value}/6 · {effect}\n🎉 ¡Pokémon capturado!\n"
+                        f"👀 Parece que atrapaste un {NAMES[fake_species]}...\n"
+                        f"✨ Espera... algo está raro...\n💥 ¡ERA DITTO!\n\n"
+                        f"🎉 ¡{trainer_name} atrapó al Pokémon misterioso!\n\n{identity}\n"
+                        f"🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}")
+            else:
+                result=(f"🎲 {value}/6 · {effect}\n🎉 ¡{trainer_name} atrapó al Pokémon misterioso!\n\n{identity}\n"
+                        f"🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}")
             if drop:result += f"\n🎁 Soltó: {_drop_label(drop)}"
             if held_drop in HELD_ITEMS:
                 x=HELD_ITEMS[held_drop]; result += f"\n🎒 Objeto equipable: {x['emoji']} {x['name']}"
             try:
-                await context.bot.edit_message_text(chat_id=q.message.chat_id,message_id=q.message.message_id,text=_wild_text(species,level,shiny)+f'\n\n🏆 CAPTURADO POR {trainer_name}',reply_markup=None)
+                await context.bot.edit_message_text(chat_id=q.message.chat_id,message_id=q.message.message_id,text=f'🏆 CAPTURADO POR {trainer_name}\n\n{identity}',reply_markup=None)
             except Exception:pass
             return await context.bot.send_message(q.message.chat_id,result,message_thread_id=getattr(q.message,'message_thread_id',None))
         remaining=WILD_MAX_ATTEMPTS-attempts
@@ -2602,13 +2620,14 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             conn.rollback(); print('[PK wild miss]',type(e).__name__,e)
         finally:_put_connection(conn)
-        text=f"🎲 {value}/6 · {effect}\n💨 #{species:03d} {NAMES[species]} escapó de la Poké Ball."
         if remaining>0:
-            text += f"\n🎯 {trainer_name} tiene 1 último tiro. Nadie más puede intentarlo."
+            text=(f"🎲 {value}/6 · {effect}\n💨 El Pokémon desconocido escapó de la Poké Ball.\n"
+                  f"🎯 {trainer_name} tiene 1 último tiro. Nadie más puede intentarlo.")
         else:
-            text += "\n❌ Falló los 2 tiros. El Pokémon se fue para todos."
+            text=(f"🎲 {value}/6 · {effect}\n❌ Fallaron los 2 tiros. El Pokémon escapó.\n\n"
+                  f"{_wild_reveal_text(species,level,shiny)}")
             try:
-                await context.bot.edit_message_text(chat_id=q.message.chat_id,message_id=q.message.message_id,text=_wild_text(species,level,shiny)+f'\n\n💨 #{species:03d} {NAMES[species]} escapó después de los 2 intentos de {trainer_name}.',reply_markup=None)
+                await context.bot.edit_message_text(chat_id=q.message.chat_id,message_id=q.message.message_id,text=f'❌ Fallaron los 2 tiros. El Pokémon escapó.\n\n{_wild_reveal_text(species,level,shiny)}',reply_markup=None)
             except Exception:pass
         return await context.bot.send_message(q.message.chat_id,text,message_thread_id=getattr(q.message,'message_thread_id',None))
     if action=='gcat':
