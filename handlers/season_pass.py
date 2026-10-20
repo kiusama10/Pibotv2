@@ -223,12 +223,12 @@ def grant_profile_gif_days(uid: int, days: int = 10) -> bool:
 
 
 def _grant_unowned_font_cursor(c, uid: int) -> str:
-    from handlers.pipeso_extras import FONTS, FONT_LABELS
+    from handlers.pipeso_extras import FONTS, font_name
     c.execute("SELECT asset_code FROM user_box_assets_tb WHERE user_id=%s AND asset_type='font'", (uid,))
     owned = {r[0] for r in c.fetchall()}
     available = [x for x in FONTS if x not in owned]
     code = random.choice(available or FONTS)
-    label = FONT_LABELS.get(code, code)
+    label = font_name(code)
     c.execute(
         """INSERT INTO user_box_assets_tb(user_id,asset_type,asset_code,asset_name)
            VALUES(%s,'font',%s,%s) ON CONFLICT DO NOTHING""",

@@ -444,7 +444,7 @@ def _roll_box(code,uid=None):
     if kind=='title':
         val=random.choice(title_pool()); return 'title',val,f'{val} · {rarity.upper()}'
     if kind=='font':
-        f=_font_reward_for(uid) if uid is not None else random.choice(FONTS); return 'font',f,f'Tipografía {FONT_LABELS.get(f,f)} · {rarity.upper()}'
+        f=_font_reward_for(uid) if uid is not None else random.choice(FONTS); return 'font',f,f'Tipografía {font_name(f)} · {rarity.upper()}'
     if kind=='cosmetic':
         ccode,item=_cosmetic_reward_for(uid,rarity)
         if item:
@@ -644,7 +644,7 @@ async def font_callback(q,code):
     except Exception:
         conn.rollback(); return await q.answer('No pude cambiar la tipografía.',show_alert=True)
     finally:_put_connection(conn)
-    await q.answer(f'Tipografía equipada: {FONT_LABELS.get(code,code)}.',show_alert=True)
+    await q.answer(f'Tipografía equipada: {font_name(code)}.',show_alert=True)
 
 
 async def quitargif(update:Update,context:ContextTypes.DEFAULT_TYPE):
