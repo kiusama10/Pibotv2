@@ -88,7 +88,7 @@ from handlers.batalla_naval import batalla_naval, cancelar_naval, naval_callback
 from handlers.gato import gato, cancelar_gato, ranking_gato, gato_callback, ensure_gato_tables
 from handlers.saocb_telegram import sao_command, sao_name_command, sao_callback, ensure_saocb_telegram_tables
 from handlers.saocb_mobile import sao_app_link_command, ensure_saocb_mobile_tables
-from handlers.pokemon_gen1 import (pokemon_command, pokedex_command, equipo_command, pokeobjetos_command, nombrarpokemon_command, fotopokemon_command, presumirpokemon_command, batallapokemon_command, intercambiopokemon_command, cancelarintercambiopokemon_command, shinys_command, rankingpokemon_command, cajapokemon_command, darcajapokemon_command, torneopokemon_command, poketest_command, entrenador_command, liberarpokemon_command, caramelospokemon_command, pokemonsalvaje_command, pokemon_wild_spawn_job, pokemon_callback, pokemon_text_input, pokemon_media_input, ensure_pokemon_tables)
+from handlers.pokemon_gen1 import (pokemon_command, pokedex_command, equipo_command, pokeobjetos_command, nombrarpokemon_command, fotopokemon_command, presumirpokemon_command, batallapokemon_command, entrenamientopokemon_command, entregar_command, intercambiopokemon_command, cancelarintercambiopokemon_command, gifintercambio_command, quitargifintercambio_command, shinys_command, rankingpokemon_command, cajapokemon_command, darcajapokemon_command, torneopokemon_command, poketest_command, entrenador_command, liberarpokemon_command, caramelospokemon_command, pokemonsalvaje_command, pokemon_wild_spawn_job, pokemon_callback, pokemon_text_input, pokemon_media_input, ensure_pokemon_tables)
 
 # Constants
 RUTA_CASTIGADOS = PUNISHMENT_FILE
@@ -539,11 +539,16 @@ def main() -> None:
         # Palabra Relámpago: una ronda al inicio de cada hora en el tema Juegos, si está activada.
         _pnow=datetime.now(ZoneInfo("America/Mexico_City")); _pnext=(_pnow+timedelta(hours=1)).replace(minute=0,second=0,microsecond=0)
         app.job_queue.run_repeating(palabra_hourly_job, interval=3600, first=max(1,(_pnext-_pnow).total_seconds()), name="palabra_relampago_hourly")
-        # Pokémon salvaje: cada 2 horas, solo en Juegos y Casino. Se desplaza a :20 para no chocar con Palabra Relámpago.
-        _pk_now=datetime.now(ZoneInfo("America/Mexico_City")); _pk_next=_pk_now.replace(minute=20,second=0,microsecond=0)
-        if _pk_next <= _pk_now: _pk_next += timedelta(hours=1)
-        if _pk_next.hour % 2 != 0: _pk_next += timedelta(hours=1)
-        app.job_queue.run_repeating(pokemon_wild_spawn_job, interval=7200, first=max(1,(_pk_next-_pk_now).total_seconds()), name="pokemon_wild_2h")
+        # Pokémon salvaje: cada 30 minutos, solo en Juegos y Casino.
+        # Se usa :20/:50 para evitar chocar con Palabra Relámpago al inicio de hora.
+        _pk_now=datetime.now(ZoneInfo("America/Mexico_City"))
+        if _pk_now.minute < 20:
+            _pk_next=_pk_now.replace(minute=20,second=0,microsecond=0)
+        elif _pk_now.minute < 50:
+            _pk_next=_pk_now.replace(minute=50,second=0,microsecond=0)
+        else:
+            _pk_next=(_pk_now+timedelta(hours=1)).replace(minute=20,second=0,microsecond=0)
+        app.job_queue.run_repeating(pokemon_wild_spawn_job, interval=1800, first=max(1,(_pk_next-_pk_now).total_seconds()), name="pokemon_wild_30m")
         # Pregunta del Día: 10:00 AM hora de México. El coordinador reserva su ventana para evitar choques.
         from datetime import time as dt_time
         from zoneinfo import ZoneInfo as _ZoneInfo
@@ -681,8 +686,12 @@ def main() -> None:
     app.add_handler(CommandHandler("fotopokemon", fotopokemon_command), group=2)
     app.add_handler(CommandHandler("presumirpokemon", presumirpokemon_command), group=2)
     app.add_handler(CommandHandler("batallapokemon", batallapokemon_command), group=2)
+    app.add_handler(CommandHandler("entrenamientopokemon", entrenamientopokemon_command), group=2)
+    app.add_handler(CommandHandler("entregar", entregar_command), group=2)
     app.add_handler(CommandHandler("intercambiopokemon", intercambiopokemon_command), group=2)
     app.add_handler(CommandHandler("cancelarintercambiopokemon", cancelarintercambiopokemon_command), group=2)
+    app.add_handler(CommandHandler("gifintercambio", gifintercambio_command), group=2)
+    app.add_handler(CommandHandler("quitargifintercambio", quitargifintercambio_command), group=2)
     app.add_handler(CommandHandler("shinys", shinys_command), group=2)
     app.add_handler(CommandHandler("rankingpokemon", rankingpokemon_command), group=2)
     app.add_handler(CommandHandler("cajapokemon", cajapokemon_command), group=2)
