@@ -88,7 +88,7 @@ from handlers.batalla_naval import batalla_naval, cancelar_naval, naval_callback
 from handlers.gato import gato, cancelar_gato, ranking_gato, gato_callback, ensure_gato_tables
 from handlers.saocb_telegram import sao_command, sao_name_command, sao_callback, ensure_saocb_telegram_tables
 from handlers.saocb_mobile import sao_app_link_command, ensure_saocb_mobile_tables
-from handlers.pokemon_gen1 import (pokemon_command, pokedex_command, equipo_command, pokeobjetos_command, nombrarpokemon_command, fotopokemon_command, presumirpokemon_command, batallapokemon_command, intercambiopokemon_command, cancelarintercambiopokemon_command, shinys_command, rankingpokemon_command, poketest_command, pokemon_callback, pokemon_text_input, pokemon_media_input, ensure_pokemon_tables)
+from handlers.pokemon_gen1 import (pokemon_command, pokedex_command, equipo_command, pokeobjetos_command, nombrarpokemon_command, fotopokemon_command, presumirpokemon_command, batallapokemon_command, intercambiopokemon_command, cancelarintercambiopokemon_command, shinys_command, rankingpokemon_command, poketest_command, entrenador_command, liberarpokemon_command, caramelospokemon_command, pokemonsalvaje_command, pokemon_wild_spawn_job, pokemon_callback, pokemon_text_input, pokemon_media_input, ensure_pokemon_tables)
 
 # Constants
 RUTA_CASTIGADOS = PUNISHMENT_FILE
@@ -539,6 +539,11 @@ def main() -> None:
         # Palabra Relámpago: una ronda al inicio de cada hora en el tema Juegos, si está activada.
         _pnow=datetime.now(ZoneInfo("America/Mexico_City")); _pnext=(_pnow+timedelta(hours=1)).replace(minute=0,second=0,microsecond=0)
         app.job_queue.run_repeating(palabra_hourly_job, interval=3600, first=max(1,(_pnext-_pnow).total_seconds()), name="palabra_relampago_hourly")
+        # Pokémon salvaje: cada 2 horas, solo en Juegos y Casino. Se desplaza a :20 para no chocar con Palabra Relámpago.
+        _pk_now=datetime.now(ZoneInfo("America/Mexico_City")); _pk_next=_pk_now.replace(minute=20,second=0,microsecond=0)
+        if _pk_next <= _pk_now: _pk_next += timedelta(hours=1)
+        if _pk_next.hour % 2 != 0: _pk_next += timedelta(hours=1)
+        app.job_queue.run_repeating(pokemon_wild_spawn_job, interval=7200, first=max(1,(_pk_next-_pk_now).total_seconds()), name="pokemon_wild_2h")
         # Pregunta del Día: 10:00 AM hora de México. El coordinador reserva su ventana para evitar choques.
         from datetime import time as dt_time
         from zoneinfo import ZoneInfo as _ZoneInfo
@@ -680,6 +685,10 @@ def main() -> None:
     app.add_handler(CommandHandler("cancelarintercambiopokemon", cancelarintercambiopokemon_command), group=2)
     app.add_handler(CommandHandler("shinys", shinys_command), group=2)
     app.add_handler(CommandHandler("rankingpokemon", rankingpokemon_command), group=2)
+    app.add_handler(CommandHandler("entrenador", entrenador_command), group=2)
+    app.add_handler(CommandHandler("liberarpokemon", liberarpokemon_command), group=2)
+    app.add_handler(CommandHandler("caramelospokemon", caramelospokemon_command), group=2)
+    app.add_handler(CommandHandler("pokemonsalvaje", pokemonsalvaje_command), group=2)
     app.add_handler(CommandHandler("poketest", poketest_command), group=2)
     app.add_handler(CommandHandler("dibujar", dibujar), group=2)
     app.add_handler(CommandHandler("matardibujo", matar_dibujo), group=2)
@@ -798,7 +807,7 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_turtle_input), group=8)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_social_input), group=9)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, pokemon_text_input), group=12)
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.PHOTO | filters.ANIMATION), pokemon_media_input), group=12)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.PHOTO | filters.ANIMATION | filters.VIDEO), pokemon_media_input), group=12)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gif_admin_text_input), group=10)
 
     # Group 6: Punishment filter (prevents messages outside punishment corner)
