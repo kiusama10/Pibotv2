@@ -200,8 +200,56 @@ def _font(size: int):
     return ImageFont.load_default()
 
 
+def _wrap_for_width(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
+    """Parte por palabras sin cortar conceptos; una palabra larga se conserva completa."""
+    words = text.split()
+    if not words:
+        return [text]
+    lines: list[str] = []
+    current = words[0]
+    for token in words[1:]:
+        candidate = f"{current} {token}"
+        box = draw.textbbox((0, 0), candidate, font=font, stroke_width=1)
+        if box[2] - box[0] <= max_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = token
+    lines.append(current)
+    return lines
+
+
+def _fit_text(draw: ImageDraw.ImageDraw, text: str, max_width: int, max_height: int):
+    """Busca automáticamente tamaño y saltos de línea para que TODO el texto quepa."""
+    # Empieza grande para palabras cortas y va bajando solo cuando hace falta.
+    for size in range(80, 27, -2):
+        font = _font(size)
+        lines = _wrap_for_width(draw, text, font, max_width)
+        # Preferimos hasta 3 líneas. Con tamaños pequeños permitimos 4 como último recurso.
+        if len(lines) > (3 if size >= 34 else 4):
+            continue
+        rendered = "\n".join(lines)
+        spacing = max(6, size // 5)
+        box = draw.multiline_textbbox(
+            (0, 0), rendered, font=font, spacing=spacing, align="center", stroke_width=1
+        )
+        width, height = box[2] - box[0], box[3] - box[1]
+        if width <= max_width and height <= max_height:
+            return font, rendered, width, height, spacing
+
+    # Salvavidas para un término anormalmente largo: nunca permitimos que se salga de la tarjeta.
+    font = _font(26)
+    lines = _wrap_for_width(draw, text, font, max_width)
+    rendered = "\n".join(lines)
+    spacing = 6
+    box = draw.multiline_textbbox(
+        (0, 0), rendered, font=font, spacing=spacing, align="center", stroke_width=1
+    )
+    return font, rendered, box[2] - box[0], box[3] - box[1], spacing
+
+
 def _render(word: str) -> io.BytesIO:
-    # 18 fondos x 9 posiciones x 8 tamaños = 1,296 composiciones base, antes de variaciones de líneas/ruido.
+    # El texto se autoajusta; los conceptos largos se parten en varias líneas en vez de cortarse.
     palettes = [
         ((18,18,24),(240,240,245)),((31,24,39),(245,235,250)),((18,34,36),(236,247,244)),
         ((38,25,20),(250,239,229)),((24,27,45),(235,239,255)),((42,20,31),(255,236,244)),
@@ -213,24 +261,33 @@ def _render(word: str) -> io.BytesIO:
     bg, fg = random.choice(palettes)
     im = Image.new("RGB", (900, 500), bg)
     d = ImageDraw.Draw(im)
+
     # Decoración procedural: no revela la palabra y produce miles de imágenes distintas.
     for _ in range(22):
         x1, y1 = random.randint(0, 899), random.randint(0, 499)
         x2, y2 = x1 + random.randint(20, 180), y1 + random.randint(10, 120)
         tone = tuple(min(255, max(0, c + random.randint(-12, 22))) for c in bg)
         d.rounded_rectangle((x1,y1,x2,y2), radius=random.randint(5,28), outline=tone, width=random.randint(1,4))
-    sizes = [52,56,60,64,68,72,76,80]
-    f = _font(random.choice(sizes))
-    shown = word.upper()
-    box = d.textbbox((0,0), shown, font=f, stroke_width=1)
-    tw, th = box[2]-box[0], box[3]-box[1]
-    xs = [70, max(70,(900-tw)//2), max(70,830-tw)]
-    ys = [85, max(85,(500-th)//2), max(85,405-th)]
-    x, y = random.choice(xs), random.choice(ys)
-    d.text((x,y), shown, font=f, fill=fg, stroke_width=1, stroke_fill=fg)
-    # Línea ornamental que cambia de posición, como tarjeta de minijuego.
-    ly = min(470, y + th + random.randint(12,35))
-    d.line((x,ly,min(860,x+max(120,tw)),ly), fill=fg, width=3)
+
+    shown = word.upper().strip()
+    # 70 px de margen a cada lado y espacio vertical suficiente para la línea ornamental.
+    max_width = 760
+    max_height = 285
+    f, rendered, tw, th, spacing = _fit_text(d, shown, max_width, max_height)
+
+    # Centrado real: así incluso 2-4 líneas quedan completas y equilibradas.
+    x = (900 - tw) // 2
+    y = max(60, (500 - th) // 2 - 10)
+    d.multiline_text(
+        (450, y), rendered, font=f, fill=fg, anchor="ma", align="center",
+        spacing=spacing, stroke_width=1, stroke_fill=fg
+    )
+
+    # Línea ornamental siempre dentro de la tarjeta y proporcional al texto.
+    ly = min(455, y + th + 22)
+    line_width = min(760, max(180, tw))
+    d.line(((900-line_width)//2, ly, (900+line_width)//2, ly), fill=fg, width=3)
+
     out = io.BytesIO(); im.save(out, format="PNG", optimize=True); out.seek(0); out.name="palabra_relampago.png"
     return out
 
