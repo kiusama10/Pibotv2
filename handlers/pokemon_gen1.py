@@ -2858,7 +2858,8 @@ def _legendary_public_text(row, revealed:bool=False)->str:
     eid,owner,chat,thread,species,level,shiny,attempts,max_attempts,status,msgid=row[:11]
     if not revealed:
         return f"🌟 ¡ENCUENTRO LEGENDARIO ESPECIAL!\n\n❓ Un Pokémon legendario desconocido apareció...\n🎲 Tienes {max_attempts} intentos.\n✨ Puede ser Shiny.\n⏳ Disponible durante 10 minutos."
-    r=rarity_for(int(species)); return (f"🌟 ¡LEGENDARIO REVELADO!\n{'✨ SHINY ✨\n' if shiny else ''}{rarity_emoji(r)} #{int(species):03d} {NAMES[int(species)]} · Nv.{int(level)}\n{_types_text(int(species))}\n⭐ Rareza: {r.upper()}\n🎲 Intentos usados: {int(attempts)}/{int(max_attempts)}")
+    r=rarity_for(int(species)); shiny_line='✨ SHINY ✨\n' if shiny else ''
+    return (f"🌟 ¡LEGENDARIO REVELADO!\n{shiny_line}{rarity_emoji(r)} #{int(species):03d} {NAMES[int(species)]} · Nv.{int(level)}\n{_types_text(int(species))}\n⭐ Rareza: {r.upper()}\n🎲 Intentos usados: {int(attempts)}/{int(max_attempts)}")
 
 
 async def _announce_legendary_encounter(context:ContextTypes.DEFAULT_TYPE,eid:int):
