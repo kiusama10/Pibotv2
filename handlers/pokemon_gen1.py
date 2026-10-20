@@ -886,10 +886,16 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         if action=='nickselect':context.user_data['pk_wait_nick']=pid; await q.answer(); return await q.message.reply_text(f"🏷️ Escribe el nuevo apodo para {NAMES[int(row[1])]} (máx. 24 caracteres). Escribe - para quitarlo.")
         if action=='mediaselect':context.user_data['pk_wait_media']=pid; await q.answer(); return await q.message.reply_text(f"🎞️ Envíame una FOTO o GIF para {row[2] or NAMES[int(row[1])]}. Telegram guardará el archivo; PiBot solo conservará su file_id.")
         species=int(row[1]); moves=json.loads(row[5] or '[]'); move_names=', '.join(MOVES[m][0] for m in moves if m in MOVES)
+        shiny_line = "✨ Variante SHINY\n" if len(row)>10 and row[10] else ""
+        xp_line = (
+            f"⭐ XP Pokémon: {row[4]:,} / {_xp_floor(int(row[3])+1):,}\n"
+            if int(row[3]) < MAX_LEVEL
+            else f"⭐ XP Pokémon: {row[4]:,} · NIVEL MÁXIMO\n"
+        )
         txt=(f"{rarity_emoji(rarity_for(species))} {_pokemon_label(row)}\n"
-             f"{'✨ Variante SHINY\n' if len(row)>10 and row[10] else ''}"
+             f"{shiny_line}"
              f"{_types_text(species)}\n"
-             f"⭐ XP Pokémon: {row[4]:,}" + (f" / {_xp_floor(int(row[3])+1):,}\n" if int(row[3]) < MAX_LEVEL else " · NIVEL MÁXIMO\n") +
+             f"{xp_line}"
              f"⚔️ {row[8]}V / {row[9]}D\n"
              f"🎯 Movimientos: {move_names or '—'}\n"
              f"🎞️ Multimedia: {'GIF' if row[6]=='animation' else 'Foto' if row[6]=='photo' else 'Sin asignar'}")
