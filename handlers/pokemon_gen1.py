@@ -250,11 +250,9 @@ def _family_root(species_id:int)->int:
     return cur
 
 
-def _release_candies(level:int, iv_percent:int, shiny:bool)->int:
-    base = min(6, 1 + max(0, int(level)-1)//10)
-    iv_bonus = 2 if int(iv_percent) >= 100 else (1 if int(iv_percent) >= 90 else 0)
-    shiny_bonus = 2 if shiny else 0
-    return base + iv_bonus + shiny_bonus
+def _release_candies(species_id:int)->int:
+    # Caramelos universales: 1 por Pokémon liberado; 2 si es rareza alta.
+    return 2 if rarity_for(int(species_id)) in ('epico', 'legendario') else 1
 
 
 def _ensure_trainer_row_cursor(c, uid:int):
@@ -373,15 +371,9 @@ def grant_pokemon_with_cursor(c, uid:int, species_id:int, source:str='caja', for
     _ensure_team_row_cursor(c, uid)
     # El primer Pokémon obtenido queda como principal hasta que el dueño elija otro.
     c.execute("UPDATE pokemon_team_tb SET principal_pokemon_id=COALESCE(principal_pokemon_id,%s),updated_at=NOW() WHERE owner_id=%s",(pid,uid))
-    # Los primeros tres Pokémon se acomodan solos; después el equipo se gestiona por privado.
-    c.execute("SELECT slot1,slot2,slot3 FROM pokemon_team_tb WHERE owner_id=%s FOR UPDATE", (uid,))
-    team = list(c.fetchone() or (None,None,None))
-    if pid not in team:
-        for i in range(3):
-            if team[i] is None:
-                team[i] = pid
-                c.execute(f"UPDATE pokemon_team_tb SET slot{i+1}=%s,updated_at=NOW() WHERE owner_id=%s", (pid,uid))
-                break
+    # El equipo NO se modifica al obtener/capturar un Pokémon.
+    # Cada entrenador decide manualmente qué Pokémon ocupa cada espacio desde /equipo
+    # o con el botón «Meter al equipo» de la ficha.
     return {
         'pokemon_id': pid, 'species_id': species_id, 'name': NAMES[species_id],
         'level': level, 'rarity': rarity_for(species_id), 'moves': moves, 'shiny': shiny,
@@ -1083,12 +1075,30 @@ async def poketest_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(f"🧪 Te di #{sid:03d} {'✨ SHINY ' if data.get('shiny') else ''}{NAMES[sid]} Nv.{data['level']} · IV {data.get('iv_percent',0)}% {data.get('iv_grade','')} para probar. No costó PiPesos.")
 
 
-def _candy_qty(uid:int, family_root:int)->int:
+def _candy_total(uid:int)->int:
+    # La tabla histórica se conserva para no perder caramelos existentes,
+    # pero desde ahora todos cuentan como una sola moneda universal.
     conn=_get_connection()
     try:
-        c=conn.cursor(); c.execute("SELECT qty FROM pokemon_candies_tb WHERE owner_id=%s AND family_species_id=%s",(uid,family_root)); r=c.fetchone()
-        return int(r[0]) if r else 0
+        c=conn.cursor(); c.execute("SELECT COALESCE(SUM(qty),0) FROM pokemon_candies_tb WHERE owner_id=%s",(uid,)); r=c.fetchone()
+        return int(r[0] or 0) if r else 0
     finally:_put_connection(conn)
+
+
+def _spend_universal_candies_cursor(c, uid:int, amount:int)->bool:
+    amount=max(0,int(amount))
+    c.execute("SELECT family_species_id,qty FROM pokemon_candies_tb WHERE owner_id=%s AND qty>0 ORDER BY family_species_id FOR UPDATE",(uid,))
+    rows=c.fetchall()
+    if sum(int(r[1]) for r in rows) < amount:
+        return False
+    left=amount
+    for family_id,qty in rows:
+        if left<=0:
+            break
+        qty=int(qty); take=min(qty,left); new_qty=qty-take
+        c.execute("UPDATE pokemon_candies_tb SET qty=%s WHERE owner_id=%s AND family_species_id=%s",(new_qty,uid,int(family_id)))
+        left-=take
+    return left==0
 
 
 def _release_markup(uid:int, page:int=0):
@@ -1108,7 +1118,7 @@ async def liberarpokemon_command(update:Update, context:ContextTypes.DEFAULT_TYP
     uid=update.effective_user.id
     try:
         await context.bot.send_message(uid,
-            '🌿 LIBERAR POKÉMON\n\nElige uno. Liberarlo es permanente y te dará caramelos de su familia según nivel, IV y si es Shiny.\n\n⭐ El principal y los Pokémon de tu equipo no se pueden liberar.',
+            '🌿 LIBERAR POKÉMON\n\nElige uno. Liberarlo es permanente y te dará caramelos universales.\n\n🍬 Normal/Raro: 1 caramelo · Épico/Legendario: 2 caramelos.\n⭐ El principal y los Pokémon de tu equipo no se pueden liberar.',
             reply_markup=_release_markup(uid,0))
     except Exception:
         return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
@@ -1117,14 +1127,10 @@ async def liberarpokemon_command(update:Update, context:ContextTypes.DEFAULT_TYP
 
 
 async def caramelospokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
-    uid=update.effective_user.id; conn=_get_connection()
-    try:
-        c=conn.cursor(); c.execute("SELECT family_species_id,qty FROM pokemon_candies_tb WHERE owner_id=%s AND qty>0 ORDER BY qty DESC,family_species_id",(uid,)); rows=c.fetchall()
-    finally:_put_connection(conn)
-    lines=['🍬 CARAMELOS POKÉMON','']
-    if not rows:lines.append('Todavía no tienes caramelos. Puedes conseguirlos liberando Pokémon repetidos.')
-    for root,qty in rows[:60]:lines.append(f'🍬 Familia #{int(root):03d} {NAMES.get(int(root),"Pokémon")}: {int(qty)}')
-    lines += ['', f'Cada {CANDIES_PER_LEVEL} caramelos de una familia pueden subir +1 nivel a un Pokémon de esa misma familia.']
+    uid=update.effective_user.id; total=_candy_total(uid)
+    lines=['🍬 CARAMELOS POKÉMON','',f'🍬 Caramelos universales: {total}','','Sirven para cualquier Pokémon.',f'Cada {CANDIES_PER_LEVEL} caramelos = +1 nivel.']
+    if total<=0:
+        lines.insert(2,'Todavía no tienes caramelos. Puedes conseguirlos liberando Pokémon repetidos.')
     try:await context.bot.send_message(uid,'\n'.join(lines))
     except Exception:return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
     if update.effective_chat.type!='private':await update.effective_message.reply_text('📩 Te mandé tus caramelos Pokémon por privado.')
@@ -1470,9 +1476,9 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             c=conn.cursor(); _ensure_team_row_cursor(c,uid); c.execute("SELECT slot1,slot2,slot3,principal_pokemon_id FROM pokemon_team_tb WHERE owner_id=%s",(uid,)); team=c.fetchone() or (None,None,None,None); blocked=pid in [int(x) for x in team if x is not None]
         finally:_put_connection(conn)
         if blocked:return await q.answer('Primero quítalo del equipo o cambia tu Pokémon principal.',show_alert=True)
-        ivpct=_iv_percent(_iv_values(row)); amount=_release_candies(int(row[3]),ivpct,bool(row[10])); root=_family_root(int(row[1]))
+        ivpct=_iv_percent(_iv_values(row)); amount=_release_candies(int(row[1]))
         kb=InlineKeyboardMarkup([[InlineKeyboardButton(f'✅ Liberar · +{amount} 🍬',callback_data=f'pk:releaseconfirm:{pid}'),InlineKeyboardButton('❌ Cancelar',callback_data=f'pk:detail:{pid}:{page}')]])
-        await q.answer(); return await q.message.reply_text(f"🌿 ¿Liberar a {_pokemon_label(row)}?\n🧬 IV {ivpct}% · {_iv_grade(ivpct)}\n🍬 Recibirás {amount} caramelos de la familia #{root:03d} {NAMES[root]}.\n\nEsto es permanente.",reply_markup=kb)
+        await q.answer(); return await q.message.reply_text(f"🌿 ¿Liberar a {_pokemon_label(row)}?\n🧬 IV {ivpct}% · {_iv_grade(ivpct)}\n🍬 Recibirás {amount} caramelo{'s' if amount!=1 else ''} universal{'es' if amount!=1 else ''}.\n\nEsto es permanente.",reply_markup=kb)
     if action=='releaseconfirm':
         pid=int(p[2]); conn=_get_connection(); result=None
         try:
@@ -1481,16 +1487,17 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             if _battle_busy_cursor(c,uid) or _trade_busy_cursor(c,uid):conn.rollback(); return await q.answer('Termina tu batalla/intercambio antes de liberar Pokémon.',show_alert=True)
             _ensure_team_row_cursor(c,uid); c.execute("SELECT slot1,slot2,slot3,principal_pokemon_id FROM pokemon_team_tb WHERE owner_id=%s FOR UPDATE",(uid,)); team=c.fetchone() or (None,None,None,None)
             if pid in [int(x) for x in team if x is not None]:conn.rollback(); return await q.answer('Primero quítalo del equipo o cambia tu principal.',show_alert=True)
-            ivpct=_iv_percent(_iv_values(row)); amount=_release_candies(int(row[3]),ivpct,bool(row[10])); root=_family_root(int(row[1])); shown=row[2] or NAMES[int(row[1])]
+            amount=_release_candies(int(row[1])); root=_family_root(int(row[1])); shown=row[2] or NAMES[int(row[1])]
             c.execute("DELETE FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid))
+            # Se guarda en la tabla histórica para compatibilidad, pero el saldo es universal.
             c.execute("INSERT INTO pokemon_candies_tb(owner_id,family_species_id,qty) VALUES(%s,%s,%s) ON CONFLICT(owner_id,family_species_id) DO UPDATE SET qty=pokemon_candies_tb.qty+EXCLUDED.qty",(uid,root,amount))
-            _ensure_trainer_row_cursor(c,uid); c.execute("UPDATE pokemon_trainer_tb SET released=released+1,candies_earned=candies_earned+%s,updated_at=NOW() WHERE user_id=%s",(amount,uid)); conn.commit(); result=(shown,amount,root)
+            _ensure_trainer_row_cursor(c,uid); c.execute("UPDATE pokemon_trainer_tb SET released=released+1,candies_earned=candies_earned+%s,updated_at=NOW() WHERE user_id=%s",(amount,uid)); conn.commit(); result=(shown,amount)
         except Exception as e:
             conn.rollback(); print('[PK release]',type(e).__name__,e)
         finally:_put_connection(conn)
         if not result:return await q.answer('No pude liberarlo.',show_alert=True)
         await q.answer('Pokémon liberado.',show_alert=True)
-        try:return await q.edit_message_text(f'🌿 Liberaste a {result[0]}.\n🍬 +{result[1]} caramelos de la familia {NAMES[result[2]]}.')
+        try:return await q.edit_message_text(f"🌿 Liberaste a {result[0]}.\n🍬 +{result[1]} caramelo{'s' if result[1]!=1 else ''} universal{'es' if result[1]!=1 else ''}.")
         except Exception:return
     if action=='candyup':
         pid=int(p[2]); conn=_get_connection(); notes=[]
@@ -1499,8 +1506,8 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             if not r:conn.rollback(); return await q.answer('Pokémon no encontrado.',show_alert=True)
             species,level,xp,nick=int(r[0]),int(r[1]),int(r[2]),r[3]
             if level>=MAX_LEVEL:conn.rollback(); return await q.answer('Ya está en nivel 100.',show_alert=True)
-            root=_family_root(species); c.execute("UPDATE pokemon_candies_tb SET qty=qty-%s WHERE owner_id=%s AND family_species_id=%s AND qty>=%s RETURNING qty",(CANDIES_PER_LEVEL,uid,root,CANDIES_PER_LEVEL))
-            if not c.fetchone():conn.rollback(); return await q.answer(f'Necesitas {CANDIES_PER_LEVEL} caramelos de esa familia.',show_alert=True)
+            if not _spend_universal_candies_cursor(c,uid,CANDIES_PER_LEVEL):
+                conn.rollback(); return await q.answer(f'Necesitas {CANDIES_PER_LEVEL} caramelos universales.',show_alert=True)
             needed=max(1,_xp_floor(level+1)-xp); notes=_grant_pokemon_xp_cursor(c,pid,needed); conn.commit()
         except Exception as e:
             conn.rollback(); print('[PK candy level]',type(e).__name__,e)
@@ -1540,7 +1547,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             'spd':_stat_value(species,level,'spd',ivs['spd']),
         }
         principal=_is_principal(uid,pid)
-        family_root=_family_root(species); family_candies=_candy_qty(uid,family_root)
+        universal_candies=_candy_total(uid)
         principal_line='⭐ Pokémon PRINCIPAL\n' if principal else ''
         txt=(f"{rarity_emoji(rarity_for(species))} {_pokemon_label(row)}\n"
              f"📖 Pokédex: #{species:03d} · 🎮 Ejemplar: #{int(row[0])}\n"
@@ -1551,14 +1558,14 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
              f"🧬 IV: {ivpct}% · {_iv_grade(ivpct)}\n"
              f"📊 PS {stats['hp']} · ATQ {stats['atk']} · DEF {stats['def']} · ESP {stats['spc']} · VEL {stats['spd']}\n"
              f"🔬 DVs: PS {ivs['hp']}/15 · ATQ {ivs['atk']}/15 · DEF {ivs['def']}/15 · ESP {ivs['spc']}/15 · VEL {ivs['spd']}/15\n"
-             f"🍬 Caramelos familia #{family_root:03d} {NAMES.get(family_root, 'Pokémon')}: {family_candies}\n"
+             f"🍬 Caramelos universales: {universal_candies}\n"
              f"⚔️ {row[8]}V / {row[9]}D\n"
              f"🎯 Movimientos: {move_names or '—'}\n"
              f"🎞️ Multimedia: {'GIF' if row[6]=='animation' else 'Video' if row[6]=='video' else 'Foto' if row[6]=='photo' else 'Sin asignar'}")
         principal_btn=InlineKeyboardButton('⭐ Principal ✓' if principal else '⭐ Hacer principal',callback_data='pk:noop' if principal else f'pk:setprincipal:{pid}')
         extra_row=[]
-        if family_candies>=CANDIES_PER_LEVEL and level<MAX_LEVEL:
-            extra_row.append(InlineKeyboardButton(f'🍬 Subir nivel ({CANDIES_PER_LEVEL})',callback_data=f'pk:candyup:{pid}'))
+        if level<MAX_LEVEL:
+            extra_row.append(InlineKeyboardButton(f'🍬 Subir nivel · {universal_candies}/{CANDIES_PER_LEVEL}',callback_data=f'pk:candyup:{pid}'))
         extra_row.append(InlineKeyboardButton('🌿 Liberar',callback_data=f'pk:releasepick:{pid}:{page}'))
         kb_rows=[[InlineKeyboardButton('🏷️ Apodo',callback_data=f'pk:nickselect:{pid}:{page}'),InlineKeyboardButton('🎞️ Foto/GIF/Video',callback_data=f'pk:mediaselect:{pid}:{page}')],[InlineKeyboardButton('👥 Meter al equipo',callback_data=f'pk:addteam:{pid}'),principal_btn],[InlineKeyboardButton('😎 Presumir aquí',callback_data=f'pk:braghere:{pid}'),InlineKeyboardButton('🗑 Quitar multimedia',callback_data=f'pk:removemedia:{pid}')],extra_row,[InlineKeyboardButton('⬅️ Volver',callback_data=f'pk:list:{page}')]]
         kb=InlineKeyboardMarkup(kb_rows)
