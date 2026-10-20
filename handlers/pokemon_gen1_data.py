@@ -418,3 +418,76 @@ def rarity_emoji(rarity:str)->str:
 
 def type_emoji(tp:str)->str:
     return {"Fire":"🔥","Water":"💧","Grass":"🍃","Electric":"⚡","Psychic":"🔮","Ice":"❄️","Fighting":"🥊","Poison":"☠️","Ground":"🟤","Rock":"🪨","Flying":"🪽","Bug":"🐛","Ghost":"👻","Dragon":"🐉","Normal":"⚪"}.get(tp,"▫️")
+
+
+# MT de la Primera Generación disponibles en las cajas de PiBot.
+# Solo se incluyen movimientos que ya están soportados por el motor de batalla.
+TM_ITEMS = {
+    "tm06": ("MT06", "Tóxico", "toxic"),
+    "tm08": ("MT08", "Golpe Cuerpo", "body_slam"),
+    "tm11": ("MT11", "Rayo Burbuja", "bubble_beam"),
+    "tm12": ("MT12", "Pistola Agua", "water_gun"),
+    "tm13": ("MT13", "Rayo Hielo", "ice_beam"),
+    "tm14": ("MT14", "Ventisca", "blizzard"),
+    "tm15": ("MT15", "Hiperrayo", "hyper_beam"),
+    "tm17": ("MT17", "Sumisión", "submission"),
+    "tm19": ("MT19", "Mov. Sísmico", "seismic_toss"),
+    "tm21": ("MT21", "Megaagotar", "mega_drain"),
+    "tm22": ("MT22", "Rayo Solar", "solar_beam"),
+    "tm24": ("MT24", "Rayo", "thunderbolt"),
+    "tm25": ("MT25", "Trueno", "thunder"),
+    "tm26": ("MT26", "Terremoto", "earthquake"),
+    "tm28": ("MT28", "Excavar", "dig"),
+    "tm29": ("MT29", "Psíquico", "psychic"),
+    "tm30": ("MT30", "Teletransporte", "teleport"),
+    "tm35": ("MT35", "Metrónomo", "metronome"),
+    "tm38": ("MT38", "Llamarada", "fire_blast"),
+    "tm39": ("MT39", "Rapidez", "swift"),
+    "tm42": ("MT42", "Comesueños", "dream_eater"),
+    "tm45": ("MT45", "Onda Trueno", "thunder_wave"),
+    "tm48": ("MT48", "Avalancha", "rock_slide"),
+}
+
+# Las MT son consumibles. La compatibilidad se mantiene conservadora por tipo/
+# familia para no permitir combinaciones absurdas dentro del PvP.
+for _code, (_tm, _name, _move) in TM_ITEMS.items():
+    ITEMS[_code] = (f"{_tm} · {_name}", "📀", 0, "tm")
+
+_TM_TYPE_COMPAT = {
+    "toxic": {"Normal","Fire","Water","Grass","Electric","Ice","Fighting","Poison","Ground","Flying","Psychic","Bug","Rock","Ghost","Dragon"},
+    "body_slam": {"Normal","Water","Fighting","Ground","Rock","Dragon"},
+    "bubble_beam": {"Water","Ice"},
+    "water_gun": {"Water","Ice"},
+    "ice_beam": {"Water","Ice","Psychic","Dragon"},
+    "blizzard": {"Water","Ice","Psychic","Dragon"},
+    "hyper_beam": {"Normal","Fire","Water","Grass","Electric","Ice","Fighting","Poison","Ground","Flying","Psychic","Bug","Rock","Ghost","Dragon"},
+    "submission": {"Fighting","Normal","Ground","Rock"},
+    "seismic_toss": {"Fighting","Normal","Ground","Rock"},
+    "mega_drain": {"Grass","Poison","Bug"},
+    "solar_beam": {"Grass","Poison"},
+    "thunderbolt": {"Electric","Normal","Psychic"},
+    "thunder": {"Electric","Normal","Psychic"},
+    "earthquake": {"Ground","Rock","Fighting","Normal","Dragon"},
+    "dig": {"Ground","Rock","Fighting","Normal"},
+    "psychic": {"Psychic","Ghost"},
+    "teleport": {"Psychic"},
+    "metronome": {"Normal","Psychic"},
+    "fire_blast": {"Fire","Dragon"},
+    "swift": {"Normal","Electric","Psychic","Flying"},
+    "dream_eater": {"Psychic","Ghost"},
+    "thunder_wave": {"Electric","Psychic","Normal"},
+    "rock_slide": {"Rock","Ground","Fighting"},
+}
+
+def can_learn_tm(species_id:int, move_code:str)->bool:
+    if move_code not in MOVES:
+        return False
+    types=set(TYPES.get(int(species_id),("Normal",)))
+    allowed=_TM_TYPE_COMPAT.get(move_code)
+    if not allowed:
+        return False
+    # Hiperrayo se reserva a Pokémon evolucionados/finales, legendarios o
+    # especies sin evolución que ya son fuertes por diseño.
+    if move_code=="hyper_beam":
+        return species_stage(int(species_id))>=2 or int(species_id) in LEGENDARY_IDS or int(species_id) in {113,115,123,124,125,126,127,128,131,132,137,142,143}
+    return bool(types & allowed)

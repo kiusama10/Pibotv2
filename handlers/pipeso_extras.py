@@ -551,7 +551,7 @@ async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
             elif kind=='pokemon':
                 from handlers.pokemon_gen1 import grant_pokemon_with_cursor
                 pdata=grant_pokemon_with_cursor(c,uid,int(val),'caja_'+code)
-                label += f" · ejemplar #{pdata['pokemon_id']} · Nv.{pdata['level']}"
+                label += f" · ejemplar #{pdata['pokemon_id']} · Nv.{pdata['level']} · IV {pdata.get('iv_percent',0)}% {pdata.get('iv_grade','')}"
                 if pdata.get('shiny'):
                     label += " · ✨ SHINY"
             elif kind=='pokeitem':
