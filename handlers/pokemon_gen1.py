@@ -165,6 +165,8 @@ def ensure_pokemon_tables():
               updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
+        c.execute("ALTER TABLE pokemon_trainer_tb ADD COLUMN IF NOT EXISTS media_type TEXT")
+        c.execute("ALTER TABLE pokemon_trainer_tb ADD COLUMN IF NOT EXISTS media_file_id TEXT")
         c.execute("""
             CREATE TABLE IF NOT EXISTS pokemon_candies_tb(
               owner_id BIGINT NOT NULL,
@@ -1128,15 +1130,15 @@ async def caramelospokemon_command(update:Update, context:ContextTypes.DEFAULT_T
     if update.effective_chat.type!='private':await update.effective_message.reply_text('📩 Te mandé tus caramelos Pokémon por privado.')
 
 
-async def entrenador_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
-    uid=update.effective_user.id; conn=_get_connection()
+async def _trainer_profile_data(uid:int):
+    conn=_get_connection()
     try:
         c=conn.cursor(); _ensure_trainer_row_cursor(c,uid); _ensure_team_row_cursor(c,uid)
         name=_display_name_cursor(c,uid)
         c.execute("SELECT COUNT(*),COUNT(*) FILTER(WHERE shiny=TRUE) FROM pokemon_instances_tb WHERE owner_id=%s",(uid,)); total,shinys=c.fetchone()
         c.execute("SELECT COUNT(*) FROM pokemon_pokedex_tb WHERE owner_id=%s",(uid,)); dex=int(c.fetchone()[0])
         c.execute("SELECT rating,wins,losses,best_streak FROM pokemon_rank_tb WHERE user_id=%s",(uid,)); rank=c.fetchone() or (1000,0,0,0)
-        c.execute("SELECT wild_catches,released,candies_earned FROM pokemon_trainer_tb WHERE user_id=%s",(uid,)); tr=c.fetchone() or (0,0,0)
+        c.execute("SELECT wild_catches,released,candies_earned,media_type,media_file_id FROM pokemon_trainer_tb WHERE user_id=%s",(uid,)); tr=c.fetchone() or (0,0,0,None,None)
         c.execute("SELECT COALESCE(SUM(qty),0) FROM pokemon_candies_tb WHERE owner_id=%s",(uid,)); candies=int(c.fetchone()[0] or 0)
         c.execute("SELECT principal_pokemon_id FROM pokemon_team_tb WHERE owner_id=%s",(uid,)); pr=c.fetchone(); principal=int(pr[0]) if pr and pr[0] else None
         prow=None
@@ -1144,16 +1146,59 @@ async def entrenador_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
             c.execute("""SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp
                          FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s""",(uid,principal)); prow=c.fetchone()
         conn.commit()
-    except Exception as e:
-        conn.rollback(); print('[PK trainer]',type(e).__name__,e); return await update.effective_message.reply_text('No pude abrir tu perfil de entrenador.')
+        return {
+            'name':name,'total':int(total),'shinys':int(shinys),'dex':dex,'rank':rank,'trainer':tr,
+            'candies':candies,'principal':prow,'media_type':tr[3],'media_file_id':tr[4]
+        }
+    except Exception:
+        conn.rollback(); raise
     finally:_put_connection(conn)
-    lines=[f'🎒 ENTRENADOR POKÉMON · {name}','',f'📖 Pokédex: {dex}/151',f'🎮 Pokémon: {int(total)}',f'✨ Shinys: {int(shinys)}',f'🎯 Capturas salvajes: {int(tr[0])}',f'🌿 Liberados: {int(tr[1])}',f'🍬 Caramelos disponibles: {candies}',f'🏆 Ranking: {int(rank[0])} pts · {int(rank[1])}V/{int(rank[2])}D',f'🔥 Mejor racha: {int(rank[3])}']
+
+
+def _trainer_profile_text(data:dict)->str:
+    rank=data['rank']; tr=data['trainer']; prow=data['principal']
+    lines=[f"🎒 ENTRENADOR POKÉMON · {data['name']}",'',f"📖 Pokédex: {data['dex']}/151",f"🎮 Pokémon: {data['total']}",f"✨ Shinys: {data['shinys']}",f"🎯 Capturas salvajes: {int(tr[0])}",f"🌿 Liberados: {int(tr[1])}",f"🍬 Caramelos disponibles: {data['candies']}",f"🏆 Ranking: {int(rank[0])} pts · {int(rank[1])}V/{int(rank[2])}D",f"🔥 Mejor racha: {int(rank[3])}"]
     if prow:
-        ivpct=_iv_percent(_iv_values(prow)); lines += ['',f'⭐ Principal: {_pokemon_label(prow)}',f'🧬 IV {ivpct}% · {_iv_grade(ivpct)}']
+        ivpct=_iv_percent(_iv_values(prow)); lines += ['',f"⭐ Principal: {_pokemon_label(prow)}",f"🧬 IV {ivpct}% · {_iv_grade(ivpct)}"]
     else:lines += ['','⭐ Principal: todavía no elegido']
-    lines += ['','Tu equipo y tus movimientos siguen siendo privados.']
-    kb=InlineKeyboardMarkup([[InlineKeyboardButton('🎮 Mi colección',callback_data='pk:trainercollection'),InlineKeyboardButton('😎 Presumir principal',callback_data='pk:trainerbrag')]])
-    await update.effective_message.reply_text('\n'.join(lines),reply_markup=kb)
+    lines += ['','🔒 Tu equipo y tus movimientos siguen siendo privados.']
+    return '\n'.join(lines)
+
+
+def _trainer_profile_markup(owner_id:int, has_media:bool=True)->InlineKeyboardMarkup:
+    rows=[
+        [InlineKeyboardButton('📸 Subir/Cambiar foto · GIF · video',callback_data=f'pk:trainermedia:{owner_id}')],
+    ]
+    if has_media:
+        rows.append([InlineKeyboardButton('🗑 Quitar multimedia',callback_data=f'pk:trainerremovemedia:{owner_id}')])
+    rows.append([InlineKeyboardButton('🎮 Mi colección',callback_data=f'pk:trainercollection:{owner_id}'),InlineKeyboardButton('😎 Presumir principal',callback_data=f'pk:trainerbrag:{owner_id}')])
+    return InlineKeyboardMarkup(rows)
+
+
+async def _send_trainer_profile(context:ContextTypes.DEFAULT_TYPE, owner_id:int, chat_id:int, thread_id=None, controls:bool=True):
+    data=await _trainer_profile_data(owner_id)
+    text=_trainer_profile_text(data)
+    media_type=data.get('media_type'); file_id=data.get('media_file_id')
+    kb=_trainer_profile_markup(owner_id,bool(file_id)) if controls else None
+    kwargs={'chat_id':chat_id,'reply_markup':kb}
+    if thread_id is not None:kwargs['message_thread_id']=thread_id
+    if media_type=='photo' and file_id:
+        return await context.bot.send_photo(photo=file_id,caption=text,**kwargs)
+    if media_type=='animation' and file_id:
+        return await context.bot.send_animation(animation=file_id,caption=text,**kwargs)
+    if media_type=='video' and file_id:
+        return await context.bot.send_video(video=file_id,caption=text,**kwargs)
+    return await context.bot.send_message(text=text,**kwargs)
+
+
+async def entrenador_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
+    # Siempre usa el ID de quien ejecuta el comando: cada entrenador ve SU perfil y SU multimedia.
+    uid=update.effective_user.id
+    try:
+        await _send_trainer_profile(context,uid,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),controls=True)
+    except Exception as e:
+        print('[PK trainer]',type(e).__name__,e)
+        await update.effective_message.reply_text('No pude abrir tu perfil de entrenador.')
 
 
 def _wild_text(species:int, level:int, shiny:bool)->str:
@@ -1267,6 +1312,10 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; p=q.data.split(':'); uid=q.from_user.id
     action=p[1]
     if action=='noop':return await q.answer()
+    if action in {'trainercollection','trainerbrag','trainermedia','trainerremovemedia','trainermediacancel'}:
+        owner=int(p[2]) if len(p)>2 and str(p[2]).isdigit() else uid
+        if uid!=owner:
+            return await q.answer('Ese botón pertenece al perfil de otro entrenador.',show_alert=True)
     if action=='trainercollection':
         try:
             await context.bot.send_message(uid,'🎮 TUS POKÉMON\n\nColección privada. Toca uno para administrarlo.',reply_markup=_collection_markup(uid,0))
@@ -1277,6 +1326,33 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         if not pid:return await q.answer('Todavía no tienes Pokémon principal.',show_alert=True)
         ok=await _send_brag(context,uid,pid,{'chat_id':q.message.chat_id,'thread_id':getattr(q.message,'message_thread_id',None)})
         return await q.answer('Presumido 😎' if ok else 'No pude publicarlo.',show_alert=True)
+    if action=='trainermedia':
+        context.user_data['pk_wait_trainer_media']=True
+        try:
+            await context.bot.send_message(
+                uid,
+                '📸 FOTO / GIF / VIDEO DE ENTRENADOR\n\nAhora envíame aquí la foto, GIF o video que quieras usar. PiBot detectará el tipo automáticamente.\n\nSolo se guardará para TU perfil de entrenador.',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('❌ Cancelar',callback_data=f'pk:trainermediacancel:{uid}')]])
+            )
+        except Exception:
+            context.user_data.pop('pk_wait_trainer_media',None)
+            return await q.answer('Abre primero el privado de PiBot con /start.',show_alert=True)
+        return await q.answer('📩 Te mandé el botón/proceso al privado.',show_alert=True)
+    if action=='trainermediacancel':
+        context.user_data.pop('pk_wait_trainer_media',None)
+        return await q.answer('Carga cancelada.',show_alert=True)
+    if action=='trainerremovemedia':
+        conn=_get_connection()
+        try:
+            c=conn.cursor(); _ensure_trainer_row_cursor(c,uid)
+            c.execute("UPDATE pokemon_trainer_tb SET media_type=NULL,media_file_id=NULL,updated_at=NOW() WHERE user_id=%s",(uid,)); conn.commit()
+        except Exception as e:
+            conn.rollback(); print('[PK trainer media remove]',type(e).__name__,e); return await q.answer('No pude quitarla.',show_alert=True)
+        finally:_put_connection(conn)
+        await q.answer('🗑 Multimedia de entrenador quitada.',show_alert=True)
+        try:await _send_trainer_profile(context,uid,uid,controls=True)
+        except Exception:pass
+        return
     if action=='wild':
         spawn_id=int(p[2]); conn=_get_connection(); spawn=None; attempts=0
         try:
@@ -1871,13 +1947,31 @@ async def pokemon_text_input(update:Update, context:ContextTypes.DEFAULT_TYPE):
 
 async def pokemon_media_input(update:Update, context:ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type!='private':return
-    pid=context.user_data.get('pk_wait_media')
-    if not pid:return
     m=update.effective_message; media_type=None; file_id=None
     if m.animation:media_type='animation'; file_id=m.animation.file_id
     elif m.video:media_type='video'; file_id=m.video.file_id
     elif m.photo:media_type='photo'; file_id=m.photo[-1].file_id
-    else:return await m.reply_text('Envíame una foto, GIF/animación o video de Telegram.')
+
+    # Multimedia del perfil de entrenador. Se guarda por user_id; nunca usa la foto de otro usuario.
+    if context.user_data.get('pk_wait_trainer_media'):
+        if not file_id:return await m.reply_text('Envíame una foto, GIF/animación o video de Telegram.')
+        uid=update.effective_user.id; conn=_get_connection(); ok=False
+        try:
+            c=conn.cursor(); _ensure_trainer_row_cursor(c,uid)
+            c.execute("UPDATE pokemon_trainer_tb SET media_type=%s,media_file_id=%s,updated_at=NOW() WHERE user_id=%s",(media_type,file_id,uid)); conn.commit(); ok=True
+        except Exception as e:
+            conn.rollback(); print('[PK trainer media]',type(e).__name__,e)
+        finally:_put_connection(conn)
+        context.user_data.pop('pk_wait_trainer_media',None)
+        if not ok:return await m.reply_text('No pude guardar la multimedia de tu entrenador.')
+        await m.reply_text('✅ Multimedia de entrenador guardada. Así queda TU perfil:')
+        try:await _send_trainer_profile(context,uid,uid,controls=True)
+        except Exception as e:print('[PK trainer media preview]',type(e).__name__,e)
+        return
+
+    pid=context.user_data.get('pk_wait_media')
+    if not pid:return
+    if not file_id:return await m.reply_text('Envíame una foto, GIF/animación o video de Telegram.')
     conn=_get_connection()
     try:
         c=conn.cursor(); c.execute("UPDATE pokemon_instances_tb SET media_type=%s,media_file_id=%s,updated_at=NOW() WHERE owner_id=%s AND pokemon_id=%s RETURNING species_id",(media_type,file_id,update.effective_user.id,pid)); ok=c.fetchone(); conn.commit()
