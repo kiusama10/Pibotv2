@@ -275,13 +275,20 @@ def _display_name_cursor(c, uid:int)->str:
     return str(r[0]) if r and r[0] else f'Jugador {uid}'
 
 
+def _dex_name(species:int)->str:
+    species=int(species)
+    return f"#{species:03d} {NAMES.get(species, 'Pokémon')}"
+
+
 def _pokemon_label(row)->str:
     # row: id, species, nickname, level, ...
+    # El número visible es SIEMPRE el de la Pokédex. El pokemon_id interno solo
+    # identifica el ejemplar en PostgreSQL y no debe confundirse con la Pokédex.
     pid, species, nickname, level = int(row[0]), int(row[1]), row[2], int(row[3])
-    base = NAMES.get(species, f'#{species}')
+    base = NAMES.get(species, 'Pokémon')
     shown = f'{nickname} ({base})' if nickname else base
     shiny = bool(row[10]) if len(row) > 10 else False
-    return f"#{pid} · {'✨ ' if shiny else ''}{shown} · Nv.{level}"
+    return f"#{species:03d} · {'✨ ' if shiny else ''}{shown} · Nv.{level}"
 
 
 def _types_text(species_id:int)->str:
@@ -454,9 +461,10 @@ def _collection_markup(uid:int, page:int=0, prefix:str='detail'):
     chunk = mons[page*PAGE_SIZE:(page+1)*PAGE_SIZE]
     rows=[]
     for r in chunk:
-        name = (r[2] or NAMES[int(r[1])])[:22]
+        species=int(r[1])
+        name = (r[2] or NAMES[species])[:20]
         star='⭐ ' if principal==int(r[0]) else ''
-        rows.append([InlineKeyboardButton(f"{star}{rarity_emoji(rarity_for(int(r[1])))} {name} · Nv.{r[3]}", callback_data=f'pk:{prefix}:{r[0]}:{page}')])
+        rows.append([InlineKeyboardButton(f"{star}{rarity_emoji(rarity_for(species))} #{species:03d} {name} · Nv.{r[3]}", callback_data=f'pk:{prefix}:{r[0]}:{page}')])
     nav=[]
     if page>0: nav.append(InlineKeyboardButton('⬅️',callback_data=f'pk:list:{page-1}'))
     nav.append(InlineKeyboardButton(f'{page+1}/{pages}',callback_data='pk:noop'))
@@ -638,7 +646,7 @@ async def _send_brag(context, uid:int, pid:int, target:dict):
     principal_line='⭐ PRINCIPAL\n' if principal else ''
     caption=(f"✨ POKÉMON DE {owner}\n"
              f"{principal_line}"
-             f"{rarity_emoji(rarity_for(species))} {'✨ SHINY · ' if shiny else ''}{title}\n"
+             f"{rarity_emoji(rarity_for(species))} #{species:03d} {'✨ SHINY · ' if shiny else ''}{title}\n"
              f"{NAMES[species]} · Nv.{level}\n"
              f"{_types_text(species)}\n"
              f"🧬 IV: {ivpct}% · {_iv_grade(ivpct)}\n"
@@ -686,9 +694,10 @@ def _team_for_battle_cursor(c,uid:int,mode:int):
 
 
 def _battle_title_mon(mon:dict)->str:
-    base=NAMES[mon['species']]; name=mon.get('nickname') or base
+    species=int(mon['species']); base=NAMES[species]; name=mon.get('nickname') or base
     shown=f"{name} ({base})" if mon.get('nickname') else base
-    return f"✨ {shown}" if mon.get('shiny') else shown
+    shiny=f"✨ {shown}" if mon.get('shiny') else shown
+    return f"#{species:03d} {shiny}"
 
 
 def _battle_text(state:dict, note:str|None=None)->str:
@@ -1112,7 +1121,7 @@ async def caramelospokemon_command(update:Update, context:ContextTypes.DEFAULT_T
     finally:_put_connection(conn)
     lines=['🍬 CARAMELOS POKÉMON','']
     if not rows:lines.append('Todavía no tienes caramelos. Puedes conseguirlos liberando Pokémon repetidos.')
-    for root,qty in rows[:60]:lines.append(f'🍬 Familia {NAMES.get(int(root),"#"+str(root))}: {int(qty)}')
+    for root,qty in rows[:60]:lines.append(f'🍬 Familia #{int(root):03d} {NAMES.get(int(root),"Pokémon")}: {int(qty)}')
     lines += ['', f'Cada {CANDIES_PER_LEVEL} caramelos de una familia pueden subir +1 nivel a un Pokémon de esa misma familia.']
     try:await context.bot.send_message(uid,'\n'.join(lines))
     except Exception:return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
@@ -1347,7 +1356,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             finally:_put_connection(conn)
             if not caught:
                 return await context.bot.send_message(q.message.chat_id,'💨 Ese Pokémon ya no está disponible.',message_thread_id=getattr(q.message,'message_thread_id',None))
-            result=(f"🎲 {value}/6 · {effect}\n🎉 ¡{trainer_name} atrapó a {'✨ SHINY ' if shiny else ''}{NAMES[species]} Nv.{level}!\n"
+            result=(f"🎲 {value}/6 · {effect}\n🎉 ¡{trainer_name} atrapó a #{species:03d} {'✨ SHINY ' if shiny else ''}{NAMES[species]} Nv.{level}!\n"
                     f"🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}")
             try:
                 await context.bot.edit_message_text(chat_id=q.message.chat_id,message_id=q.message.message_id,text=_wild_text(species,level,shiny)+f'\n\n🏆 CAPTURADO POR {trainer_name}',reply_markup=None)
@@ -1366,13 +1375,13 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             conn.rollback(); print('[PK wild miss]',type(e).__name__,e)
         finally:_put_connection(conn)
-        text=f"🎲 {value}/6 · {effect}\n💨 {NAMES[species]} escapó de la Poké Ball."
+        text=f"🎲 {value}/6 · {effect}\n💨 #{species:03d} {NAMES[species]} escapó de la Poké Ball."
         if remaining>0:
             text += f"\n🎯 {trainer_name} tiene 1 último tiro. Nadie más puede intentarlo."
         else:
             text += "\n❌ Falló los 2 tiros. El Pokémon se fue para todos."
             try:
-                await context.bot.edit_message_text(chat_id=q.message.chat_id,message_id=q.message.message_id,text=_wild_text(species,level,shiny)+f'\n\n💨 {NAMES[species]} escapó después de los 2 intentos de {trainer_name}.',reply_markup=None)
+                await context.bot.edit_message_text(chat_id=q.message.chat_id,message_id=q.message.message_id,text=_wild_text(species,level,shiny)+f'\n\n💨 #{species:03d} {NAMES[species]} escapó después de los 2 intentos de {trainer_name}.',reply_markup=None)
             except Exception:pass
         return await context.bot.send_message(q.message.chat_id,text,message_thread_id=getattr(q.message,'message_thread_id',None))
     if action=='releasepage':
@@ -1387,7 +1396,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         if blocked:return await q.answer('Primero quítalo del equipo o cambia tu Pokémon principal.',show_alert=True)
         ivpct=_iv_percent(_iv_values(row)); amount=_release_candies(int(row[3]),ivpct,bool(row[10])); root=_family_root(int(row[1]))
         kb=InlineKeyboardMarkup([[InlineKeyboardButton(f'✅ Liberar · +{amount} 🍬',callback_data=f'pk:releaseconfirm:{pid}'),InlineKeyboardButton('❌ Cancelar',callback_data=f'pk:detail:{pid}:{page}')]])
-        await q.answer(); return await q.message.reply_text(f"🌿 ¿Liberar a {_pokemon_label(row)}?\n🧬 IV {ivpct}% · {_iv_grade(ivpct)}\n🍬 Recibirás {amount} caramelos de la familia {NAMES[root]}.\n\nEsto es permanente.",reply_markup=kb)
+        await q.answer(); return await q.message.reply_text(f"🌿 ¿Liberar a {_pokemon_label(row)}?\n🧬 IV {ivpct}% · {_iv_grade(ivpct)}\n🍬 Recibirás {amount} caramelos de la familia #{root:03d} {NAMES[root]}.\n\nEsto es permanente.",reply_markup=kb)
     if action=='releaseconfirm':
         pid=int(p[2]); conn=_get_connection(); result=None
         try:
@@ -1437,8 +1446,8 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         if not row:return await q.answer('Ese Pokémon ya no está en tu colección.',show_alert=True)
         if action=='brag':
             target=context.user_data.get('pk_brag_target') or {'chat_id':uid,'thread_id':None}; ok=await _send_brag(context,uid,pid,target); await q.answer('Presumido 😎' if ok else 'No pude publicarlo.',show_alert=True); return
-        if action=='nickselect':context.user_data['pk_wait_nick']=pid; await q.answer(); return await q.message.reply_text(f"🏷️ Escribe el nuevo apodo para {NAMES[int(row[1])]} (máx. 24 caracteres). Escribe - para quitarlo.")
-        if action=='mediaselect':context.user_data['pk_wait_media']=pid; await q.answer(); return await q.message.reply_text(f"🎞️ Envíame una FOTO, GIF o VIDEO para {row[2] or NAMES[int(row[1])]}. Telegram guardará el archivo; PiBot solo conservará su file_id.")
+        if action=='nickselect':context.user_data['pk_wait_nick']=pid; await q.answer(); return await q.message.reply_text(f"🏷️ Escribe el nuevo apodo para #{int(row[1]):03d} {NAMES[int(row[1])]} (máx. 24 caracteres). Escribe - para quitarlo.")
+        if action=='mediaselect':context.user_data['pk_wait_media']=pid; await q.answer(); return await q.message.reply_text(f"🎞️ Envíame una FOTO, GIF o VIDEO para #{int(row[1]):03d} {row[2] or NAMES[int(row[1])]}. Telegram guardará el archivo; PiBot solo conservará su file_id.")
         species=int(row[1]); level=int(row[3]); moves=json.loads(row[5] or '[]'); move_names=', '.join(MOVES[m][0] for m in moves if m in MOVES)
         shiny_line = "✨ Variante SHINY\n" if len(row)>10 and row[10] else ""
         xp_line = (
@@ -1458,6 +1467,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         family_root=_family_root(species); family_candies=_candy_qty(uid,family_root)
         principal_line='⭐ Pokémon PRINCIPAL\n' if principal else ''
         txt=(f"{rarity_emoji(rarity_for(species))} {_pokemon_label(row)}\n"
+             f"📖 Pokédex: #{species:03d} · 🎮 Ejemplar: #{int(row[0])}\n"
              f"{principal_line}"
              f"{shiny_line}"
              f"{_types_text(species)}\n"
@@ -1465,7 +1475,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
              f"🧬 IV: {ivpct}% · {_iv_grade(ivpct)}\n"
              f"📊 PS {stats['hp']} · ATQ {stats['atk']} · DEF {stats['def']} · ESP {stats['spc']} · VEL {stats['spd']}\n"
              f"🔬 DVs: PS {ivs['hp']}/15 · ATQ {ivs['atk']}/15 · DEF {ivs['def']}/15 · ESP {ivs['spc']}/15 · VEL {ivs['spd']}/15\n"
-             f"🍬 Caramelos familia {NAMES.get(family_root, family_root)}: {family_candies}\n"
+             f"🍬 Caramelos familia #{family_root:03d} {NAMES.get(family_root, 'Pokémon')}: {family_candies}\n"
              f"⚔️ {row[8]}V / {row[9]}D\n"
              f"🎯 Movimientos: {move_names or '—'}\n"
              f"🎞️ Multimedia: {'GIF' if row[6]=='animation' else 'Video' if row[6]=='video' else 'Foto' if row[6]=='photo' else 'Sin asignar'}")
