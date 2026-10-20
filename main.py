@@ -88,7 +88,7 @@ from handlers.batalla_naval import batalla_naval, cancelar_naval, naval_callback
 from handlers.gato import gato, cancelar_gato, ranking_gato, gato_callback, ensure_gato_tables
 from handlers.saocb_telegram import sao_command, sao_name_command, sao_callback, ensure_saocb_telegram_tables
 from handlers.saocb_mobile import sao_app_link_command, ensure_saocb_mobile_tables
-from handlers.pokemon_gen1 import (pokemon_command, pokedex_command, equipo_command, pokeobjetos_command, nombrarpokemon_command, fotopokemon_command, presumirpokemon_command, batallapokemon_command, entrenamientopokemon_command, entregar_command, intercambiopokemon_command, cancelarintercambiopokemon_command, gifintercambio_command, quitargifintercambio_command, shinys_command, rankingpokemon_command, cajapokemon_command, darcajapokemon_command, torneopokemon_command, poketest_command, entrenador_command, liberarpokemon_command, caramelospokemon_command, pokemonsalvaje_command, pokemon_wild_spawn_job, pokemon_callback, pokemon_text_input, pokemon_media_input, ensure_pokemon_tables)
+from handlers.pokemon_gen1 import (pokemon_command, pokedex_command, equipo_command, pokeobjetos_command, nombrarpokemon_command, fotopokemon_command, presumirpokemon_command, batallapokemon_command, batalladoblepokemon_command, entrenamientopokemon_command, entregar_command, intercambiopokemon_command, cancelarintercambiopokemon_command, gifintercambio_command, quitargifintercambio_command, shinys_command, rankingpokemon_command, cajapokemon_command, cajaobjetospokemon_command, darcajapokemon_command, torneopokemon_command, poketest_command, entrenador_command, liberarpokemon_command, caramelospokemon_command, pokemonsalvaje_command, npcpokemon_command, medallas_command, imagenesnpc_command, npcahora_command, liderahora_command, pokemon_wild_spawn_job, pokemon_npc_spawn_job, pokemon_leader_spawn_job, pokemon_callback, pokemon_text_input, pokemon_media_input, ensure_pokemon_tables)
 
 # Constants
 RUTA_CASTIGADOS = PUNISHMENT_FILE
@@ -549,6 +549,14 @@ def main() -> None:
         else:
             _pk_next=(_pk_now+timedelta(hours=1)).replace(minute=20,second=0,microsecond=0)
         app.job_queue.run_repeating(pokemon_wild_spawn_job, interval=1800, first=max(1,(_pk_next-_pk_now).total_seconds()), name="pokemon_wild_30m")
+        # NPC Pokémon: uno por hora en :10 para no chocar con Palabra (:00) ni salvajes (:20/:50).
+        _npc_now=datetime.now(ZoneInfo("America/Mexico_City"))
+        _npc_next=_npc_now.replace(minute=10,second=0,microsecond=0)
+        if _npc_next<=_npc_now:_npc_next=(_npc_now+timedelta(hours=1)).replace(minute=10,second=0,microsecond=0)
+        app.job_queue.run_repeating(pokemon_npc_spawn_job, interval=3600, first=max(1,(_npc_next-_npc_now).total_seconds()), name="pokemon_npc_hourly")
+        # Líder de gimnasio: una aparición diaria. Se usa import local para no tocar imports globales.
+        from datetime import time as _pk_dt_time
+        app.job_queue.run_daily(pokemon_leader_spawn_job, time=_pk_dt_time(hour=20, minute=30, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_leader_daily')
         # Pregunta del Día: 10:00 AM hora de México. El coordinador reserva su ventana para evitar choques.
         from datetime import time as dt_time
         from zoneinfo import ZoneInfo as _ZoneInfo
@@ -686,8 +694,15 @@ def main() -> None:
     app.add_handler(CommandHandler("fotopokemon", fotopokemon_command), group=2)
     app.add_handler(CommandHandler("presumirpokemon", presumirpokemon_command), group=2)
     app.add_handler(CommandHandler("batallapokemon", batallapokemon_command), group=2)
+    app.add_handler(CommandHandler("batalladoblepokemon", batalladoblepokemon_command), group=2)
     app.add_handler(CommandHandler("entrenamientopokemon", entrenamientopokemon_command), group=2)
     app.add_handler(CommandHandler("entregar", entregar_command), group=2)
+    app.add_handler(CommandHandler("npcpokemon", npcpokemon_command), group=2)
+    app.add_handler(CommandHandler("medallas", medallas_command), group=2)
+    app.add_handler(CommandHandler("imagenesnpc", imagenesnpc_command), group=2)
+    app.add_handler(CommandHandler("npcahora", npcahora_command), group=2)
+    app.add_handler(CommandHandler("liderahora", liderahora_command), group=2)
+    app.add_handler(CommandHandler("cajaobjetospokemon", cajaobjetospokemon_command), group=2)
     app.add_handler(CommandHandler("intercambiopokemon", intercambiopokemon_command), group=2)
     app.add_handler(CommandHandler("cancelarintercambiopokemon", cancelarintercambiopokemon_command), group=2)
     app.add_handler(CommandHandler("gifintercambio", gifintercambio_command), group=2)
