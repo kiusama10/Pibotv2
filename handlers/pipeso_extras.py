@@ -1,5 +1,5 @@
 from __future__ import annotations
-import math, random, time, asyncio, unicodedata
+import math, random, time, asyncio, unicodedata, html
 from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -16,6 +16,7 @@ SEASON_BOX_NAMES={
 }
 # Se conservan los precios de las dos cajas superiores del sistema anterior.
 BOX_PRICES={"epic":15000,"legendary":25000}
+MAIN_GROUP_CHAT_ID=-1003290179217  # Grupo principal del Clan; el Jackpot se anuncia en General.
 def current_boxes():
     names=SEASON_BOX_NAMES.get(current_season(),SEASON_BOX_NAMES["normal"])
     return {k:(BOX_PRICES[k],names[k]) for k in ("epic","legendary")}
@@ -622,7 +623,29 @@ async def extras_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         else:
             lines.append(f"🎰 Jackpot: {jackpot_after:,} PiPesos")
         await q.answer('Caja abierta 🎁',show_alert=True)
-        return await q.message.reply_text('\n'.join(lines))
+        result_message = await q.message.reply_text('\n'.join(lines))
+
+        # Si cae el Jackpot, anúncialo también públicamente en el grupo principal.
+        # El premio ya quedó acreditado y el bote reiniciado antes de llegar aquí;
+        # un fallo al anunciar nunca revierte ni duplica la recompensa.
+        if jackpot_win:
+            try:
+                winner_name = html.escape(q.from_user.full_name or q.from_user.username or str(uid))
+                winner_mention = f'<a href="tg://user?id={uid}">{winner_name}</a>'
+                await context.bot.send_message(
+                    chat_id=MAIN_GROUP_CHAT_ID,
+                    text=(
+                        '🎰 <b>¡¡JACKPOT DEL CLAN!!</b> 🎰\n\n'
+                        f'👑 {winner_mention} acaba de llevarse <b>{jackpot_win:,} PiPesos</b>\n'
+                        f'📦 Lo consiguió abriendo {html.escape(name)}\n'
+                        '💰 El Jackpot volvió a <b>10,000 PiPesos</b>.'
+                    ),
+                    parse_mode='HTML',
+                )
+            except Exception as exc:
+                print('[JACKPOT ANNOUNCE]',type(exc).__name__,exc)
+
+        return result_message
 
 def _sell_font(uid,code):
     """Vende una tipografía conseguida en caja por 1,000 PP. La normal base nunca se vende."""
