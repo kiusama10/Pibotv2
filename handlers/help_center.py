@@ -32,7 +32,8 @@ async def pipesos(update:Update, context:ContextTypes.DEFAULT_TYPE):
 async def instrucciones(update:Update, context:ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text('❓ *INSTRUCCIONES DE PIBOT*\n\nNo necesitas memorizar todo. Elige qué quieres hacer:',parse_mode='Markdown',reply_markup=_kb([
         [InlineKeyboardButton('🪙 PiPesos',callback_data='ph:home'),InlineKeyboardButton('👤 Perfil',callback_data='ph:perfil')],
-        [InlineKeyboardButton('🎮 Juegos',callback_data='ph:juegos'),InlineKeyboardButton('🏛️ Bóveda',callback_data='ph:regalos')],
+        [InlineKeyboardButton('🎮 Juegos',callback_data='ph:juegos'),InlineKeyboardButton('⚡ Pokémon',callback_data='ph:pokemon')],
+        [InlineKeyboardButton('🏛️ Bóveda',callback_data='ph:regalos')],
         [InlineKeyboardButton('🏦 BANKIU',callback_data='ph:bank'),InlineKeyboardButton('🎨 Vestidor',callback_data='ph:vestidor')],
         [InlineKeyboardButton('📺 Canales',callback_data='ph:canales')]
     ]))
@@ -68,11 +69,12 @@ async def help_callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     elif d=='ph:enviar': text='💸 *Enviar PiPesos*\n\nUsa `/dar cantidad @usuario` o responde a su mensaje con `/dar cantidad`. Las transferencias directas no activan cajas ni pociones.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:home')]])
     elif d=='ph:bank': text='🏦 *BANKIU*\n\nPréstamos y pagos. Abre /bankiu para usar su interfaz.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:home')]])
     elif d=='ph:perfil': text='👤 *Perfil*\n\n/perfil para verlo. La edición de datos personales y cosméticos se realiza por PV.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
-    elif d=='ph:juegos': text='🎮 *Juegos*\n\n/jugar · /apostar · /caza · /lucha · /tortugas · /tortuga · /rankingtortugas · /blackjack · /cancelarblackjack · /triple · /cancelartriple · /asesino · /dardos · /cancelardardos · /boliche · /cancelarboliche · /aliados · /cancelaraliados\n\n🎲 Triple: `/triple 3000` → toca 1️⃣-6️⃣ y PiBot lanza el dado automáticamente. Si aciertas, recibes x3.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
+    elif d=='ph:juegos': text='🎮 *Juegos*\n\n/jugar · /apostar · /caza · /lucha · /tortugas · /tortuga · /rankingtortugas · /blackjack · /cancelarblackjack · /triple · /cancelartriple · /asesino · /dardos · /cancelardardos · /boliche · /cancelarboliche · /aliados · /cancelaraliados\n\n🎲 Triple: `/triple 3000` → toca 1️⃣-6️⃣ y PiBot lanza el dado automáticamente. Si aciertas, recibes x3.'; kb=_kb([[InlineKeyboardButton('⚡ Pokémon',callback_data='ph:pokemon')],[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
+    elif d=='ph:pokemon': text='⚡ *POKÉMON · GEN 1*\n\n/pokemon · /pokedex · /equipo · /entrenador · /pokeobjetos · /nombrarpokemon · /fotopokemon · /presumirpokemon · /batallapokemon · /intercambiopokemon · /cancelarintercambiopokemon · /shinys · /rankingpokemon · /liberarpokemon · /caramelospokemon\n\n🧪 Kiu/pruebas: /pokemonsalvaje · /poketest\n\nEl equipo, colección detallada y movimientos se administran por privado. Las batallas y Pokémon salvajes se usan en Juegos y Casino.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
     elif d=='ph:regalos': text='🎁 *Cajas*\n\n/cajas abre Cajas Misteriosas con coleccionables y PiPesos.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
     elif d=='ph:vestidor': text='🎨 *Personalización*\n\n/tipografias permite elegir el estilo del perfil por 5,000 PiPesos cada cambio. /fotoperfil cambia tu imagen.'; kb=_kb([[InlineKeyboardButton('⬅️ Volver',callback_data='ph:help')]])
     elif d=='ph:canales': return await _show_channels(update,context,edit=True)
-    elif d=='ph:help': text='❓ *INSTRUCCIONES*\n\nElige una categoría. Las pantallas informativas nunca cobran PiPesos.'; kb=_kb([[InlineKeyboardButton('👤 Perfil',callback_data='ph:perfil'),InlineKeyboardButton('🎮 Juegos',callback_data='ph:juegos')],[InlineKeyboardButton('🏛️ Bóveda',callback_data='ph:regalos'),InlineKeyboardButton('🎨 Vestidor',callback_data='ph:vestidor')],[InlineKeyboardButton('⬅️ PiPesos',callback_data='ph:home')]])
+    elif d=='ph:help': text='❓ *INSTRUCCIONES*\n\nElige una categoría. Las pantallas informativas nunca cobran PiPesos.'; kb=_kb([[InlineKeyboardButton('👤 Perfil',callback_data='ph:perfil'),InlineKeyboardButton('🎮 Juegos',callback_data='ph:juegos')],[InlineKeyboardButton('⚡ Pokémon',callback_data='ph:pokemon'),InlineKeyboardButton('🎨 Vestidor',callback_data='ph:vestidor')],[InlineKeyboardButton('🏛️ Bóveda',callback_data='ph:regalos')],[InlineKeyboardButton('⬅️ PiPesos',callback_data='ph:home')]])
     else: return
     await q.edit_message_text(text,parse_mode='Markdown',reply_markup=kb)
 
