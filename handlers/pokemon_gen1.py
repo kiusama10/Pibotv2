@@ -3488,7 +3488,7 @@ async def _send_event_home_to_user(context:ContextTypes.DEFAULT_TYPE,uid:int):
     finally:_put_connection(conn)
     active=_halloween_active(); status=_halloween_countdown_text()
     text=(f"🎃 EVENTO HALLOWEEN 2026\n\n🍬 Tus Dulces Halloween: {candies}\n👻 Los Pokémon Fantasma sueltan más dulces.\n"
-          f"✨ Caja Pokémon Halloween: Shiny 1/{HALLOWEEN_BOX_SHINY_DENOMINATOR}.\n🎃⚡ Pikachu Halloween: 80% normal · 20% Shiny.\n\n⏳ {status}")
+          f"✨ Caja Pokémon Halloween: Shiny 1/{HALLOWEEN_BOX_SHINY_DENOMINATOR}.\n🎃⚡ Pikachu Halloween: exclusivo de la tienda · 80% normal · 20% Shiny.\n\n⏳ {status}")
     if not active:text += '\n\n🔒 La tienda y los drops del evento ya están cerrados. Lo que ganaste sigue siendo tuyo.'
     markup=_halloween_home_markup()
     if media[0]=='animation' and media[1]:return await context.bot.send_animation(uid,animation=media[1],caption=text,reply_markup=markup)
@@ -3521,9 +3521,10 @@ async def _send_halloween_surprise(context:ContextTypes.DEFAULT_TYPE,event_id:in
     finally:_put_connection(conn)
     if not row or str(row[3])!='active':return False
     chat_id,thread_id=int(row[0]),int(row[1] or 0)
-    text=('🎃 ¡ALGO EXTRAÑO APARECIÓ!\n\nUna presencia se mueve entre las sombras...\n'
-          '👻 ¿Te atreves a investigar?\n\n⏳ Desaparecerá en 30 minutos.')
-    kb=InlineKeyboardMarkup([[InlineKeyboardButton('👻 Investigar',callback_data=f'pk:eventclaim:{event_id}')]])
+    text=('🍬 ¡OH! ¡APARECIERON DULCES DE HALLOWEEN!\n\n'
+          '🎃 Alguien los dejó tirados en Juegos y Casino...\n'
+          '👀 El primero en recogerlos se los queda.\n\n⏳ Desaparecerán en 30 minutos.')
+    kb=InlineKeyboardMarkup([[InlineKeyboardButton('🍬 Recoger dulces',callback_data=f'pk:eventclaim:{event_id}')]])
     try:
         if media[0]=='animation' and media[1]:msg=await context.bot.send_animation(chat_id,animation=media[1],caption=text,message_thread_id=thread_id or None,reply_markup=kb)
         elif media[0]=='photo' and media[1]:msg=await context.bot.send_photo(chat_id,photo=media[1],caption=text,message_thread_id=thread_id or None,reply_markup=kb)
@@ -3539,8 +3540,9 @@ async def _send_halloween_surprise(context:ContextTypes.DEFAULT_TYPE,event_id:in
 
 async def _spawn_halloween_surprise(context:ContextTypes.DEFAULT_TYPE,chat_id:int,thread_id:int|None,forced_kind:str|None=None,manual:bool=False)->bool:
     if not manual and not _halloween_active():return False
-    kinds=['candy','cursed_egg','object_box','halloween_box','pikachu','npc','boss']; weights=[35,18,15,12,5,10,5]
-    kind=forced_kind if forced_kind in kinds else random.choices(kinds,weights=weights,k=1)[0]
+    # Las apariciones automáticas de Halloween son exclusivamente de Dulces Halloween.
+    # Huevos, cajas, NPC/jefe y Pikachu conservan sus rutas separadas; Pikachu es exclusivo de tienda.
+    kind='candy'
     conn=_get_connection(); eid=None
     try:
         c=conn.cursor(); t0=int(thread_id or 0)
@@ -3564,9 +3566,9 @@ async def _expire_halloween_surprise(context:ContextTypes.DEFAULT_TYPE):
     except Exception:conn.rollback(); return
     finally:_put_connection(conn)
     try:
-        await context.bot.edit_message_caption(chat_id=int(row[0]),message_id=int(row[3]),caption='🌑 La presencia desapareció entre las sombras.',reply_markup=None)
+        await context.bot.edit_message_caption(chat_id=int(row[0]),message_id=int(row[3]),caption='🍬 Los Dulces Halloween desaparecieron antes de que alguien los recogiera.',reply_markup=None)
     except Exception:
-        try:await context.bot.edit_message_text(chat_id=int(row[0]),message_id=int(row[3]),text='🌑 La presencia desapareció entre las sombras.',reply_markup=None)
+        try:await context.bot.edit_message_text(chat_id=int(row[0]),message_id=int(row[3]),text='🍬 Los Dulces Halloween desaparecieron antes de que alguien los recogiera.',reply_markup=None)
         except Exception:pass
 
 
@@ -3584,10 +3586,7 @@ async def halloweenahora_command(update:Update,context:ContextTypes.DEFAULT_TYPE
         if not is_botmaster(update.effective_user.id):return await update.effective_message.reply_text('Solo BotMaster puede forzar Halloween.')
     except Exception:return await update.effective_message.reply_text('Solo BotMaster puede forzar Halloween.')
     if not _is_games_topic(update):return await update.effective_message.reply_text('Usa /halloweenahora en Juegos y Casino.')
-    raw=context.args[0].lower() if context.args else None
-    aliases={'huevo':'cursed_egg','caja':'halloween_box','dulces':'candy','pika':'pikachu','pikachu':'pikachu','npc':'npc','jefe':'boss'}
-    kind=aliases.get(raw,raw) if raw else None
-    ok=await _spawn_halloween_surprise(context,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),kind,True)
+    ok=await _spawn_halloween_surprise(context,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),'candy',True)
     if not ok:await update.effective_message.reply_text('No pude crear la aparición Halloween.')
 
 
@@ -3608,14 +3607,6 @@ async def jefehalloween_command(update:Update,context:ContextTypes.DEFAULT_TYPE)
     ok=await _spawn_halloween_special_npc(context,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),'halloween_boss',True)
     if not ok:await update.effective_message.reply_text('No pude crear el jefe Halloween.')
 
-
-async def pikachuhalloweenahora_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    try:
-        if not is_botmaster(update.effective_user.id):return await update.effective_message.reply_text('Solo BotMaster puede forzar Pikachu Halloween.')
-    except Exception:return await update.effective_message.reply_text('Solo BotMaster puede forzar Pikachu Halloween.')
-    if not _is_games_topic(update):return await update.effective_message.reply_text('Usa /pikachuhalloweenahora en Juegos y Casino.')
-    ok=await _spawn_halloween_surprise(context,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),'pikachu',True)
-    if not ok:await update.effective_message.reply_text('No pude crear la aparición de Pikachu Halloween.')
 
 
 async def pokemon_halloween_npc_job(context:ContextTypes.DEFAULT_TYPE):
@@ -3836,7 +3827,7 @@ def _finish_npc_battle_cursor(c,bid:int,state:dict)->dict:
     bot=state.get('players',{}).get(str(state.get('bot_player_id')),{})
     defeated_species=[int(m.get('species',0)) for m in bot.get('mons',[]) if int(m.get('hp',0))<=0]
     halloween_candies=_halloween_award_species_cursor(c,uid,defeated_species)
-    halloween_bonus=0; halloween_object_box=False; halloween_box=None; halloween_pikachu=None
+    halloween_bonus=0; halloween_object_box=False; halloween_box=None
     if won and npc_key=='halloween_trainer' and _halloween_active():
         halloween_bonus=random.randint(10,20); _halloween_add_candies_cursor(c,uid,halloween_bonus)
         if random.random()<0.25:
@@ -3846,10 +3837,8 @@ def _finish_npc_battle_cursor(c,bid:int,state:dict)->dict:
     elif won and npc_key=='halloween_boss' and _halloween_active():
         halloween_bonus=random.randint(25,40); _halloween_add_candies_cursor(c,uid,halloween_bonus)
         grant_item_with_cursor(c,uid,'object_box',1); halloween_object_box=True
-        roll=random.random()
-        if roll<0.08:
-            halloween_pikachu=_grant_halloween_pikachu_cursor(c,uid)
-        elif roll<0.30:
+        # Pikachu Halloween es exclusivo de la tienda; el jefe nunca lo regala.
+        if random.random()<0.22:
             halloween_box=_grant_halloween_box_cursor(c,uid)
     badge_new=False; tm=None; candies=0; completion=None
     if won and kind=='leader':
@@ -3865,7 +3854,7 @@ def _finish_npc_battle_cursor(c,bid:int,state:dict)->dict:
             'notes':notes,'npc_key':npc_key,'badge_new':badge_new,'tm':tm,'candies':candies,'object_box':bool(won and kind=='leader'),
             'bonus_pids':selected if won and kind=='leader' else [],'completion':completion,'chat_id':chat_id,'thread_id':thread_id,
             'halloween_candies':halloween_candies,'halloween_bonus':halloween_bonus,'halloween_object_box':halloween_object_box,
-            'halloween_box':halloween_box,'halloween_pikachu':halloween_pikachu}
+            'halloween_box':halloween_box}
 
 
 def _npc_result_lines(final:dict)->list[str]:
@@ -3881,8 +3870,6 @@ def _npc_result_lines(final:dict)->list[str]:
         hb=final['halloween_box']; lines.append(f"🎃📦 Premio del jefe: {'✨ SHINY ' if hb.get('shiny') else ''}{hb.get('name','Pokémon')}")
     elif final.get('halloween_box')=='cursed_egg':
         lines.append('🎃🥚 ¡Encontraste un Huevo Maldito!')
-    if isinstance(final.get('halloween_pikachu'),dict):
-        hp=final['halloween_pikachu']; lines.append(f"🎃⚡ ¡Premio raro: {'✨ SHINY ' if hp.get('shiny') else ''}Pikachu Halloween!")
     if final.get('leader') and final.get('won'):
         if final.get('tm') in ITEMS:
             n,e,_,_=ITEMS[final['tm']]; lines.append(f'💿 MT: {e} {n}')
@@ -4356,13 +4343,13 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             '🎁 RECOMPENSAS HALLOWEEN\n\n'
             f'🎃📦 Caja Pokémon Halloween: Pokémon Gen 1 no legendario, con probabilidad Shiny 1/{HALLOWEEN_BOX_SHINY_DENOMINATOR}.\n'
             f'🎃🥚 Huevo Maldito: especies temáticas; Shiny 1/{HALLOWEEN_EGG_SHINY_DENOMINATOR}.\n'
-            '🎃⚡ Pikachu Halloween: variante especial con imagen global; 80% normal y 20% Shiny.\n'
+            '🎃⚡ Pikachu Halloween: exclusivo de la tienda; al comprarlo tiene 80% normal y 20% Shiny.\n'
             '💜🌟 Las cajas normales conservan su roll, Jackpot y XP de temporada.')
         return True
     if action=='eventinfo':
         await q.answer(); await context.bot.send_message(uid,
             '🎃 CÓMO FUNCIONA\n\n🍬 Durante el evento los Pokémon pueden soltar Dulces Halloween. Los de tipo Fantasma sueltan más.\n'
-            '👻 Hay apariciones sorpresa automáticas, un entrenador Halloween diario y un jefe en viernes, sábado y domingo.\n'
+            '🍬 Hay apariciones automáticas de Dulces Halloween para recoger, un entrenador Halloween diario y un jefe en viernes, sábado y domingo.\n'
             '🥚 Los huevos suben +0.5% por cada mensaje tuyo en los grupos oficiales. Al 100% tú decides cuándo romperlos.\n'
             f'⏳ {_halloween_countdown_text()}')
         return True
@@ -4451,34 +4438,24 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             if not er or str(er[3])!='active' or bool(er[4]):
                 if er and str(er[3])=='active':c.execute("UPDATE pokemon_halloween_events_tb SET status='expired',finished_at=NOW() WHERE event_id=%s",(event_id,)); conn.commit()
                 else:conn.rollback()
-                return await q.answer('La presencia ya desapareció.',show_alert=True) or True
-            kind=str(er[2]); chat_id=int(er[0]); thread_id=int(er[1] or 0)
+                return await q.answer('Esos dulces ya desaparecieron.',show_alert=True) or True
+            # Incluso si quedó una fila vieja de otro tipo antes del deploy, toda aparición sorpresa
+            # se convierte en Dulces Halloween. Pikachu Halloween solo existe en la tienda.
+            kind='candy'; chat_id=int(er[0]); thread_id=int(er[1] or 0)
             c.execute("UPDATE pokemon_halloween_events_tb SET status='claimed',claimed_by=%s,finished_at=NOW() WHERE event_id=%s",(uid,event_id))
             name=_display_name_cursor(c,uid)
-            if kind=='candy':
-                amount=random.randint(5,15); bal=_halloween_add_candies_cursor(c,uid,amount); result_text=f'🍬 {name} encontró {amount} Dulces Halloween.\nTotal: {bal} 🍬'
-            elif kind=='object_box':grant_item_with_cursor(c,uid,'object_box',1); result_text=f'🎁 {name} encontró una Caja de Objetos Pokémon.'
-            elif kind=='halloween_box':
-                data=_grant_halloween_box_cursor(c,uid); result_text=f"🎃📦 {name} encontró una Caja Halloween... ¡y salió {'✨ SHINY ' if data.get('shiny') else ''}{data['name']}!"; media_key='halloween_box'
-            elif kind=='pikachu':
-                data=_grant_halloween_pikachu_cursor(c,uid); result_text=f"🎃⚡ {name} encontró a {'✨ SHINY ' if data.get('shiny') else ''}Pikachu Halloween. ¡Se unió a su colección!"; media_key='pikachu_shiny' if data.get('shiny') else 'pikachu_normal'
-            elif kind=='cursed_egg':
-                if _active_egg_cursor(c,uid,True):
-                    amount=12; bal=_halloween_add_candies_cursor(c,uid,amount); result_text=f'🥚 {name} ya tenía un huevo, así que encontró {amount} Dulces Halloween en su lugar. Total: {bal} 🍬'
-                else:
-                    eid=_create_cursed_egg_cursor(c,uid,'halloween_surprise'); result_text=f'🎃🥚 {name} encontró un Huevo Maldito #{eid}. ¡Ahora tendrá que hacerlo crecer hablando!'; media_key='cursed_egg'
-            elif kind=='npc':spawn_kind='halloween_trainer'; result_text=f'👻 {name} investigó las sombras... ¡despertó al Entrenador de las Sombras!'
-            elif kind=='boss':spawn_kind='halloween_boss'; result_text=f'💀 {name} abrió algo que no debía... ¡GENGAR, SEÑOR DE LA NOCHE, apareció!'
+            amount=random.randint(5,15); bal=_halloween_add_candies_cursor(c,uid,amount)
+            result_text=f'🍬 {name} encontró {amount} Dulces Halloween.\nTotal: {bal} 🍬'
             conn.commit()
         except Exception as e:
             conn.rollback(); print('[PK Halloween claim]',type(e).__name__,e); return await q.answer('No pude resolver el evento.',show_alert=True) or True
         finally:_put_connection(conn)
-        await q.answer('👻 ¡Encontraste algo!',show_alert=True)
+        await q.answer('🍬 ¡Dulces recogidos!',show_alert=True)
         try:
             if getattr(q.message,'photo',None) or getattr(q.message,'animation',None):await q.edit_message_caption(caption=result_text,reply_markup=None)
             else:await q.edit_message_text(result_text,reply_markup=None)
         except Exception:pass
-        # Si el premio tiene arte propio (Pikachu, huevo o caja), lo mostramos al conseguirlo.
+        # Las apariciones sorpresa son solo de dulces; se conserva esta rama vacía por compatibilidad.
         if media_key:
             conn2=_get_connection(); media=(None,None)
             try:c2=conn2.cursor(); media=_halloween_media_cursor(c2,media_key)
