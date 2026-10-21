@@ -1424,6 +1424,17 @@ def _battle_title_mon(mon:dict)->str:
     return f"#{species:03d} {shiny}"
 
 
+_BATTLE_TYPE_LABELS_ES={
+    'Normal':'Normal','Fire':'Fuego','Water':'Agua','Electric':'Eléctrico','Grass':'Planta','Ice':'Hielo',
+    'Fighting':'Lucha','Poison':'Veneno','Ground':'Tierra','Flying':'Volador','Psychic':'Psíquico',
+    'Bug':'Bicho','Rock':'Roca','Ghost':'Fantasma','Dragon':'Dragón',
+}
+
+
+def _battle_type_label(tp:str)->str:
+    return _BATTLE_TYPE_LABELS_ES.get(str(tp),str(tp))
+
+
 def _battle_text(state:dict, note:str|None=None)->str:
     ids=list(state['players'].keys()); a=state['players'][ids[0]]; b=state['players'][ids[1]]
     am=a['mons'][a['active']]; bm=b['mons'][b['active']]
@@ -1455,9 +1466,102 @@ def _move_menu(bid:int,mon:dict):
     for i,code in enumerate(mon['moves']):
         if code not in MOVES or (locked and code!=locked):continue
         name,tp,power,acc,pp,kind=MOVES[code]; left=int(mon.get('pp',{}).get(code,pp))
-        rows.append([InlineKeyboardButton(f"{type_emoji(tp)} {name} · PP {left}/{pp}",callback_data=f'pk:move:{bid}:{i}')])
+        rows.append([InlineKeyboardButton(f"{type_emoji(tp)} {name} · {_battle_type_label(tp)} · PP {left}/{pp}",callback_data=f'pk:move:{bid}:{i}')])
     rows.append([InlineKeyboardButton('🔄 Cambiar Pokémon',callback_data=f'pk:bswitchmenu:{bid}'),InlineKeyboardButton('🎒 Objeto',callback_data=f'pk:bitemmenu:{bid}')])
     return InlineKeyboardMarkup(rows)
+
+
+# Mensajes espejo de batalla por privado. Solo guardamos IDs de mensajes en memoria;
+# el estado real de la batalla sigue viviendo exclusivamente en state_json/DB.
+_BATTLE_PRIVATE_VIEW_MESSAGES={}
+
+
+def _human_battle_ids(state:dict)->list[int]:
+    out=[]
+    for raw in state.get('players',{}):
+        try:uid=int(raw)
+        except Exception:continue
+        if uid>0:out.append(uid)
+    return out
+
+
+def _single_private_text(state:dict,uid:int,note:str|None=None,final:bool=False)->str:
+    text=_battle_text(state,note)
+    if final:return text+"\n\n🏁 Batalla terminada."
+    key=str(uid)
+    if key in state.get('choices',{}):return text+"\n\n✅ Tu acción ya está registrada. Esperando que se resuelva la ronda…"
+    return text+"\n\n🔒 Tus decisiones solo se eligen aquí.\n👇 Elige tu acción:"
+
+def _single_private_markup(bid:int,state:dict,uid:int,final:bool=False):
+    key=str(uid)
+    if final or state.get('status')!='active' or key not in state.get('players',{}):return None
+    if key in state.get('choices',{}):return None
+    pl=state['players'][key]; mon=pl['mons'][pl['active']]
+    if mon.get('hp',0)<=0:return None
+    return _move_menu(bid,mon)
+
+
+async def _set_private_battle_view(context,bid:int,uid:int,text:str,markup=None,final:bool=False):
+    cache_key=(int(bid),int(uid)); mid=_BATTLE_PRIVATE_VIEW_MESSAGES.get(cache_key)
+    if mid:
+        try:
+            await context.bot.edit_message_text(chat_id=int(uid),message_id=int(mid),text=text,reply_markup=markup)
+            if final:_BATTLE_PRIVATE_VIEW_MESSAGES.pop(cache_key,None)
+            return mid
+        except Exception as e:
+            if 'not modified' in str(e).lower():
+                if final:_BATTLE_PRIVATE_VIEW_MESSAGES.pop(cache_key,None)
+                return mid
+    try:
+        msg=await context.bot.send_message(chat_id=int(uid),text=text,reply_markup=markup)
+        if final:_BATTLE_PRIVATE_VIEW_MESSAGES.pop(cache_key,None)
+        else:_BATTLE_PRIVATE_VIEW_MESSAGES[cache_key]=int(msg.message_id)
+        return int(msg.message_id)
+    except Exception:
+        return None
+
+
+async def _store_battle_public_message_id(bid:int,message_id:int):
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute('UPDATE pokemon_battles_tb SET message_id=%s,updated_at=NOW() WHERE battle_id=%s',(int(message_id),int(bid))); conn.commit()
+    except Exception:conn.rollback()
+    finally:_put_connection(conn)
+
+
+async def _sync_single_battle_views(context,bid:int,state:dict,chat_id:int,thread_id,message_id:int|None,note:str|None=None,final:bool=False):
+    humans=_human_battle_ids(state)
+    private_in_same_chat=next((u for u in humans if int(u)==int(chat_id)),None)
+    if private_in_same_chat is not None:
+        public_text=_single_private_text(state,private_in_same_chat,note,final)
+        public_markup=_single_private_markup(bid,state,private_in_same_chat,final)
+    else:
+        public_text=_battle_text(state,note)
+        public_markup=None if final else _battle_markup(bid)
+    public_mid=message_id
+    edited=False
+    if message_id:
+        try:
+            await context.bot.edit_message_text(chat_id=int(chat_id),message_id=int(message_id),text=public_text,reply_markup=public_markup)
+            edited=True
+        except Exception as e:
+            if 'not modified' in str(e).lower():edited=True
+    if not edited:
+        try:
+            msg=await context.bot.send_message(chat_id=int(chat_id),text=public_text,message_thread_id=thread_id,reply_markup=public_markup)
+            public_mid=int(msg.message_id); await _store_battle_public_message_id(bid,public_mid)
+        except Exception:pass
+    for human in humans:
+        if int(human)==int(chat_id):continue
+        await _set_private_battle_view(context,bid,human,_single_private_text(state,human,note,final),_single_private_markup(bid,state,human,final),final)
+    return public_mid
+
+
+async def _send_private_battle_result(context,state:dict,text:str,skip_chat_id:int|None=None):
+    for uid in _human_battle_ids(state):
+        if skip_chat_id is not None and int(uid)==int(skip_chat_id):continue
+        try:await context.bot.send_message(int(uid),text)
+        except Exception:pass
 
 
 def _get_battle(bid:int, lock=False):
@@ -1878,6 +1982,8 @@ async def entrenamientopokemon_command(update:Update, context:ContextTypes.DEFAU
         c=conn.cursor(); c.execute("UPDATE pokemon_battles_tb SET message_id=%s,updated_at=NOW() WHERE battle_id=%s",(msg.message_id,bid)); conn.commit()
     except Exception:conn.rollback()
     finally:_put_connection(conn)
+    await _sync_single_battle_views(context,bid,state,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),msg.message_id,
+                                    f'🏋️ Centro de Entrenamiento · rival promedio Nv.{avg}\nIntentos completados hoy: {used}/{TRAINING_DAILY_LIMIT}')
 
 
 async def batallapokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
@@ -2905,7 +3011,9 @@ def _double_text(state:dict,note:str|None=None)->str:
         out=[]
         for n,idx in enumerate(p.get('active',[]),1):
             m=p['mons'][idx]
-            if m['hp']>0:out.append(f"{n}. {_battle_title_mon(m)} Nv.{m['level']} · ❤️ {m['hp']}/{m['max_hp']}")
+            if m['hp']>0:
+                pct=max(0,min(1,m['hp']/max(1,m['max_hp']))); full=round(pct*10); bar='█'*full+'░'*(10-full)
+                out.append(f"{n}. {_battle_title_mon(m)} Nv.{m['level']} · ❤️ {m['hp']}/{m['max_hp']} {bar}")
             else:out.append(f"{n}. 💫 {_battle_title_mon(m)} · debilitado")
         return out
     lines=['⚔️ BATALLA DOBLE POKÉMON · 4v4','',f"{a['name']}:",*active_lines(a),'',f"{b['name']}:",*active_lines(b),'',f"🔁 Ronda {state.get('round',1)}"]
@@ -2922,6 +3030,59 @@ def _double_group_markup(bid:int):
     return InlineKeyboardMarkup([[InlineKeyboardButton('⚔️ Elegir acciones',callback_data=f'pk:daction:{bid}')],[InlineKeyboardButton('🏳 Rendirse',callback_data=f'pk:dsurrender:{bid}')]])
 
 
+def _double_private_markup(bid:int,state:dict,uid:int,final:bool=False):
+    key=str(uid)
+    if final or state.get('status')!='active' or key not in state.get('players',{}):return None
+    pl=state['players'][key]; need=list(state.get('replacement_needed',{}).get(key,[]))
+    rows=[]
+    if need:
+        pos=int(need[0]); candidates=[i for i,m in enumerate(pl['mons']) if m['hp']>0 and i not in pl.get('active',[])]
+        for i in candidates:
+            rows.append([InlineKeyboardButton(f"➡️ Reemplazar por {_battle_title_mon(pl['mons'][i])}",callback_data=f'pk:dreplace:{bid}:{pos}:{i}')])
+        return InlineKeyboardMarkup(rows) if rows else None
+    chosen=state.get('choices',{}).get(key,{})
+    for pos,idx in enumerate(pl.get('active',[])):
+        mon=pl['mons'][idx]
+        if mon.get('hp',0)<=0:continue
+        if str(pos) in chosen:
+            rows.append([InlineKeyboardButton(f"✅ {pos+1}. {_battle_title_mon(mon)} · acción lista",callback_data='pk:noop')])
+        else:
+            rows.append([InlineKeyboardButton(f"⚔️ {pos+1}. {_battle_title_mon(mon)}",callback_data=f'pk:dmon:{bid}:{pos}'),InlineKeyboardButton('🔄 Cambiar',callback_data=f'pk:dswitchmenu:{bid}:{pos}')])
+    rows.append([InlineKeyboardButton('🏳 Rendirse',callback_data=f'pk:dsurrender:{bid}')])
+    return InlineKeyboardMarkup(rows)
+
+
+def _double_private_text(state:dict,uid:int,note:str|None=None,final:bool=False)->str:
+    text=_double_text(state,note)
+    if final:return text+"\n\n🏁 Batalla terminada."
+    key=str(uid)
+    if state.get('replacement_needed',{}).get(key):return text+"\n\n💫 Elige el reemplazo de tu Pokémon debilitado."
+    needed=_double_required_actions(state,key) if key in state.get('players',{}) else 0
+    chosen=len(state.get('choices',{}).get(key,{}))
+    if chosen>=needed and needed>0:return text+"\n\n✅ Tus acciones están registradas. Esperando al rival…"
+    return text+"\n\n🔒 Movimientos y objetivos se eligen únicamente aquí.\n👇 Elige las acciones pendientes:"
+
+async def _sync_double_battle_views(context,bid:int,state:dict,chat_id:int,thread_id,message_id:int|None,note:str|None=None,final:bool=False):
+    public_text=_double_text(state,note); public_markup=None if final else _double_group_markup(bid); public_mid=message_id; edited=False
+    if message_id:
+        try:
+            await context.bot.edit_message_text(chat_id=int(chat_id),message_id=int(message_id),text=public_text,reply_markup=public_markup); edited=True
+        except Exception as e:
+            if 'not modified' in str(e).lower():edited=True
+    if not edited:
+        try:
+            msg=await context.bot.send_message(chat_id=int(chat_id),text=public_text,message_thread_id=thread_id,reply_markup=public_markup)
+            public_mid=int(msg.message_id); await _store_battle_public_message_id(bid,public_mid)
+        except Exception:pass
+    for human in _human_battle_ids(state):
+        await _set_private_battle_view(context,bid,human,_double_private_text(state,human,note,final),_double_private_markup(bid,state,human,final),final)
+    return public_mid
+
+
+async def _sync_double_private_only(context,bid:int,state:dict,uid:int,note:str|None=None):
+    return await _set_private_battle_view(context,bid,uid,_double_private_text(state,uid,note,False),_double_private_markup(bid,state,uid,False),False)
+
+
 def _double_lead_markup(bid:int,state:dict,uid:int):
     key=str(uid); selected=[int(x) for x in state.setdefault('double_leads',{}).get(key,[])]
     rows=[]
@@ -2936,7 +3097,7 @@ def _double_mon_action_markup(bid:int,state:dict,uid:int,pos:int):
     locked=mon.get('choice_lock') if mon.get('held_item') in ('choice_band','choice_specs','choice_scarf') else None
     for mi,code in enumerate(mon.get('moves',[])):
         if code in MOVES and (not locked or code==locked) and int(mon.get('pp',{}).get(code,MOVES[code][4]))>0:
-            name,tp,_,_,pp,_=MOVES[code]; rows.append([InlineKeyboardButton(f"{type_emoji(tp)} {name} · PP {int(mon['pp'].get(code,pp))}/{pp}",callback_data=f'pk:dmove:{bid}:{pos}:{mi}')])
+            name,tp,_,_,pp,_=MOVES[code]; rows.append([InlineKeyboardButton(f"{type_emoji(tp)} {name} · {_battle_type_label(tp)} · PP {int(mon['pp'].get(code,pp))}/{pp}",callback_data=f'pk:dmove:{bid}:{pos}:{mi}')])
     rows.append([InlineKeyboardButton('🔄 Cambiar Pokémon',callback_data=f'pk:dswitchmenu:{bid}:{pos}')])
     return InlineKeyboardMarkup(rows)
 
@@ -3128,9 +3289,13 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         except Exception as e:conn.rollback(); print('[PK npc start]',type(e).__name__,e); await q.answer('No pude iniciar el combate.',show_alert=True); return True
         finally:_put_connection(conn)
         await q.answer('¡Combate iniciado!')
-        try:await context.bot.send_message(group[0],_battle_text(state,f"{_npc_label(key)} · niveles ajustados a tu equipo"),message_thread_id=group[1],reply_markup=_battle_markup(bid))
+        battle_msg=None
+        try:battle_msg=await context.bot.send_message(group[0],_battle_text(state,f"{_npc_label(key)} · niveles ajustados a tu equipo"),message_thread_id=group[1],reply_markup=_battle_markup(bid))
         except Exception:pass
-        try:await q.edit_message_text('✅ Equipo elegido. El combate empezó en el grupo.')
+        if battle_msg is not None:
+            await _store_battle_public_message_id(bid,int(battle_msg.message_id)); group=(group[0],group[1],int(battle_msg.message_id))
+        await _sync_single_battle_views(context,bid,state,group[0],group[1],group[2],f"{_npc_label(key)} · niveles ajustados a tu equipo")
+        try:await q.edit_message_text('✅ Equipo elegido. La batalla ya está visible en el grupo y en tu panel privado.')
         except Exception:pass
         return True
     if action=='npcbonus':
@@ -3266,9 +3431,8 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         finally:_put_connection(conn)
         if start:
             await q.answer('¡Batalla lista!')
-            try:await context.bot.edit_message_text(chat_id=chat[0],message_id=chat[2],text=_double_text(state,'Las acciones y objetivos se eligen por privado.'),reply_markup=_double_group_markup(bid))
-            except Exception:pass
-            try:await q.edit_message_text('✅ Pareja inicial confirmada. La batalla ya empezó en el grupo.')
+            await _sync_double_battle_views(context,bid,state,chat[0],chat[1],chat[2],'Las acciones y objetivos se eligen por privado.')
+            try:await q.edit_message_text('✅ Pareja inicial confirmada. La batalla ya está sincronizada en el grupo y en privado.')
             except Exception:pass
         else:
             await q.answer(); await q.edit_message_text('⚔️ Elige 2 Pokémon iniciales:',reply_markup=_double_lead_markup(bid,state,uid))
@@ -3279,15 +3443,9 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         state=json.loads(br[7]); key=str(uid)
         if state.get('battle_kind')!='double_pvp' or key not in state['players']:await q.answer('No participas.',show_alert=True); return True
         if state.get('replacement_needed',{}).get(key):await q.answer('Primero elige el reemplazo de tu Pokémon debilitado.',show_alert=True); return True
-        try:
-            sent=0
-            for pos in (0,1):
-                idx=state['players'][key]['active'][pos]; mon=state['players'][key]['mons'][idx]
-                if mon['hp']<=0:continue
-                sent+=1
-                await context.bot.send_message(uid,f"⚔️ Pokémon activo {pos+1}: {_battle_title_mon(mon)}\nElige su acción:",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⚔️ Elegir movimiento',callback_data=f'pk:dmon:{bid}:{pos}'),InlineKeyboardButton('🔄 Cambiar',callback_data=f'pk:dswitchmenu:{bid}:{pos}')]]))
-            await q.answer('Te mandé las acciones por privado.' if sent else 'No tienes Pokémon activo disponible.',show_alert=not bool(sent))
-        except Exception:await q.answer('Abre primero el privado de PiBot con /start.',show_alert=True)
+        sent=await _sync_double_private_only(context,bid,state,uid)
+        if sent is not None:await q.answer('Tu panel privado está actualizado.')
+        else:await q.answer('Abre primero el privado de PiBot con /start.',show_alert=True)
         return True
     if action=='dmon':
         bid=int(p[2]); pos=int(p[3]); br=_get_battle(bid)
@@ -3345,25 +3503,18 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         except Exception as e:conn.rollback(); print('[PK double action]',type(e).__name__,e); await q.answer('No pude registrar la acción.',show_alert=True); return True
         finally:_put_connection(conn)
         await q.answer('Acción elegida ✅')
-        if not final and state.get('replacement_needed'):
-            for who,poses in state['replacement_needed'].items():
-                if not poses:continue
-                try:
-                    pos=int(poses[0]); pl=state['players'][who]; candidates=[i for i,m in enumerate(pl['mons']) if m['hp']>0 and i not in pl['active']]
-                    rows=[[InlineKeyboardButton(f"➡️ {_battle_title_mon(pl['mons'][i])}",callback_data=f'pk:dreplace:{bid}:{pos}:{i}')] for i in candidates]
-                    await context.bot.send_message(int(who),f'💫 Debes reemplazar el Pokémon activo {pos+1}:',reply_markup=InlineKeyboardMarkup(rows))
-                except Exception:pass
         note='\n'.join(logs[-10:]) if logs else 'Esperando las demás acciones…'
-        try:await context.bot.edit_message_text(chat_id=chat[0],message_id=chat[2],text=_double_text(state,note),reply_markup=None if final else _double_group_markup(bid))
-        except Exception:pass
+        await _sync_double_battle_views(context,bid,state,chat[0],chat[1],chat[2],note,final=bool(final))
         if final:
             try:
                 from handlers.season_pass import grant_season_xp
                 grant_season_xp(final['winner'],WIN_SEASON_XP,'pokemon_double'); grant_season_xp(final['loser'],LOSS_SEASON_XP,'pokemon_double')
             except Exception:pass
             w=state['players'][str(final['winner'])]['name']; l=state['players'][str(final['loser'])]['name']
-            try:await context.bot.send_message(chat[0],f"🏆 {w} ganó la batalla doble Pokémon.\n💰 {w}: +{WIN_PIPESOS:,} PiPesos\n💰 {l}: +{LOSS_PIPESOS:,} PiPesos\n🎮 Los 4 Pokémon: ganador +{WIN_POKEMON_XP} XP c/u · rival +{LOSS_POKEMON_XP} XP c/u\n📈 Ranking: ±{final['elo']} puntos",message_thread_id=chat[1])
+            result_text=f"🏆 {w} ganó la batalla doble Pokémon.\n💰 {w}: +{WIN_PIPESOS:,} PiPesos\n💰 {l}: +{LOSS_PIPESOS:,} PiPesos\n🎮 Los 4 Pokémon: ganador +{WIN_POKEMON_XP} XP c/u · rival +{LOSS_POKEMON_XP} XP c/u\n📈 Ranking: ±{final['elo']} puntos"
+            try:await context.bot.send_message(chat[0],result_text,message_thread_id=chat[1])
             except Exception:pass
+            await _send_private_battle_result(context,state,result_text,skip_chat_id=chat[0])
         return True
     if action=='dswitchmenu':
         bid,pos=int(p[2]),int(p[3]); br=_get_battle(bid)
@@ -3388,8 +3539,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         await q.answer('Reemplazo listo ✅')
         try:await q.edit_message_text('✅ Pokémon enviado al campo.')
         except Exception:pass
-        try:await context.bot.edit_message_text(chat_id=chat[0],message_id=chat[2],text=_double_text(state,'Reemplazos listos.'),reply_markup=_double_group_markup(bid))
-        except Exception:pass
+        await _sync_double_battle_views(context,bid,state,chat[0],chat[1],chat[2],'Reemplazos listos.')
         return True
     if action=='dsurrender':
         bid=int(p[2]); conn=_get_connection(); state=None; final=None; chat=None
@@ -3402,15 +3552,16 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         except Exception:conn.rollback(); await q.answer('No pude rendirte.',show_alert=True); return True
         finally:_put_connection(conn)
         await q.answer('Te rendiste.',show_alert=True)
-        try:await context.bot.edit_message_text(chat_id=chat[0],message_id=chat[2],text=_double_text(state,f"🏳 {state['players'][str(uid)]['name']} se rindió."),reply_markup=None)
-        except Exception:pass
+        await _sync_double_battle_views(context,bid,state,chat[0],chat[1],chat[2],f"🏳 {state['players'][str(uid)]['name']} se rindió.",final=True)
         try:
             from handlers.season_pass import grant_season_xp
             grant_season_xp(final['winner'],WIN_SEASON_XP,'pokemon_double'); grant_season_xp(final['loser'],LOSS_SEASON_XP,'pokemon_double')
         except Exception:pass
         w=state['players'][str(final['winner'])]['name']; l=state['players'][str(final['loser'])]['name']
-        try:await context.bot.send_message(chat[0],f"🏆 {w} ganó la batalla doble Pokémon.\n💰 {w}: +{WIN_PIPESOS:,} PiPesos\n💰 {l}: +{LOSS_PIPESOS:,} PiPesos\n🎮 Los 4 Pokémon: ganador +{WIN_POKEMON_XP} XP c/u · rival +{LOSS_POKEMON_XP} XP c/u\n📈 Ranking: ±{final['elo']} puntos",message_thread_id=chat[1])
+        result_text=f"🏆 {w} ganó la batalla doble Pokémon.\n💰 {w}: +{WIN_PIPESOS:,} PiPesos\n💰 {l}: +{LOSS_PIPESOS:,} PiPesos\n🎮 Los 4 Pokémon: ganador +{WIN_POKEMON_XP} XP c/u · rival +{LOSS_POKEMON_XP} XP c/u\n📈 Ranking: ±{final['elo']} puntos"
+        try:await context.bot.send_message(chat[0],result_text,message_thread_id=chat[1])
         except Exception:pass
+        await _send_private_battle_result(context,state,result_text,skip_chat_id=chat[0])
         return True
     return False
 
@@ -4291,15 +4442,18 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             c.execute("UPDATE pokemon_battles_tb SET opponent_id=%s,mode=%s,status='active',state_json=%s,message_id=%s,updated_at=NOW() WHERE battle_id=%s",(uid,mode,json.dumps(state,ensure_ascii=False),q.message.message_id,bid)); conn.commit()
         except Exception as e:conn.rollback(); print('[PK accept]',e); return await q.answer('No pude iniciar la batalla.',show_alert=True)
         finally:_put_connection(conn)
-        await q.answer('¡Batalla aceptada!'); await q.edit_message_text(_battle_text(state,'Toca “Elegir acción”. PiBot te mostrará tus movimientos por privado.'),reply_markup=_battle_markup(bid)); return
+        await q.answer('¡Batalla aceptada!')
+        await _sync_single_battle_views(context,bid,state,int(br[3]),br[4],q.message.message_id,'La batalla está sincronizada. Las decisiones se eligen por privado.')
+        return
     if action=='action':
         bid=int(p[2]); br=_get_battle(bid)
         if not br or br[6]!='active':return await q.answer('La batalla ya terminó.',show_alert=True)
         state=json.loads(br[7]); key=str(uid)
         if key not in state['players']:return await q.answer('No participas en esta batalla.',show_alert=True)
         mon=state['players'][key]['mons'][state['players'][key]['active']]
-        try:await context.bot.send_message(uid,f"⚔️ {_battle_title_mon(mon)} · Nv.{mon['level']}\nElige tu acción de la ronda {state['round']}:",reply_markup=_move_menu(bid,mon)); await q.answer('Te mandé tus opciones por privado.')
-        except Exception:return await q.answer('Abre primero el privado de PiBot con /start.',show_alert=True)
+        sent=await _set_private_battle_view(context,bid,uid,_single_private_text(state,uid,None,False),_single_private_markup(bid,state,uid,False),False)
+        if sent is not None:await q.answer('Tu panel privado está actualizado.')
+        else:return await q.answer('Abre primero el privado de PiBot con /start.',show_alert=True)
         return
     if action in ('move','bswitch','bitem'):
         bid=int(p[2]); conn=_get_connection(); final=None; state=None; logs=[]
@@ -4343,21 +4497,22 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         except Exception as e:conn.rollback(); print('[PK action]',type(e).__name__,e); return await q.answer('No pude registrar la acción.',show_alert=True)
         finally:_put_connection(conn)
         await q.answer('Acción elegida ✅')
-        # Actualiza mensaje de grupo. Si todavía falta el rival, solo marca la elección.
+        # Sincroniza el mismo estado en el grupo y en los paneles privados.
+        # Las decisiones pendientes nunca se publican; solo se muestran resultados ya resueltos.
         note='\n'.join(logs[-8:]) if logs else 'Esperando la elección del rival…'
-        try:
-            await context.bot.edit_message_text(chat_id=chat_id,message_id=q.message.message_id if q.message and q.message.chat_id==chat_id else msgid,text=_battle_text(state,note),reply_markup=None if final else _battle_markup(bid))
-        except Exception:
-            try:await context.bot.send_message(chat_id, _battle_text(state,note),message_thread_id=thread_id,reply_markup=None if final else _battle_markup(bid))
-            except Exception:pass
+        await _sync_single_battle_views(context,bid,state,chat_id,thread_id,msgid,note,final=bool(final))
         if final:
             if final.get('training'):
-                try:await context.bot.send_message(chat_id,'\n'.join(_training_result_lines(final)),message_thread_id=thread_id)
+                result_text='\n'.join(_training_result_lines(final))
+                try:await context.bot.send_message(chat_id,result_text,message_thread_id=thread_id)
                 except Exception:pass
+                await _send_private_battle_result(context,state,result_text,skip_chat_id=chat_id)
                 return
             if final.get('npc'):
-                try:await context.bot.send_message(chat_id,'\n'.join(_npc_result_lines(final)),message_thread_id=thread_id)
+                result_text='\n'.join(_npc_result_lines(final))
+                try:await context.bot.send_message(chat_id,result_text,message_thread_id=thread_id)
                 except Exception:pass
+                await _send_private_battle_result(context,state,result_text,skip_chat_id=chat_id)
                 if final.get('leader') and final.get('won') and final.get('bonus_pids'):
                     try:await context.bot.send_message(final['uid'],f'⭐ BONO DE LÍDER · +{LEADER_BONUS_XP} XP\nElige uno de los Pokémon que usaste:',reply_markup=_leader_bonus_markup(bid,final['bonus_pids']))
                     except Exception:pass
@@ -4371,8 +4526,10 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             except Exception:wx=lx=None
             wname=state['players'][str(final['winner'])]['name']; lname=state['players'][str(final['loser'])]['name']
             lines=[f"🏆 {wname} ganó la batalla Pokémon.",f"💰 {wname}: +{WIN_PIPESOS:,} PiPesos · ⭐ +{WIN_SEASON_XP} XP de temporada",f"💰 {lname}: +{LOSS_PIPESOS:,} PiPesos · ⭐ +{LOSS_SEASON_XP} XP de temporada",f"🎮 Pokémon: ganador +{WIN_POKEMON_XP} XP c/u · rival +{LOSS_POKEMON_XP} XP c/u",f"📈 Ranking: ±{final['elo']} puntos"]+final['notes'][:6]
-            try:await context.bot.send_message(chat_id,'\n'.join(lines),message_thread_id=thread_id)
+            result_text='\n'.join(lines)
+            try:await context.bot.send_message(chat_id,result_text,message_thread_id=thread_id)
             except Exception:pass
+            await _send_private_battle_result(context,state,result_text,skip_chat_id=chat_id)
             tinfo=final.get('tournament')
             if tinfo:
                 conn2=None
@@ -4422,14 +4579,14 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         except Exception:conn.rollback(); return await q.answer('No pude rendirte.',show_alert=True)
         finally:_put_connection(conn)
         await q.answer('Te rendiste.',show_alert=True)
-        try:
-            if final.get('training'):
-                await context.bot.send_message(chat_id,'\n'.join(_training_result_lines(final)),message_thread_id=thread_id)
-            elif final.get('npc'):
-                await context.bot.send_message(chat_id,'\n'.join(_npc_result_lines(final)),message_thread_id=thread_id)
-            else:
-                await context.bot.send_message(chat_id,f"🏳 {state['players'][str(uid)]['name']} se rindió.\n🏆 Gana {state['players'][str(final['winner'])]['name']}.",message_thread_id=thread_id)
+        br2=_get_battle(bid); msgid=br2[8] if br2 else None
+        await _sync_single_battle_views(context,bid,state,chat_id,thread_id,msgid,f"🏳 {state['players'][str(uid)]['name']} se rindió.",final=True)
+        if final.get('training'):result_text='\n'.join(_training_result_lines(final))
+        elif final.get('npc'):result_text='\n'.join(_npc_result_lines(final))
+        else:result_text=f"🏳 {state['players'][str(uid)]['name']} se rindió.\n🏆 Gana {state['players'][str(final['winner'])]['name']}."
+        try:await context.bot.send_message(chat_id,result_text,message_thread_id=thread_id)
         except Exception:pass
+        await _send_private_battle_result(context,state,result_text,skip_chat_id=chat_id)
         return
 
     return await q.answer()
