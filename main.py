@@ -88,7 +88,7 @@ from handlers.batalla_naval import batalla_naval, cancelar_naval, naval_callback
 from handlers.gato import gato, cancelar_gato, ranking_gato, gato_callback, ensure_gato_tables
 from handlers.saocb_telegram import sao_command, sao_name_command, sao_callback, ensure_saocb_telegram_tables
 from handlers.saocb_mobile import sao_app_link_command, ensure_saocb_mobile_tables
-from handlers.pokemon_gen1 import (pokemon_command, pokedex_command, equipo_command, mostrarequipo_command, pokeobjetos_command, nombrarpokemon_command, fotopokemon_command, presumirpokemon_command, batallapokemon_command, batalladoblepokemon_command, entrenamientopokemon_command, entregar_command, intercambiopokemon_command, cancelarintercambiopokemon_command, gifintercambio_command, quitargifintercambio_command, shinys_command, rankingpokemon_command, cajapokemon_command, cajaobjetospokemon_command, darcajapokemon_command, torneopokemon_command, poketest_command, entrenador_command, liberarpokemon_command, caramelospokemon_command, pokemonsalvaje_command, npcpokemon_command, medallas_command, imagenesnpc_command, npcahora_command, liderahora_command, pokemon_wild_spawn_job, pokemon_npc_spawn_job, pokemon_leader_spawn_job, pokemon_callback, pokemon_text_input, pokemon_media_input, ensure_pokemon_tables)
+from handlers.pokemon_gen1 import (pokemon_command, pokedex_command, equipo_command, mostrarequipo_command, pokeobjetos_command, nombrarpokemon_command, fotopokemon_command, presumirpokemon_command, batallapokemon_command, batalladoblepokemon_command, entrenamientopokemon_command, entregar_command, intercambiopokemon_command, cancelarintercambiopokemon_command, gifintercambio_command, quitargifintercambio_command, shinys_command, rankingpokemon_command, cajapokemon_command, cajaobjetospokemon_command, darcajapokemon_command, torneopokemon_command, poketest_command, entrenador_command, liberarpokemon_command, caramelospokemon_command, pokemonsalvaje_command, npcpokemon_command, medallas_command, imagenesnpc_command, npcahora_command, liderahora_command, crianzapokemon_command, guarderiapokemon_command, huevos_command, regalarhuevo_command, darhuevo_command, imageneshuevo_command, huevoahora_command, evento_command, imagenesevento_command, halloweenahora_command, npchalloweenahora_command, jefehalloween_command, pikachuhalloweenahora_command, pokemon_egg_activity, pokemon_egg_event_job, pokemon_halloween_event_job, pokemon_halloween_npc_job, pokemon_halloween_boss_job, pokemon_wild_spawn_job, pokemon_npc_spawn_job, pokemon_leader_spawn_job, pokemon_callback, pokemon_text_input, pokemon_media_input, ensure_pokemon_tables)
 
 # Constants
 RUTA_CASTIGADOS = PUNISHMENT_FILE
@@ -556,7 +556,12 @@ def main() -> None:
         app.job_queue.run_repeating(pokemon_npc_spawn_job, interval=3600, first=max(1,(_npc_next-_npc_now).total_seconds()), name="pokemon_npc_hourly")
         # Líder de gimnasio: una aparición diaria. Se usa import local para no tocar imports globales.
         from datetime import time as _pk_dt_time
+        app.job_queue.run_daily(pokemon_egg_event_job, time=_pk_dt_time(hour=18, minute=40, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_egg_daily')
         app.job_queue.run_daily(pokemon_leader_spawn_job, time=_pk_dt_time(hour=20, minute=30, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_leader_daily')
+        # Halloween 2026: las funciones se apagan solas después del 5 de noviembre 23:59 (México).
+        app.job_queue.run_repeating(pokemon_halloween_event_job, interval=10800, first=900, name='pokemon_halloween_surprise_3h')
+        app.job_queue.run_daily(pokemon_halloween_npc_job, time=_pk_dt_time(hour=19, minute=15, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_halloween_npc_daily')
+        app.job_queue.run_daily(pokemon_halloween_boss_job, time=_pk_dt_time(hour=22, minute=15, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_halloween_boss_weekend')
         # Pregunta del Día: 10:00 AM hora de México. El coordinador reserva su ventana para evitar choques.
         from datetime import time as dt_time
         from zoneinfo import ZoneInfo as _ZoneInfo
@@ -690,6 +695,19 @@ def main() -> None:
     app.add_handler(CommandHandler("pokedex", pokedex_command), group=2)
     app.add_handler(CommandHandler("equipo", equipo_command), group=2)
     app.add_handler(CommandHandler("mostrarequipo", mostrarequipo_command), group=2)
+    app.add_handler(CommandHandler("crianzapokemon", crianzapokemon_command), group=2)
+    app.add_handler(CommandHandler("guarderiapokemon", guarderiapokemon_command), group=2)
+    app.add_handler(CommandHandler("huevos", huevos_command), group=2)
+    app.add_handler(CommandHandler("regalarhuevo", regalarhuevo_command), group=2)
+    app.add_handler(CommandHandler("darhuevo", darhuevo_command), group=2)
+    app.add_handler(CommandHandler("imageneshuevo", imageneshuevo_command), group=2)
+    app.add_handler(CommandHandler("huevoahora", huevoahora_command), group=2)
+    app.add_handler(CommandHandler("evento", evento_command), group=2)
+    app.add_handler(CommandHandler("imagenesevento", imagenesevento_command), group=2)
+    app.add_handler(CommandHandler("halloweenahora", halloweenahora_command), group=2)
+    app.add_handler(CommandHandler("npchalloweenahora", npchalloweenahora_command), group=2)
+    app.add_handler(CommandHandler("jefehalloween", jefehalloween_command), group=2)
+    app.add_handler(CommandHandler("pikachuhalloweenahora", pikachuhalloweenahora_command), group=2)
     app.add_handler(CommandHandler("pokeobjetos", pokeobjetos_command), group=2)
     app.add_handler(CommandHandler("nombrarpokemon", nombrarpokemon_command), group=2)
     app.add_handler(CommandHandler("fotopokemon", fotopokemon_command), group=2)
@@ -836,6 +854,7 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_social_input), group=9)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, pokemon_text_input), group=12)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.PHOTO | filters.ANIMATION | filters.VIDEO), pokemon_media_input), group=12)
+    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.Document.ALL | filters.VOICE | filters.AUDIO) & ~filters.COMMAND & ~filters.ChatType.PRIVATE, pokemon_egg_activity), group=13)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gif_admin_text_input), group=10)
 
     # Group 6: Punishment filter (prevents messages outside punishment corner)
