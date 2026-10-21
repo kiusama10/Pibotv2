@@ -2630,7 +2630,7 @@ KANTO_LEADERS = {
     'koga': {'name':'Koga','city':'Ciudad Fucsia','badge':'Medalla Alma','badge_emoji':'☠️','emoji':'☠️','pool':[109,110,89]},
     'sabrina': {'name':'Sabrina','city':'Ciudad Azafrán','badge':'Medalla Pantano','badge_emoji':'🔮','emoji':'🔮','pool':[64,122,65]},
     'blaine': {'name':'Blaine','city':'Isla Canela','badge':'Medalla Volcán','badge_emoji':'🔥','emoji':'🔥','pool':[58,77,59]},
-    'giovanni': {'name':'Giovanni','city':'Ciudad Verde','badge':'Medalla Tierra','badge_emoji':'🌎','emoji':'🌎','pool':[51,111,112]},
+    'giovanni': {'name':'Giovanni','city':'Ciudad Verde','badge':'Medalla Tierra','badge_emoji':'🌎','emoji':'🌎','pool':[51,112,150]},
 }
 
 NPC_ALL = {**NPC_NORMALS, **KANTO_LEADERS}
