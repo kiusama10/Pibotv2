@@ -193,9 +193,11 @@ _FEMALE_75 = {35,36,37,38,39,40}
 _FEMALE_25 = {58,59,63,64,65,66,67,68,125,126}
 _FEMALE_12_5 = {1,2,3,4,5,6,7,8,9,133,134,135,136,138,139,140,141,142,143}
 
-EGG_PROGRESS_PER_MESSAGE = 50       # 0.50% en base 10000
+EGG_PROGRESS_PER_MESSAGE = 150      # 1.50% en base 10000
 EGG_PROGRESS_MAX = 10000
+EGG_MAX_ACTIVE = 3
 BREEDING_COST_PIPESOS = 3000
+BREEDING_WAIT_SECONDS = 1800  # 30 minutos para que la pareja produzca el huevo
 EGG_EVENT_LIFETIME_SECONDS = 3600   # 1 hora
 EGG_EVENT_TIER_WEIGHTS = {'comun':70, 'raro':25, 'epico':5}
 EGG_TIERS = {
@@ -383,6 +385,8 @@ def ensure_pokemon_tables():
         c.execute("ALTER TABLE pokemon_instances_tb ADD COLUMN IF NOT EXISTS iv_hp SMALLINT")
         c.execute("ALTER TABLE pokemon_instances_tb ADD COLUMN IF NOT EXISTS held_item_code TEXT")
         c.execute("ALTER TABLE pokemon_instances_tb ADD COLUMN IF NOT EXISTS sex TEXT")
+        # Repara Pokémon viejos cuya XP interna quedó por debajo de la base de su nivel.
+        c.execute("UPDATE pokemon_instances_tb SET xp=GREATEST(xp,25*(level-1)*(level-1))")
         c.execute("""
             UPDATE pokemon_instances_tb SET
               iv_atk=COALESCE(iv_atk,FLOOR(random()*16)::int),
@@ -753,8 +757,32 @@ def ensure_pokemon_tables():
               hatched_at TIMESTAMPTZ
             )
         """)
-        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_pokemon_one_live_egg ON pokemon_eggs_tb(owner_id) WHERE status IN ('active','hatching')")
+        # Antes solo se permitía 1 huevo vivo por usuario. Desde esta versión se permiten hasta 3.
+        c.execute("DROP INDEX IF EXISTS idx_pokemon_one_live_egg")
         c.execute("CREATE INDEX IF NOT EXISTS idx_pokemon_eggs_owner ON pokemon_eggs_tb(owner_id,status,created_at)")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_breedings_tb(
+              breeding_id BIGSERIAL PRIMARY KEY,
+              owner_id BIGINT NOT NULL,
+              parent_a BIGINT NOT NULL,
+              parent_b BIGINT NOT NULL,
+              parent_a_species SMALLINT NOT NULL,
+              parent_b_species SMALLINT NOT NULL,
+              species_id SMALLINT NOT NULL CHECK(species_id BETWEEN 1 AND 151),
+              egg_tier TEXT NOT NULL CHECK(egg_tier IN ('comun','raro','epico')),
+              shiny BOOLEAN NOT NULL DEFAULT FALSE,
+              iv_atk SMALLINT NOT NULL,
+              iv_def SMALLINT NOT NULL,
+              iv_spd SMALLINT NOT NULL,
+              iv_spc SMALLINT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'waiting',
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              ready_at TIMESTAMPTZ NOT NULL DEFAULT (NOW()+INTERVAL '30 minutes'),
+              finished_at TIMESTAMPTZ
+            )
+        """)
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_pokemon_one_waiting_breeding ON pokemon_breedings_tb(owner_id) WHERE status='waiting'")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_pokemon_breedings_ready ON pokemon_breedings_tb(status,ready_at)")
         c.execute("""
             CREATE TABLE IF NOT EXISTS pokemon_halloween_wallet_tb(
               user_id BIGINT PRIMARY KEY,
@@ -1032,6 +1060,38 @@ def _record_tournament_battle_cursor(c,bid:int,winner:int):
 def _xp_floor(level:int)->int:
     # Curva compacta para Telegram; mantiene el progreso entre combates.
     return 25 * max(0, level - 1) ** 2
+
+
+def _xp_step(level:int)->int:
+    level=max(1,min(MAX_LEVEL,int(level)))
+    if level>=MAX_LEVEL:return 0
+    return max(1,_xp_floor(level+1)-_xp_floor(level))
+
+
+def _combat_xp_amount(rival_avg_level:int, won:bool, kind:str)->int:
+    """XP escalada al nivel rival para que progresar no dependa de farm infinito.
+
+    Ritmo aproximado: PvP 4 victorias por nivel, NPC 3, entrenamiento 4
+    y líder 2-3. Las derrotas también dan progreso, pero bastante menos.
+    """
+    level=max(1,min(MAX_LEVEL,int(rival_avg_level or 1)))
+    step=_xp_step(level) or _xp_step(MAX_LEVEL-1)
+    fractions={
+        'pvp':(0.25,0.10),
+        'npc':(0.32,0.14),
+        'training':(0.26,0.12),
+        'leader':(0.45,0.18),
+    }
+    win_frac,loss_frac=fractions.get(str(kind),(0.25,0.10))
+    frac=win_frac if won else loss_frac
+    minimums={
+        'pvp':(25,10),
+        'npc':(30,12),
+        'training':(25,10),
+        'leader':(40,15),
+    }
+    minimum=minimums.get(str(kind),(120,50))[0 if won else 1]
+    return max(int(minimum),int(round(step*frac)))
 
 
 def _starting_level(species_id:int)->int:
@@ -2084,7 +2144,7 @@ def _apply_item_action(player:dict,choice:dict,c,uid:int)->str:
 def _grant_pokemon_xp_cursor(c,pid:int,amount:int)->list[str]:
     c.execute("SELECT owner_id,species_id,nickname,level,xp FROM pokemon_instances_tb WHERE pokemon_id=%s FOR UPDATE",(pid,)); r=c.fetchone()
     if not r:return []
-    owner,species,nick,level,xp=int(r[0]),int(r[1]),r[2],int(r[3]),int(r[4]); oldlevel=level; xp+=int(amount); notes=[]
+    owner,species,nick,level,xp=int(r[0]),int(r[1]),r[2],int(r[3]),int(r[4]); oldlevel=level; xp=max(xp,_xp_floor(level))+int(amount); notes=[]
     while level<MAX_LEVEL and xp>=_xp_floor(level+1):level+=1
     evolved=False
     while species in LEVEL_EVOLUTIONS and level>=LEVEL_EVOLUTIONS[species][0]:
@@ -2180,15 +2240,20 @@ def _finish_battle_cursor(c,bid:int,state:dict)->dict:
     c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(WIN_PIPESOS,winner))
     c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(LOSS_PIPESOS,loser))
     delta=_update_rank_cursor(c,winner,loser)
-    level_notes=[]
+    level_notes=[]; xp_rewards={}
+    player_ids=list(state['players'].keys())
     for uid,p in state['players'].items():
-        won=int(uid)==winner; amount=WIN_POKEMON_XP if won else LOSS_POKEMON_XP
+        won=int(uid)==winner
+        other=next((state['players'][oid] for oid in player_ids if oid!=str(uid)),None)
+        rival_levels=[int(m.get('level',1)) for m in (other or {}).get('mons',[])]
+        rival_avg=max(1,round(sum(rival_levels)/len(rival_levels))) if rival_levels else 1
+        amount=_combat_xp_amount(rival_avg,won,'pvp'); xp_rewards[str(uid)]=amount
         for mon in p['mons']:
             level_notes += _grant_pokemon_xp_cursor(c,int(mon['pid']),amount)
         c.execute("UPDATE pokemon_instances_tb SET wins=wins+1 WHERE owner_id=%s AND pokemon_id=ANY(%s)",(int(uid),[int(m['pid']) for m in p['mons']])) if won else c.execute("UPDATE pokemon_instances_tb SET losses=losses+1 WHERE owner_id=%s AND pokemon_id=ANY(%s)",(int(uid),[int(m['pid']) for m in p['mons']]))
     c.execute("UPDATE pokemon_battles_tb SET status='finished',winner_id=%s,state_json=%s,finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s",(winner,json.dumps(state,ensure_ascii=False),bid))
     tournament=_record_tournament_battle_cursor(c,bid,winner)
-    return {'winner':winner,'loser':loser,'elo':delta,'notes':level_notes,'tournament':tournament}
+    return {'winner':winner,'loser':loser,'elo':delta,'notes':level_notes,'tournament':tournament,'xp_rewards':xp_rewards}
 
 
 def _today_pokemon_date():
@@ -2233,7 +2298,7 @@ def _finish_training_cursor(c,bid:int,state:dict)->dict:
     if not sr or sr[3]!='active':
         return {'training':True,'duplicate':True,'winner':int(state.get('winner',-1)),'loser':int(state.get('loser',-1)),'xp_lines':[],'notes':[]}
     training_id=int(sr[0]); day=sr[1]; avg=int(sr[2]); won=int(state['winner'])==uid
-    xp_amount=(30+avg*3) if won else int(math.floor(15+avg*1.5+0.5))
+    xp_amount=_combat_xp_amount(avg,won,'training')
     reward=TRAINING_WIN_PIPESOS if won else TRAINING_LOSS_PIPESOS
     participants=[]; seen=set()
     for raw in state.get('training_participants',[]):
@@ -2957,11 +3022,53 @@ async def pokemonsalvaje_command(update:Update, context:ContextTypes.DEFAULT_TYP
 
 
 # ==================== GUARDERÍA / HUEVOS ====================
-def _active_egg_cursor(c,uid:int,for_update:bool=False):
+def _live_eggs_cursor(c,uid:int,for_update:bool=False):
     sql=("SELECT egg_id,owner_id,source,egg_tier,species_id,progress,status,parent_a,parent_b,parent_a_species,parent_b_species,shiny,iv_atk,iv_def,iv_spd,iv_spc,pokemon_id,created_at "
-         "FROM pokemon_eggs_tb WHERE owner_id=%s AND status IN ('active','hatching') ORDER BY egg_id DESC LIMIT 1")
+         "FROM pokemon_eggs_tb WHERE owner_id=%s AND status IN ('active','hatching') ORDER BY egg_id ASC")
+    if for_update:sql += ' FOR UPDATE'
+    c.execute(sql,(int(uid),)); return c.fetchall()
+
+
+def _active_egg_cursor(c,uid:int,for_update:bool=False):
+    # Compatibilidad con rutas antiguas: devuelve el huevo vivo más reciente.
+    rows=_live_eggs_cursor(c,uid,for_update); return rows[-1] if rows else None
+
+
+def _egg_by_id_cursor(c,egg_id:int,for_update:bool=False):
+    sql=("SELECT egg_id,owner_id,source,egg_tier,species_id,progress,status,parent_a,parent_b,parent_a_species,parent_b_species,shiny,iv_atk,iv_def,iv_spd,iv_spc,pokemon_id,created_at "
+         "FROM pokemon_eggs_tb WHERE egg_id=%s AND status IN ('active','hatching')")
+    if for_update:sql += ' FOR UPDATE'
+    c.execute(sql,(int(egg_id),)); return c.fetchone()
+
+
+def _live_egg_count_cursor(c,uid:int)->int:
+    c.execute("SELECT COUNT(*) FROM pokemon_eggs_tb WHERE owner_id=%s AND status IN ('active','hatching')",(int(uid),))
+    return int((c.fetchone() or (0,))[0])
+
+
+def _active_breeding_cursor(c,uid:int,for_update:bool=False):
+    sql=("SELECT breeding_id,owner_id,parent_a,parent_b,parent_a_species,parent_b_species,species_id,egg_tier,shiny,iv_atk,iv_def,iv_spd,iv_spc,status,created_at,ready_at "
+         "FROM pokemon_breedings_tb WHERE owner_id=%s AND status='waiting' ORDER BY breeding_id DESC LIMIT 1")
     if for_update:sql += ' FOR UPDATE'
     c.execute(sql,(int(uid),)); return c.fetchone()
+
+
+def _egg_slots_used_cursor(c,uid:int)->int:
+    # Una crianza pendiente reserva un espacio para que al cumplir el tiempo siempre pueda entregar su huevo.
+    used=_live_egg_count_cursor(c,uid)
+    if _active_breeding_cursor(c,uid):used += 1
+    return used
+
+
+def _breeding_wait_text(row)->str:
+    if not row:return ''
+    ready=row[15]
+    now=datetime.now(timezone.utc)
+    if getattr(ready,'tzinfo',None) is None:ready=ready.replace(tzinfo=timezone.utc)
+    secs=max(0,int((ready-now).total_seconds()))
+    if secs<=0:return '🥚 El huevo está por ser entregado...'
+    mins=(secs+59)//60
+    return f'⏳ Tiempo restante: {mins} min'
 
 
 def _egg_media_cursor(c,key:str):
@@ -2992,12 +3099,28 @@ def _egg_ready_markup(row):
     return None
 
 
+def _eggs_ready_markup(rows):
+    buttons=[]
+    for row in rows or []:
+        if int(row[5])>=EGG_PROGRESS_MAX and str(row[6])=='hatching':
+            buttons.append([InlineKeyboardButton(f'🥚 Romper huevo #{int(row[0])}',callback_data=f'pk:egghatch:{int(row[0])}')])
+    return InlineKeyboardMarkup(buttons) if buttons else None
+
+
+def _eggs_compact_text(rows)->str:
+    if not rows:return '🥚 No tienes huevos activos.'
+    parts=[f'🥚 HUEVOS ACTIVOS · {len(rows)}/{EGG_MAX_ACTIVE}']
+    for i,row in enumerate(rows,1):
+        parts.append(f"\n{i}. {_egg_display_label(row)} · #{int(row[0])}\n   📈 {_egg_progress_text(int(row[5]))}" + (' · ✨ LISTO' if str(row[6])=='hatching' else ''))
+    return '\n'.join(parts)
+
+
 def _egg_row_text(row, reveal:bool=False)->str:
     if not row:return '🥚 No tienes un huevo activo.'
     egg_id,_,source,tier,species,progress,status,*_=row
     lines=[f"{_egg_display_label(row)} · #{int(egg_id)}",'',f"📈 Progreso: {_egg_progress_text(int(progress))}"]
     if int(progress)<EGG_PROGRESS_MAX:
-        lines.append('💬 Cada mensaje tuyo en el grupo suma +0.5%.')
+        lines.append('💬 Cada mensaje tuyo en el grupo suma +1.5%.')
     else:
         lines += ['', '✨ ¡El huevo está listo!', '🥚 Pulsa «Romper huevo» para comenzar la eclosión.']
     if source=='crianza':lines.append('💕 Origen: Crianza Pokémon')
@@ -3029,7 +3152,7 @@ def _egg_shiny_roll(parent_a=None,parent_b=None)->bool:
 
 
 def _create_egg_cursor(c,uid:int,species:int,tier:str,source:str,parent_a=None,parent_b=None,parent_a_species=None,parent_b_species=None,ivs:dict|None=None,shiny:bool|None=None)->int:
-    if _active_egg_cursor(c,uid,True):raise ValueError('active_egg')
+    if _live_egg_count_cursor(c,uid)>=EGG_MAX_ACTIVE:raise ValueError('egg_slots_full')
     ivs=ivs or _roll_ivs(False); shiny=bool(_egg_shiny_roll() if shiny is None else shiny)
     c.execute("""INSERT INTO pokemon_eggs_tb(owner_id,source,egg_tier,species_id,parent_a,parent_b,parent_a_species,parent_b_species,shiny,iv_atk,iv_def,iv_spd,iv_spc)
                  VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING egg_id""",
@@ -3065,57 +3188,75 @@ def _breed_second_markup(uid:int,first_pid:int):
 
 
 async def crianzapokemon_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    uid=update.effective_user.id; conn=_get_connection(); active=None
-    try:c=conn.cursor(); active=_active_egg_cursor(c,uid)
+    uid=update.effective_user.id; conn=_get_connection(); eggs=[]; pending=None; used=0
+    try:
+        c=conn.cursor(); eggs=_live_eggs_cursor(c,uid); pending=_active_breeding_cursor(c,uid); used=_egg_slots_used_cursor(c,uid)
     finally:_put_connection(conn)
-    if active:
-        text='🥚 Ya tienes un huevo activo. Debes eclosionarlo o regalarlo antes de criar otro.\n\n'+_egg_row_text(active)
-        return await update.effective_message.reply_text(text,reply_markup=_egg_ready_markup(active))
+    if pending:
+        text=(f"💕 CRIANZA POKÉMON · {update.effective_user.full_name}\n\n🏡 Ya tienes una pareja en la Guardería.\n"
+              f"{_breeding_wait_text(pending)}\n\nCuando produzcan el huevo, PiBot te avisará por privado.\n\n{_eggs_compact_text(eggs)}")
+        return await update.effective_message.reply_text(text,reply_markup=_eggs_ready_markup(eggs))
+    if used>=EGG_MAX_ACTIVE:
+        return await update.effective_message.reply_text(f'🥚 Ya tienes ocupados tus {EGG_MAX_ACTIVE} espacios de huevo. Eclosiona o regala uno antes de criar de nuevo.',reply_markup=_eggs_ready_markup(eggs))
     kb=_breed_first_markup(uid,0)
     text=(f"💕 CRIANZA POKÉMON · {update.effective_user.full_name}\n\nElige el primer Pokémon. PiBot respetará sexo y Grupos Huevo. Ditto tiene su compatibilidad especial.\n"
-          f"💰 Formar un huevo cuesta {BREEDING_COST_PIPESOS:,} PiPesos.\n🥚 Solo puedes tener 1 huevo activo.")
+          f"💰 Crianza: {BREEDING_COST_PIPESOS:,} PiPesos.\n⏳ La pareja tarda 30 minutos en producir el huevo.\n🥚 Espacios: {len(eggs)}/{EGG_MAX_ACTIVE}.")
     if kb is None:text += '\n\n⚠️ No tienes Pokémon aptos para iniciar una crianza.'
     return await update.effective_message.reply_text(text,reply_markup=kb)
 
 
 async def guarderiapokemon_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    uid=update.effective_user.id; conn=_get_connection(); row=None
-    try:c=conn.cursor(); row=_active_egg_cursor(c,uid)
+    uid=update.effective_user.id; conn=_get_connection(); eggs=[]; pending=None
+    try:
+        c=conn.cursor(); eggs=_live_eggs_cursor(c,uid); pending=_active_breeding_cursor(c,uid)
     finally:_put_connection(conn)
-    text=f'🏡 GUARDERÍA POKÉMON · {update.effective_user.full_name}\n\n'+(_egg_row_text(row) if row else 'No tienes un huevo activo. Usa /crianzapokemon para formar uno.')
-    return await update.effective_message.reply_text(text,reply_markup=_egg_ready_markup(row))
+    lines=[f'🏡 GUARDERÍA POKÉMON · {update.effective_user.full_name}']
+    if pending:
+        lines += ['', '💕 Pareja criando actualmente', f'• #{int(pending[4]):03d} {NAMES[int(pending[4])]} + #{int(pending[5]):03d} {NAMES[int(pending[5])]}', _breeding_wait_text(pending), '📩 Te avisaré por privado cuando tengan el huevo.']
+    else:
+        lines += ['', '💕 No tienes una pareja criando ahora mismo.']
+    lines += ['', _eggs_compact_text(eggs)]
+    return await update.effective_message.reply_text('\n'.join(lines),reply_markup=_eggs_ready_markup(eggs))
 
 
 async def huevos_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    uid=update.effective_user.id; conn=_get_connection(); row=None; media=(None,None)
-    try:
-        c=conn.cursor(); row=_active_egg_cursor(c,uid)
-        if row:
-            key=_egg_media_key_for_row(row)
-            media=_halloween_media_cursor(c,key) if key=='cursed_egg' else _egg_media_cursor(c,key)
+    uid=update.effective_user.id; conn=_get_connection(); rows=[]
+    try:c=conn.cursor(); rows=_live_eggs_cursor(c,uid)
     finally:_put_connection(conn)
-    text='🥚 TU HUEVO POKÉMON\n\n'+_egg_row_text(row); markup=_egg_ready_markup(row)
     try:
-        if row and media[0]=='animation' and media[1]:await context.bot.send_animation(uid,animation=media[1],caption=text,reply_markup=markup)
-        elif row and media[0]=='photo' and media[1]:await context.bot.send_photo(uid,photo=media[1],caption=text,reply_markup=markup)
-        else:await context.bot.send_message(uid,text,reply_markup=markup)
+        if not rows:
+            await context.bot.send_message(uid,f'🥚 TUS HUEVOS · 0/{EGG_MAX_ACTIVE}\n\nNo tienes huevos activos.')
+        else:
+            await context.bot.send_message(uid,f'🥚 TUS HUEVOS · {len(rows)}/{EGG_MAX_ACTIVE}')
+            for row in rows:
+                conn=_get_connection(); media=(None,None)
+                try:
+                    c=conn.cursor(); key=_egg_media_key_for_row(row); media=_halloween_media_cursor(c,key) if key=='cursed_egg' else _egg_media_cursor(c,key)
+                finally:_put_connection(conn)
+                text=_egg_row_text(row); markup=_egg_ready_markup(row)
+                if media[0]=='animation' and media[1]:await context.bot.send_animation(uid,animation=media[1],caption=text,reply_markup=markup)
+                elif media[0]=='photo' and media[1]:await context.bot.send_photo(uid,photo=media[1],caption=text,reply_markup=markup)
+                else:await context.bot.send_message(uid,text,reply_markup=markup)
     except Exception:return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
-    if update.effective_chat.type!='private':await update.effective_message.reply_text('📩 Te mandé tu huevo por privado.')
+    if update.effective_chat.type!='private':await update.effective_message.reply_text('📩 Te mandé tus huevos por privado.')
 
 
 async def regalarhuevo_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id; target=_resolve_target(update,context)
     if target is None:return await update.effective_message.reply_text('🎁 Responde al mensaje de la persona con /regalarhuevo.')
     if int(target)==int(uid):return await update.effective_message.reply_text('😂 No puedes regalarte tu propio huevo.')
-    conn=_get_connection(); egg=None; name=None; target_has=False
+    conn=_get_connection(); eggs=[]; name=None; target_used=0
     try:
-        c=conn.cursor(); egg=_active_egg_cursor(c,uid); target_has=bool(_active_egg_cursor(c,target)); name=_display_name_cursor(c,target)
+        c=conn.cursor(); eggs=_live_eggs_cursor(c,uid); target_used=_egg_slots_used_cursor(c,target); name=_display_name_cursor(c,target)
     finally:_put_connection(conn)
-    if not egg:return await update.effective_message.reply_text('🥚 No tienes un huevo activo para regalar.')
-    if str(egg[6])!='active':return await update.effective_message.reply_text('🥚 Ese huevo ya está listo para eclosionar. Rómpelo antes de intentar regalar otro.')
-    if target_has:return await update.effective_message.reply_text(f'🥚 {name} ya tiene un huevo activo.')
-    kb=InlineKeyboardMarkup([[InlineKeyboardButton('🎁 Confirmar regalo',callback_data=f'pk:egggift:{int(egg[0])}:{int(target)}')],[InlineKeyboardButton('❌ Cancelar',callback_data='pk:egggiftcancel')]])
-    await update.effective_message.reply_text(f"🎁 ¿Regalar tu {_egg_display_label(egg)} a {name}?\n\nEl progreso actual ({int(egg[5])/100:.1f}%) se conserva.",reply_markup=kb)
+    if not eggs:return await update.effective_message.reply_text('🥚 No tienes huevos activos para regalar.')
+    if target_used>=EGG_MAX_ACTIVE:return await update.effective_message.reply_text(f'🥚 {name} ya tiene ocupados sus {EGG_MAX_ACTIVE} espacios de huevo.')
+    rows=[]
+    for egg in eggs:
+        pct=int(egg[5])/100
+        rows.append([InlineKeyboardButton(f'{_egg_display_label(egg)} #{int(egg[0])} · {pct:.1f}%',callback_data=f'pk:egggiftpick:{uid}:{int(target)}:{int(egg[0])}')])
+    rows.append([InlineKeyboardButton('❌ Cancelar',callback_data='pk:egggiftcancel')])
+    await update.effective_message.reply_text(f'🎁 ¿Cuál de tus huevos quieres regalar a {name}?',reply_markup=InlineKeyboardMarkup(rows))
 
 
 async def darhuevo_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
@@ -3130,7 +3271,7 @@ async def darhuevo_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
     conn=_get_connection(); eid=None; name=None
     try:
         c=conn.cursor(); name=_display_name_cursor(c,target)
-        if _active_egg_cursor(c,target):conn.rollback(); return await update.effective_message.reply_text(f'🥚 {name} ya tiene un huevo activo.')
+        if _egg_slots_used_cursor(c,target)>=EGG_MAX_ACTIVE:conn.rollback(); return await update.effective_message.reply_text(f'🥚 {name} ya tiene ocupados sus {EGG_MAX_ACTIVE} espacios de huevo.')
         if cursed:
             eid=_create_cursed_egg_cursor(c,target,'halloween_admin')
         else:
@@ -3293,34 +3434,66 @@ async def _hatch_egg(context:ContextTypes.DEFAULT_TYPE,egg_id:int,chat_id:int,th
 async def pokemon_egg_activity(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if not update.effective_user or update.effective_user.is_bot or not update.effective_message:return
     if update.effective_chat.type=='private':return
-    try:
-        community_ids={int(x.get('id_comunidad')) for x in COMUNIDADES if x.get('id_comunidad') is not None}
-    except Exception:community_ids=set()
-    if community_ids and int(update.effective_chat.id) not in community_ids:return
     if update.effective_message.text and update.effective_message.text.lstrip().startswith('/'):return
-    uid=int(update.effective_user.id); egg_id=None; reached=False; row_after=None
+    uid=int(update.effective_user.id); reached_ids=[]; reached_rows=[]
     conn=_get_connection()
     try:
-        c=conn.cursor(); row=_active_egg_cursor(c,uid,True)
-        if not row or str(row[6])!='active':conn.rollback(); return
-        egg_id=int(row[0]); newp=min(EGG_PROGRESS_MAX,int(row[5])+EGG_PROGRESS_PER_MESSAGE)
-        if newp>=EGG_PROGRESS_MAX:
-            c.execute("UPDATE pokemon_eggs_tb SET progress=10000,status='hatching' WHERE egg_id=%s",(egg_id,)); reached=True
-        else:c.execute("UPDATE pokemon_eggs_tb SET progress=%s WHERE egg_id=%s",(newp,egg_id))
+        c=conn.cursor(); rows=_live_eggs_cursor(c,uid,True)
+        active=[r for r in rows if str(r[6])=='active']
+        if not active:conn.rollback(); return
+        for row in active:
+            egg_id=int(row[0]); newp=min(EGG_PROGRESS_MAX,int(row[5])+EGG_PROGRESS_PER_MESSAGE)
+            if newp>=EGG_PROGRESS_MAX:
+                c.execute("UPDATE pokemon_eggs_tb SET progress=10000,status='hatching' WHERE egg_id=%s",(egg_id,)); reached_ids.append(egg_id)
+            else:
+                c.execute("UPDATE pokemon_eggs_tb SET progress=%s WHERE egg_id=%s",(newp,egg_id))
         conn.commit()
-        if reached:
-            c=conn.cursor(); row_after=_active_egg_cursor(c,uid)
+        if reached_ids:
+            c=conn.cursor()
+            for egg_id in reached_ids:
+                row=_egg_by_id_cursor(c,egg_id)
+                if row:reached_rows.append(row)
     except Exception as e:conn.rollback(); print('[PK egg progress]',type(e).__name__,e); return
     finally:_put_connection(conn)
-    if reached and row_after:
+    if reached_rows:
         name=(update.effective_user.full_name or update.effective_user.first_name or update.effective_user.username or f'Entrenador {uid}').strip()
-        text=(f"🥚 ¡EL HUEVO DE {name} ESTÁ LISTO!\n\n"
-              f"{_egg_display_label(row_after)} llegó al 100%.\n✨ Ya puede comenzar la eclosión.")
-        kb=_egg_ready_markup(row_after)
-        try:await context.bot.send_message(update.effective_chat.id,text,message_thread_id=getattr(update.effective_message,'message_thread_id',None),reply_markup=kb)
-        except Exception:pass
-        try:await context.bot.send_message(uid,'🥚 ¡Tu huevo llegó al 100%!\n\nPulsa el botón cuando quieras romperlo.',reply_markup=kb)
-        except Exception:pass
+        for row in reached_rows:
+            text=(f"🥚 ¡UN HUEVO DE {name} ESTÁ LISTO!\n\n"
+                  f"{_egg_display_label(row)} #{int(row[0])} llegó al 100%.\n✨ Ya puede comenzar la eclosión.")
+            kb=_egg_ready_markup(row)
+            try:await context.bot.send_message(update.effective_chat.id,text,message_thread_id=getattr(update.effective_message,'message_thread_id',None),reply_markup=kb)
+            except Exception:pass
+            try:await context.bot.send_message(uid,f'🥚 ¡Tu {_egg_display_label(row)} #{int(row[0])} llegó al 100%!\n\nPulsa el botón cuando quieras romperlo.',reply_markup=kb)
+            except Exception:pass
+
+
+async def pokemon_breeding_ready_job(context:ContextTypes.DEFAULT_TYPE):
+    # Revisa parejas cada minuto. El estado vive en PostgreSQL, así que reiniciar Render no pierde el tiempo.
+    conn=_get_connection(); notifications=[]
+    try:
+        c=conn.cursor()
+        c.execute("""SELECT breeding_id,owner_id,parent_a,parent_b,parent_a_species,parent_b_species,species_id,egg_tier,shiny,iv_atk,iv_def,iv_spd,iv_spc,status,created_at,ready_at
+                     FROM pokemon_breedings_tb WHERE status='waiting' AND ready_at<=NOW() ORDER BY ready_at ASC LIMIT 50 FOR UPDATE SKIP LOCKED""")
+        rows=c.fetchall()
+        for br in rows:
+            bid,uid,a,b,sa,sb,species,tier,shiny,ia,idf,ispd,ispc,*_=br
+            if _live_egg_count_cursor(c,int(uid))>=EGG_MAX_ACTIVE:
+                # Debería ser raro porque la crianza reserva espacio; se conserva para reintentar sin perder el huevo.
+                continue
+            ivs={'atk':int(ia),'def':int(idf),'spd':int(ispd),'spc':int(ispc)}
+            ivs['hp']=((ivs['atk']&1)*8)+((ivs['def']&1)*4)+((ivs['spd']&1)*2)+(ivs['spc']&1)
+            eid=_create_egg_cursor(c,int(uid),int(species),str(tier),'crianza',int(a),int(b),int(sa),int(sb),ivs,bool(shiny))
+            c.execute("UPDATE pokemon_breedings_tb SET status='completed',finished_at=NOW() WHERE breeding_id=%s",(int(bid),))
+            notifications.append((int(uid),int(eid),str(tier)))
+        conn.commit()
+    except Exception as e:
+        conn.rollback(); print('[PK breeding ready]',type(e).__name__,e)
+    finally:_put_connection(conn)
+    for uid,eid,tier in notifications:
+        try:
+            await context.bot.send_message(uid,f"🏡 ¡TU PAREJA POKÉMON TUVO UN HUEVO! 🥚\n\n{_egg_tier_label(tier)} #{eid} ya está contigo.\n💬 Cada mensaje válido tuyo en el grupo hará subir +1.5% a todos tus huevos activos.\n🥚 Puedes tener hasta {EGG_MAX_ACTIVE} huevos.\n\nUsa /huevos para verlos.")
+        except Exception:
+            pass
 
 
 # ==================== EVENTO HALLOWEEN 2026 ====================
@@ -3409,7 +3582,7 @@ def _grant_halloween_pikachu_cursor(c,uid:int)->dict:
 
 
 def _create_cursed_egg_cursor(c,uid:int,source:str='halloween_shop')->int:
-    if _active_egg_cursor(c,uid,True):raise ValueError('active_egg')
+    if _live_egg_count_cursor(c,uid)>=EGG_MAX_ACTIVE:raise ValueError('egg_slots_full')
     species=random.choice(HALLOWEEN_THEME_BASES)
     shiny=(random.randrange(HALLOWEEN_EGG_SHINY_DENOMINATOR)==0)
     return _create_egg_cursor(c,uid,species,'epico',source,shiny=shiny)
@@ -3810,7 +3983,7 @@ def _finish_npc_battle_cursor(c,bid:int,state:dict)->dict:
     uid=int(state['human_user_id']); won=int(state['winner'])==uid; mode=int(state['mode']); kind=state.get('battle_kind','npc'); eid=int(state['npc_encounter_id'])
     c.execute("SELECT chat_id,thread_id,npc_key FROM pokemon_npc_encounters_tb WHERE encounter_id=%s FOR UPDATE",(eid,)); er=c.fetchone()
     chat_id=int(er[0]) if er else int(state.get('chat_id',0)); thread_id=er[1] if er else None; npc_key=str(er[2]) if er else str(state.get('npc_key',''))
-    xp=(LEADER_XP if kind=='leader' else NPC_NORMAL_XP.get(mode,100)) if won else (LEADER_LOSS_XP if kind=='leader' else NPC_NORMAL_LOSS_XP)
+    bot_levels=[int(m.get('level',1)) for m in state.get('players',{}).get(str(state.get('bot_player_id')),{}).get('mons',[])]; rival_avg=max(1,round(sum(bot_levels)/len(bot_levels))) if bot_levels else 1; xp=_combat_xp_amount(rival_avg,won,'leader' if kind=='leader' else 'npc')
     pipes=(LEADER_WIN_PIPESOS if kind=='leader' else NPC_NORMAL_WIN_PIPESOS.get(mode,1500)) if won else (LEADER_LOSS_PIPESOS if kind=='leader' else NPC_NORMAL_LOSS_PIPESOS)
     notes=[]; selected=[]; selected_levels=[]
     human=state['players'][str(uid)]
@@ -3826,7 +3999,7 @@ def _finish_npc_battle_cursor(c,bid:int,state:dict)->dict:
         halloween_bonus=random.randint(10,20); _halloween_add_candies_cursor(c,uid,halloween_bonus)
         if random.random()<0.25:
             grant_item_with_cursor(c,uid,'object_box',1); halloween_object_box=True
-        if random.random()<0.12 and not _active_egg_cursor(c,uid,True):
+        if random.random()<0.12 and _egg_slots_used_cursor(c,uid)<EGG_MAX_ACTIVE:
             _create_cursed_egg_cursor(c,uid,'halloween_npc'); halloween_box='cursed_egg'
     elif won and npc_key=='halloween_boss' and _halloween_active():
         halloween_bonus=random.randint(25,40); _halloween_add_candies_cursor(c,uid,halloween_bonus)
@@ -4350,14 +4523,14 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             await q.answer(); await context.bot.send_message(chat_id,
                 '🎃 CÓMO FUNCIONA\n\n🍬 Durante el evento los Pokémon pueden soltar Dulces Halloween. Los de tipo Fantasma sueltan más.\n'
                 '🍬 Hay apariciones automáticas de Dulces Halloween para recoger, un entrenador Halloween diario y un jefe en viernes, sábado y domingo.\n'
-                '🥚 Los huevos suben +0.5% por cada mensaje tuyo en los grupos oficiales. Al 100% tú decides cuándo romperlos.\n'
+                '🥚 Los huevos suben +1.5% por cada mensaje tuyo en los grupos oficiales. Al 100% tú decides cuándo romperlos.\n'
                 f'⏳ {_halloween_countdown_text()}',message_thread_id=thread_id or None)
             return True
         if action=='eventegg':
-            conn=_get_connection(); row=None
-            try:c=conn.cursor(); row=_active_egg_cursor(c,uid)
+            conn=_get_connection(); rows=[]
+            try:c=conn.cursor(); rows=_live_eggs_cursor(c,uid)
             finally:_put_connection(conn)
-            await q.answer(); await context.bot.send_message(chat_id,f'🥚 HUEVO DE {q.from_user.full_name}\n\n'+_egg_row_text(row),reply_markup=_egg_ready_markup(row),message_thread_id=thread_id or None); return True
+            await q.answer(); await context.bot.send_message(chat_id,f'🥚 HUEVOS DE {q.from_user.full_name}\n\n'+_eggs_compact_text(rows),reply_markup=_eggs_ready_markup(rows),message_thread_id=thread_id or None); return True
     if action=='eventmediapick':
         try:
             if not is_botmaster(uid):return await q.answer('Solo BotMaster.',show_alert=True) or True
@@ -4394,7 +4567,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         conn=_get_connection(); result_text=''; box_result=None; media_key=None; newbal=0
         try:
             c=conn.cursor()
-            if code=='cursed_egg' and _active_egg_cursor(c,uid,True):conn.rollback(); return await q.answer('Ya tienes un huevo activo.',show_alert=True) or True
+            if code=='cursed_egg' and _egg_slots_used_cursor(c,uid)>=EGG_MAX_ACTIVE:conn.rollback(); return await q.answer(f'Ya tienes ocupados tus {EGG_MAX_ACTIVE} espacios de huevo.',show_alert=True) or True
             if not _halloween_spend_cursor(c,uid,int(item['price'])):conn.rollback(); return await q.answer('No tienes suficientes Dulces Halloween.',show_alert=True) or True
             if code=='rare_candy':grant_item_with_cursor(c,uid,'rare_candy',1); result_text='🍬 Recibiste 1 Caramelo Raro.'
             elif code=='object_box':grant_item_with_cursor(c,uid,'object_box',1); result_text='🎁 Recibiste 1 Caja de Objetos Pokémon. Usa /cajaobjetospokemon.'
@@ -4495,7 +4668,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         offspring=_offspring_species(int(ra[1]),str(ra[17]),int(rb[1]),str(rb[17])); tier=rarity_for(offspring)
         if tier=='legendario':tier='epico'
         kb=InlineKeyboardMarkup([[InlineKeyboardButton(f'🥚 Formar huevo · {BREEDING_COST_PIPESOS:,} PiPesos',callback_data=f'pk:breedgo:{uid}:{a}:{b}')],[InlineKeyboardButton('❌ Cancelar',callback_data=f'pk:breedcancel:{uid}')]])
-        await q.answer(); await q.edit_message_text(f"💕 PAREJA COMPATIBLE\n\n1. {_pokemon_label(ra)}\n2. {_pokemon_label(rb)}\n\n🥚 La cría será de la familia #{offspring:03d} {NAMES[offspring]}.\n🧬 Dos DVs se heredarán de los padres; el resto será aleatorio.\n✨ Los padres Shiny mejoran un poco la posibilidad Shiny.\n💰 Coste: {BREEDING_COST_PIPESOS:,} PiPesos.",reply_markup=kb); return True
+        await q.answer(); await q.edit_message_text(f"💕 PAREJA COMPATIBLE\n\n1. {_pokemon_label(ra)}\n2. {_pokemon_label(rb)}\n\n🥚 La cría será de la familia #{offspring:03d} {NAMES[offspring]}.\n🧬 Dos DVs se heredarán de los padres; el resto será aleatorio.\n✨ Los padres Shiny mejoran un poco la posibilidad Shiny.\n💰 Coste: {BREEDING_COST_PIPESOS:,} PiPesos.\n⏳ La pareja tardará 30 minutos en producir el huevo.",reply_markup=kb); return True
     if action=='breedcancel':
         owner=int(p[2]) if len(p)>2 else uid
         if owner!=uid:return await q.answer('Este menú de crianza no es tuyo.',show_alert=True) or True
@@ -4504,10 +4677,11 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         if len(p)>=5: owner,a,b=int(p[2]),int(p[3]),int(p[4])
         else: owner,a,b=uid,int(p[2]),int(p[3])
         if owner!=uid:return await q.answer('Este menú de crianza no es tuyo.',show_alert=True) or True
-        conn=_get_connection(); eid=None; tier='comun'; species=None
+        conn=_get_connection(); tier='comun'; species=None; breeding_id=None
         try:
             c=conn.cursor()
-            if _active_egg_cursor(c,uid,True):conn.rollback(); await q.answer('Ya tienes un huevo activo.',show_alert=True); return True
+            if _active_breeding_cursor(c,uid,True):conn.rollback(); await q.answer('Ya tienes una pareja criando en la Guardería.',show_alert=True); return True
+            if _egg_slots_used_cursor(c,uid)>=EGG_MAX_ACTIVE:conn.rollback(); await q.answer(f'Ya tienes ocupados tus {EGG_MAX_ACTIVE} espacios de huevo.',show_alert=True); return True
             c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code,sex FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id IN (%s,%s) FOR UPDATE",(uid,a,b)); rr={int(x[0]):x for x in c.fetchall()}
             if a not in rr or b not in rr:conn.rollback(); await q.answer('Alguno de los padres ya no está disponible.',show_alert=True); return True
             ra,rb=rr[a],rr[b]
@@ -4517,10 +4691,26 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             species=_offspring_species(int(ra[1]),str(ra[17]),int(rb[1]),str(rb[17])); tier=rarity_for(species); tier=tier if tier in EGG_TIERS else 'epico'
             ivs=_inherit_ivs(ra,rb); shiny=_egg_shiny_roll(ra,rb)
             c.execute("UPDATE usuarios_tb SET saldo=saldo-%s WHERE id_user=%s",(BREEDING_COST_PIPESOS,uid))
-            eid=_create_egg_cursor(c,uid,species,tier,'crianza',a,b,int(ra[1]),int(rb[1]),ivs,shiny); conn.commit()
-        except Exception as e:conn.rollback(); print('[PK breed confirm]',type(e).__name__,e); await q.answer('No pude formar el huevo.',show_alert=True); return True
+            c.execute("""INSERT INTO pokemon_breedings_tb(owner_id,parent_a,parent_b,parent_a_species,parent_b_species,species_id,egg_tier,shiny,iv_atk,iv_def,iv_spd,iv_spc,ready_at)
+                         VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW()+INTERVAL '30 minutes') RETURNING breeding_id""",
+                      (uid,a,b,int(ra[1]),int(rb[1]),species,tier,shiny,ivs['atk'],ivs['def'],ivs['spd'],ivs['spc']))
+            breeding_id=int(c.fetchone()[0]); conn.commit()
+        except Exception as e:conn.rollback(); print('[PK breed confirm]',type(e).__name__,e); await q.answer('No pude iniciar la crianza.',show_alert=True); return True
         finally:_put_connection(conn)
-        await q.answer('¡Huevo formado! 🥚',show_alert=True); await q.edit_message_text(f"🥚 ¡LA GUARDERÍA TE ENTREGÓ UN HUEVO!\n\n{_egg_tier_label(tier)} #{eid}\n❓ El Pokémon permanecerá oculto hasta eclosionar.\n💬 Cada mensaje tuyo en el grupo suma +0.5%.\n📈 Necesitas llegar a 100%.\n\nLos padres ya regresaron contigo."); return True
+        await q.answer('¡Pareja enviada a la Guardería! 💕',show_alert=True)
+        await q.edit_message_text(f"🏡 ¡PAREJA EN LA GUARDERÍA!\n\n💕 Tus Pokémon están criando.\n⏳ Tardarán 30 minutos en producir el huevo.\n📩 PiBot te avisará por privado apenas esté listo.\n🥚 El contenido seguirá siendo secreto hasta que eclosione.\n\nPuedes revisar el tiempo con /guarderiapokemon.")
+        return True
+    if action=='egggiftpick':
+        owner,target,egg_id=int(p[2]),int(p[3]),int(p[4])
+        if owner!=uid:return await q.answer('Este menú de huevos no es tuyo.',show_alert=True) or True
+        conn=_get_connection(); egg=None; target_name=None; target_used=0
+        try:
+            c=conn.cursor(); egg=_egg_by_id_cursor(c,egg_id); target_name=_display_name_cursor(c,target); target_used=_egg_slots_used_cursor(c,target)
+        finally:_put_connection(conn)
+        if not egg or int(egg[1])!=uid:return await q.answer('Ese huevo ya no es tuyo.',show_alert=True) or True
+        if target_used>=EGG_MAX_ACTIVE:return await q.answer(f'{target_name} ya tiene ocupados sus {EGG_MAX_ACTIVE} espacios.',show_alert=True) or True
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton('🎁 Confirmar regalo',callback_data=f'pk:egggift:{egg_id}:{target}')],[InlineKeyboardButton('⬅️ Cancelar',callback_data='pk:egggiftcancel')]])
+        await q.answer(); await q.edit_message_text(f"🎁 ¿Regalar {_egg_display_label(egg)} #{egg_id} a {target_name}?\n\n📈 Progreso: {int(egg[5])/100:.1f}%\nEl progreso se conserva.",reply_markup=kb); return True
     if action=='egggiftcancel':
         await q.answer('Regalo cancelado.');
         try:await q.edit_message_text('❌ Regalo de huevo cancelado.')
@@ -4530,8 +4720,8 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         egg_id,target=int(p[2]),int(p[3]); conn=_get_connection(); target_name=None; tier='comun'; cursed=False
         try:
             c=conn.cursor(); c.execute("SELECT owner_id,egg_tier,status,source FROM pokemon_eggs_tb WHERE egg_id=%s FOR UPDATE",(egg_id,)); er=c.fetchone()
-            if not er or int(er[0])!=uid or str(er[2])!='active':conn.rollback(); await q.answer('Ese huevo ya no puede regalarse.',show_alert=True); return True
-            if _active_egg_cursor(c,target,True):conn.rollback(); await q.answer('La otra persona ya tiene un huevo.',show_alert=True); return True
+            if not er or int(er[0])!=uid or str(er[2]) not in ('active','hatching'):conn.rollback(); await q.answer('Ese huevo ya no puede regalarse.',show_alert=True); return True
+            if _egg_slots_used_cursor(c,target)>=EGG_MAX_ACTIVE:conn.rollback(); await q.answer(f'La otra persona ya tiene ocupados sus {EGG_MAX_ACTIVE} espacios de huevo.',show_alert=True); return True
             tier=str(er[1]); cursed=str(er[3]).startswith('halloween'); target_name=_display_name_cursor(c,target)
             new_source='halloween_regalo' if cursed else 'regalo'
             c.execute("UPDATE pokemon_eggs_tb SET owner_id=%s,source=%s WHERE egg_id=%s",(target,new_source,egg_id)); conn.commit()
@@ -4552,7 +4742,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
                 if er and str(er[4])=='active':c.execute("UPDATE pokemon_egg_events_tb SET status='expired',finished_at=NOW() WHERE event_id=%s",(event_id,)); conn.commit()
                 else:conn.rollback()
                 await q.answer('Ese huevo ya no está disponible.',show_alert=True); return True
-            if _active_egg_cursor(c,uid,True):conn.rollback(); await q.answer('Ya tienes un huevo activo. Eclosiónalo o regálalo primero.',show_alert=True); return True
+            if _egg_slots_used_cursor(c,uid)>=EGG_MAX_ACTIVE:conn.rollback(); await q.answer(f'Ya tienes ocupados tus {EGG_MAX_ACTIVE} espacios de huevo.',show_alert=True); return True
             tier=str(er[2]); species=int(er[3]); egg_id=_create_egg_cursor(c,uid,species,tier,'evento'); name=_display_name_cursor(c,uid); media=_egg_media_cursor(c,tier)
             c.execute("UPDATE pokemon_egg_events_tb SET status='claimed',claimed_by=%s,finished_at=NOW() WHERE event_id=%s",(uid,event_id)); conn.commit()
         except Exception as e:conn.rollback(); print('[PK egg claim]',type(e).__name__,e); await q.answer('No pude recoger el huevo.',show_alert=True); return True
@@ -4563,7 +4753,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             if media[0] in ('photo','animation'):await q.edit_message_caption(caption=text,reply_markup=None)
             else:await q.edit_message_text(text,reply_markup=None)
         except Exception:pass
-        try:await context.bot.send_message(uid,f'🥚 ¡El huevo ya es tuyo!\n\nUsa /huevos para revisar el progreso. Cada mensaje tuyo en el grupo suma +0.5%.')
+        try:await context.bot.send_message(uid,f'🥚 ¡El huevo ya es tuyo!\n\nUsa /huevos para revisar el progreso. Cada mensaje tuyo en el grupo suma +1.5%.')
         except Exception:pass
         return True
     if action=='eggmediapick':
@@ -4925,7 +5115,9 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
                 grant_season_xp(final['winner'],WIN_SEASON_XP,'pokemon_double'); grant_season_xp(final['loser'],LOSS_SEASON_XP,'pokemon_double')
             except Exception:pass
             w=state['players'][str(final['winner'])]['name']; l=state['players'][str(final['loser'])]['name']
-            result_text=f"🏆 {w} ganó la batalla doble Pokémon.\n💰 {w}: +{WIN_PIPESOS:,} PiPesos\n💰 {l}: +{LOSS_PIPESOS:,} PiPesos\n🎮 Los 4 Pokémon: ganador +{WIN_POKEMON_XP} XP c/u · rival +{LOSS_POKEMON_XP} XP c/u\n📈 Ranking: ±{final['elo']} puntos"
+            wxp=int(final.get('xp_rewards',{}).get(str(final['winner']),WIN_POKEMON_XP)); lxp=int(final.get('xp_rewards',{}).get(str(final['loser']),LOSS_POKEMON_XP))
+            result_text=f"🏆 {w} ganó la batalla doble Pokémon.\n💰 {w}: +{WIN_PIPESOS:,} PiPesos\n💰 {l}: +{LOSS_PIPESOS:,} PiPesos\n🎮 Los 4 Pokémon: ganador +{wxp} XP c/u · rival +{lxp} XP c/u\n📈 Ranking: ±{final['elo']} puntos"
+            if final.get('notes'):result_text+='\n'+'\n'.join(final['notes'][:6])
             await _update_double_public_final(context,bid,state,chat[0],chat[1],chat[2],note,result_text)
             await _send_private_battle_result(context,state,result_text,skip_chat_id=chat[0])
         return True
@@ -4973,7 +5165,9 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             grant_season_xp(final['winner'],WIN_SEASON_XP,'pokemon_double'); grant_season_xp(final['loser'],LOSS_SEASON_XP,'pokemon_double')
         except Exception:pass
         w=state['players'][str(final['winner'])]['name']; l=state['players'][str(final['loser'])]['name']
-        result_text=f"🏆 {w} ganó la batalla doble Pokémon.\n💰 {w}: +{WIN_PIPESOS:,} PiPesos\n💰 {l}: +{LOSS_PIPESOS:,} PiPesos\n🎮 Los 4 Pokémon: ganador +{WIN_POKEMON_XP} XP c/u · rival +{LOSS_POKEMON_XP} XP c/u\n📈 Ranking: ±{final['elo']} puntos"
+        wxp=int(final.get('xp_rewards',{}).get(str(final['winner']),WIN_POKEMON_XP)); lxp=int(final.get('xp_rewards',{}).get(str(final['loser']),LOSS_POKEMON_XP))
+        result_text=f"🏆 {w} ganó la batalla doble Pokémon.\n💰 {w}: +{WIN_PIPESOS:,} PiPesos\n💰 {l}: +{LOSS_PIPESOS:,} PiPesos\n🎮 Los 4 Pokémon: ganador +{wxp} XP c/u · rival +{lxp} XP c/u\n📈 Ranking: ±{final['elo']} puntos"
+        if final.get('notes'):result_text+='\n'+'\n'.join(final['notes'][:6])
         await _update_double_public_final(context,bid,state,chat[0],chat[1],chat[2],f"🏳 {state['players'][str(uid)]['name']} se rindió.",result_text)
         await _send_private_battle_result(context,state,result_text,skip_chat_id=chat[0])
         return True
@@ -5484,11 +5678,11 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         if action=='mediaselect':context.user_data['pk_wait_media']=pid; await q.answer(); return await q.message.reply_text(f"🎞️ Envíame una FOTO, GIF o VIDEO para #{int(row[1]):03d} {row[2] or NAMES[int(row[1])]}. Telegram guardará el archivo; PiBot solo conservará su file_id.")
         species=int(row[1]); level=int(row[3]); moves=json.loads(row[5] or '[]'); move_names=', '.join(MOVES[m][0] for m in moves if m in MOVES)
         shiny_line = "✨ Variante SHINY\n" if len(row)>10 and row[10] else ""
-        xp_line = (
-            f"⭐ XP Pokémon: {row[4]:,} / {_xp_floor(level+1):,}\n"
-            if level < MAX_LEVEL
-            else f"⭐ XP Pokémon: {row[4]:,} · NIVEL MÁXIMO\n"
-        )
+        if level < MAX_LEVEL:
+            xp_now=max(int(row[4]),_xp_floor(level)); xp_base=_xp_floor(level); xp_need=_xp_step(level)
+            xp_line=f"⭐ XP: {max(0,xp_now-xp_base):,} / {xp_need:,} para Nv.{level+1}\n"
+        else:
+            xp_line="⭐ XP: NIVEL MÁXIMO\n"
         ivs=_iv_values(row); ivpct=_iv_percent(ivs)
         stats={
             'hp':_stat_value(species,level,'hp',ivs['hp']),
@@ -5945,7 +6139,8 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                 wx=grant_season_xp(final['winner'],WIN_SEASON_XP,'pokemon_battle'); lx=grant_season_xp(final['loser'],LOSS_SEASON_XP,'pokemon_battle')
             except Exception:wx=lx=None
             wname=state['players'][str(final['winner'])]['name']; lname=state['players'][str(final['loser'])]['name']
-            lines=[f"🏆 {wname} ganó la batalla Pokémon.",f"💰 {wname}: +{WIN_PIPESOS:,} PiPesos · ⭐ +{WIN_SEASON_XP} XP de temporada",f"💰 {lname}: +{LOSS_PIPESOS:,} PiPesos · ⭐ +{LOSS_SEASON_XP} XP de temporada",f"🎮 Pokémon: ganador +{WIN_POKEMON_XP} XP c/u · rival +{LOSS_POKEMON_XP} XP c/u",f"📈 Ranking: ±{final['elo']} puntos"]+final['notes'][:6]
+            wxp=int(final.get('xp_rewards',{}).get(str(final['winner']),WIN_POKEMON_XP)); lxp=int(final.get('xp_rewards',{}).get(str(final['loser']),LOSS_POKEMON_XP))
+            lines=[f"🏆 {wname} ganó la batalla Pokémon.",f"💰 {wname}: +{WIN_PIPESOS:,} PiPesos · ⭐ +{WIN_SEASON_XP} XP de temporada",f"💰 {lname}: +{LOSS_PIPESOS:,} PiPesos · ⭐ +{LOSS_SEASON_XP} XP de temporada",f"🎮 Pokémon: ganador +{wxp} XP c/u · rival +{lxp} XP c/u",f"📈 Ranking: ±{final['elo']} puntos"]+final['notes'][:6]
             result_text='\n'.join(lines)
             await _update_single_public_final(context,bid,state,chat_id,thread_id,msgid,note,result_text)
             await _send_private_battle_result(context,state,result_text,skip_chat_id=chat_id)
