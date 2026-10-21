@@ -183,6 +183,174 @@ TYPE_HELD_AFFINITY = {
 }
 
 
+# ==================== CRIANZA / HUEVOS ====================
+# gender_rate de PokéAPI: probabilidad de hembra en octavos. -1 = sin sexo.
+# Se conserva fijo por ejemplar una vez asignado.
+_GENDERLESS = {81,82,100,101,120,121,132,137,144,145,146,150,151}
+_MALE_ONLY = {32,33,34,106,107,128}
+_FEMALE_ONLY = {29,30,31,113,115,124}
+_FEMALE_75 = {35,36,37,38,39,40}
+_FEMALE_25 = {58,59,63,64,65,66,67,68,125,126}
+_FEMALE_12_5 = {1,2,3,4,5,6,7,8,9,133,134,135,136,138,139,140,141,142,143}
+
+EGG_PROGRESS_PER_MESSAGE = 50       # 0.50% en base 10000
+EGG_PROGRESS_MAX = 10000
+BREEDING_COST_PIPESOS = 3000
+EGG_EVENT_LIFETIME_SECONDS = 3600   # 1 hora
+EGG_EVENT_TIER_WEIGHTS = {'comun':70, 'raro':25, 'epico':5}
+EGG_TIERS = {
+    'comun': {'name':'Huevo Común','emoji':'🥚'},
+    'raro': {'name':'Huevo Raro','emoji':'🔵🥚'},
+    'epico': {'name':'Huevo Épico','emoji':'🟣🥚'},
+}
+
+
+# ==================== HALLOWEEN 2026 ====================
+# Evento temporal autónomo. Después del cierre las recompensas conseguidas permanecen,
+# pero se detienen drops, tienda, sorpresas y apariciones especiales.
+HALLOWEEN_START = datetime(2026,10,20,0,0,0,tzinfo=POKEMON_TZ)
+HALLOWEEN_END = datetime(2026,11,5,23,59,59,tzinfo=POKEMON_TZ)
+HALLOWEEN_EVENT_LIFETIME_SECONDS = 1800
+HALLOWEEN_BOX_SHINY_DENOMINATOR = 128
+HALLOWEEN_EGG_SHINY_DENOMINATOR = 256
+HALLOWEEN_PIKACHU_SHINY_CHANCE = 0.20  # 80% normal / 20% shiny
+HALLOWEEN_YEAR = 2026
+HALLOWEEN_SHOP = {
+    'rare_candy': {'name':'Caramelo Raro','emoji':'🍬','price':20},
+    'object_box': {'name':'Caja de Objetos Pokémon','emoji':'🎁','price':35},
+    'pibot_epic': {'name':'Caja Épica normal de PiBot','emoji':'💜','price':55},
+    'cursed_egg': {'name':'Huevo Maldito','emoji':'🎃🥚','price':75},
+    'halloween_box': {'name':'Caja Pokémon Halloween','emoji':'🎃📦','price':90},
+    'pibot_legendary': {'name':'Caja Legendaria normal de PiBot','emoji':'🌟','price':120},
+    'halloween_pikachu': {'name':'Pikachu Halloween','emoji':'🎃⚡','price':180},
+}
+HALLOWEEN_THEME_BASES = (23,41,48,88,92,96,104,109)
+HALLOWEEN_MEDIA_KEYS = {
+    'cover':'🎃 Portada /evento',
+    'surprise':'🌑 Aparición sorpresa',
+    'npc':'👻 NPC Halloween',
+    'boss':'💀 Jefe Halloween',
+    'cursed_egg':'🎃🥚 Huevo Maldito',
+    'cursed_hatch':'💥 Eclosión Maldita',
+    'pikachu_normal':'🎃⚡ Pikachu Halloween',
+    'pikachu_shiny':'✨🎃⚡ Pikachu Halloween Shiny',
+    'halloween_box':'🎃📦 Caja Pokémon Halloween',
+    'shop':'🛒 Tienda Halloween',
+}
+
+
+def _gender_rate(species_id:int)->int:
+    sid=int(species_id)
+    if sid in _GENDERLESS:return -1
+    if sid in _MALE_ONLY:return 0
+    if sid in _FEMALE_ONLY:return 8
+    if sid in _FEMALE_75:return 6
+    if sid in _FEMALE_25:return 2
+    if sid in _FEMALE_12_5:return 1
+    return 4
+
+
+def _roll_sex(species_id:int)->str:
+    rate=_gender_rate(species_id)
+    if rate<0:return 'N'
+    if rate==0:return 'M'
+    if rate>=8:return 'F'
+    return 'F' if random.randrange(8)<rate else 'M'
+
+
+def _sex_symbol(sex:str|None)->str:
+    return {'M':'♂','F':'♀','N':'⚪'}.get(str(sex or '').upper(),'⚪')
+
+
+def _sex_text(sex:str|None)->str:
+    return {'M':'♂ Macho','F':'♀ Hembra','N':'⚪ Sin sexo'}.get(str(sex or '').upper(),'⚪ Sin sexo')
+
+
+# Grupos Huevo oficiales aplicados a las especies Gen 1.
+# IDs: 1 Monster, 2 Water1, 3 Bug, 4 Flying, 5 Field/Ground, 6 Fairy,
+# 7 Grass/Plant, 8 Human-Like, 9 Water3, 10 Mineral, 11 Amorphous,
+# 12 Water2, 13 Ditto, 14 Dragon, 15 Undiscovered/No Eggs.
+EGG_GROUPS:dict[int,frozenset[int]]={}
+def _eg(ids, *groups):
+    for _sid in ids: EGG_GROUPS[int(_sid)]=frozenset(int(g) for g in groups)
+_eg(range(1,4),1,7); _eg(range(4,7),1,14); _eg(range(7,10),1,2)
+_eg(range(10,16),3); _eg(range(16,19),4); _eg(range(19,21),5); _eg(range(21,23),4)
+_eg(range(23,25),5,14); _eg(range(25,27),5,6); _eg(range(27,29),5); _eg([29],1,5); _eg([30,31],15)
+_eg(range(32,35),1,5); _eg(range(35,37),6); _eg(range(37,39),5); _eg(range(39,41),6); _eg(range(41,43),4)
+_eg(range(43,46),7); _eg(range(46,48),3,7); _eg(range(48,50),3); _eg(range(50,54),5); _eg(range(54,56),2,5)
+_eg(range(56,60),5); _eg(range(60,63),2); _eg(range(63,69),8); _eg(range(69,72),7); _eg(range(72,74),9)
+_eg(range(74,77),10); _eg(range(77,79),5); _eg(range(79,81),1,2); _eg(range(81,83),10); _eg([83],4,5)
+_eg(range(84,86),4); _eg(range(86,88),2,5); _eg(range(88,90),11); _eg(range(90,92),9); _eg(range(92,95),11)
+_eg([95],10); _eg(range(96,98),8); _eg(range(98,100),9); _eg(range(100,102),10); _eg(range(102,104),7)
+_eg(range(104,106),1); _eg(range(106,108),8); _eg([108],1); _eg(range(109,111),11); _eg(range(111,113),1,5)
+_eg([113],6); _eg([114],7); _eg([115],1); _eg(range(116,118),2,14); _eg(range(118,120),12); _eg(range(120,122),9)
+_eg([122],8); _eg([123],3); _eg(range(124,127),8); _eg([127],3); _eg([128],5); _eg(range(129,131),12,14)
+_eg([131],1,2); _eg([132],13); _eg(range(133,137),5); _eg([137],10); _eg(range(138,142),2,9); _eg([142],4)
+_eg([143],1); _eg(range(144,147),15); _eg(range(147,150),2,14); _eg(range(150,152),15)
+
+# Forma Gen 1 que nace del huevo. No se introducen bebés de Gen 2.
+BREED_BASE={}
+def _base(ids, base):
+    for _sid in ids: BREED_BASE[int(_sid)]=int(base)
+for _a,_b in [((1,2,3),1),((4,5,6),4),((7,8,9),7),((10,11,12),10),((13,14,15),13),((16,17,18),16),
+              ((19,20),19),((21,22),21),((23,24),23),((25,26),25),((27,28),27),((29,30,31),29),((32,33,34),32),
+              ((35,36),35),((37,38),37),((39,40),39),((41,42),41),((43,44,45),43),((46,47),46),((48,49),48),
+              ((50,51),50),((52,53),52),((54,55),54),((56,57),56),((58,59),58),((60,61,62),60),((63,64,65),63),
+              ((66,67,68),66),((69,70,71),69),((72,73),72),((74,75,76),74),((77,78),77),((79,80),79),((81,82),81),
+              ((84,85),84),((86,87),86),((88,89),88),((90,91),90),((92,93,94),92),((96,97),96),((98,99),98),
+              ((100,101),100),((102,103),102),((104,105),104),((109,110),109),((111,112),111),((116,117),116),
+              ((118,119),118),((120,121),120),((129,130),129),((133,134,135,136),133),((138,139),138),((140,141),140),
+              ((147,148,149),147)]: _base(_a,_b)
+for _sid in range(1,152): BREED_BASE.setdefault(_sid,_sid)
+
+
+def _egg_groups(species_id:int)->frozenset[int]:
+    return EGG_GROUPS.get(int(species_id),frozenset({15}))
+
+
+def _breedable_species(species_id:int)->bool:
+    return 15 not in _egg_groups(species_id)
+
+
+def _breeding_compatible(species_a:int, sex_a:str, species_b:int, sex_b:str)->bool:
+    a,b=int(species_a),int(species_b)
+    if a==b==132:return False
+    if not _breedable_species(a) or not _breedable_species(b):return False
+    if a==132 or b==132:
+        other=b if a==132 else a
+        return other!=132 and _breedable_species(other)
+    if sex_a not in ('M','F') or sex_b not in ('M','F') or sex_a==sex_b:return False
+    return bool((_egg_groups(a)-{13,15}) & (_egg_groups(b)-{13,15}))
+
+
+def _offspring_species(species_a:int, sex_a:str, species_b:int, sex_b:str)->int:
+    a,b=int(species_a),int(species_b)
+    if a==132: parent=b
+    elif b==132: parent=a
+    else: parent=a if sex_a=='F' else b
+    base=int(BREED_BASE.get(parent,parent))
+    # Nidoran puede producir cualquiera de las dos ramas Gen 1.
+    if base in (29,32):return random.choice([29,32])
+    return base
+
+
+def _gift_egg_pool(tier:str)->list[int]:
+    bases=sorted({int(BREED_BASE.get(i,i)) for i in range(1,152) if i not in set(LEGENDARY_IDS)})
+    pool=[i for i in bases if rarity_for(i)==tier and i not in set(LEGENDARY_IDS)]
+    if not pool and tier=='epico':pool=[i for i in bases if rarity_for(i) in ('epico','raro') and i not in set(LEGENDARY_IDS)]
+    return pool or [i for i in bases if i not in set(LEGENDARY_IDS)]
+
+
+def _roll_gift_egg_species(tier:str)->int:
+    return random.choice(_gift_egg_pool(tier))
+
+
+def _egg_progress_text(progress:int)->str:
+    p=max(0,min(EGG_PROGRESS_MAX,int(progress))); pct=p/100
+    full=min(10,int(pct//10)); bar='█'*full+'░'*(10-full)
+    return f'{pct:.1f}%\n{bar}'
+
+
 def ensure_pokemon_tables():
     conn = _get_connection()
     try:
@@ -214,6 +382,7 @@ def ensure_pokemon_tables():
         c.execute("ALTER TABLE pokemon_instances_tb ADD COLUMN IF NOT EXISTS iv_spc SMALLINT")
         c.execute("ALTER TABLE pokemon_instances_tb ADD COLUMN IF NOT EXISTS iv_hp SMALLINT")
         c.execute("ALTER TABLE pokemon_instances_tb ADD COLUMN IF NOT EXISTS held_item_code TEXT")
+        c.execute("ALTER TABLE pokemon_instances_tb ADD COLUMN IF NOT EXISTS sex TEXT")
         c.execute("""
             UPDATE pokemon_instances_tb SET
               iv_atk=COALESCE(iv_atk,FLOOR(random()*16)::int),
@@ -561,6 +730,94 @@ def ensure_pokemon_tables():
             )
         """)
         c.execute("CREATE INDEX IF NOT EXISTS idx_pokemon_legendary_owner ON pokemon_legendary_encounters_tb(owner_id,status,created_at)")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_eggs_tb(
+              egg_id BIGSERIAL PRIMARY KEY,
+              owner_id BIGINT NOT NULL,
+              source TEXT NOT NULL,
+              egg_tier TEXT NOT NULL CHECK(egg_tier IN ('comun','raro','epico')),
+              species_id SMALLINT NOT NULL CHECK(species_id BETWEEN 1 AND 151),
+              progress INT NOT NULL DEFAULT 0 CHECK(progress BETWEEN 0 AND 10000),
+              status TEXT NOT NULL DEFAULT 'active',
+              parent_a BIGINT,
+              parent_b BIGINT,
+              parent_a_species SMALLINT,
+              parent_b_species SMALLINT,
+              shiny BOOLEAN NOT NULL DEFAULT FALSE,
+              iv_atk SMALLINT NOT NULL,
+              iv_def SMALLINT NOT NULL,
+              iv_spd SMALLINT NOT NULL,
+              iv_spc SMALLINT NOT NULL,
+              pokemon_id BIGINT,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              hatched_at TIMESTAMPTZ
+            )
+        """)
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_pokemon_one_live_egg ON pokemon_eggs_tb(owner_id) WHERE status IN ('active','hatching')")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_pokemon_eggs_owner ON pokemon_eggs_tb(owner_id,status,created_at)")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_halloween_wallet_tb(
+              user_id BIGINT PRIMARY KEY,
+              candies INT NOT NULL DEFAULT 0 CHECK(candies>=0),
+              earned_total BIGINT NOT NULL DEFAULT 0,
+              spent_total BIGINT NOT NULL DEFAULT 0,
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_halloween_media_tb(
+              media_key TEXT PRIMARY KEY,
+              media_type TEXT NOT NULL,
+              media_file_id TEXT NOT NULL,
+              updated_by BIGINT NOT NULL,
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_halloween_events_tb(
+              event_id BIGSERIAL PRIMARY KEY,
+              chat_id BIGINT NOT NULL,
+              thread_id BIGINT NOT NULL DEFAULT 0,
+              event_kind TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active',
+              message_id BIGINT,
+              claimed_by BIGINT,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW()+INTERVAL '30 minutes'),
+              finished_at TIMESTAMPTZ
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_halloween_events_active ON pokemon_halloween_events_tb(chat_id,thread_id,status,created_at)")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_egg_media_tb(
+              egg_key TEXT PRIMARY KEY,
+              media_type TEXT NOT NULL,
+              media_file_id TEXT NOT NULL,
+              updated_by BIGINT NOT NULL,
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_egg_events_tb(
+              event_id BIGSERIAL PRIMARY KEY,
+              chat_id BIGINT NOT NULL,
+              thread_id BIGINT NOT NULL DEFAULT 0,
+              event_date DATE NOT NULL,
+              egg_tier TEXT NOT NULL,
+              species_id SMALLINT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active',
+              message_id BIGINT,
+              claimed_by BIGINT,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW()+INTERVAL '1 hour'),
+              finished_at TIMESTAMPTZ,
+              UNIQUE(chat_id,thread_id,event_date)
+            )
+        """)
+        # Asigna sexo una sola vez a ejemplares anteriores. Después queda persistido.
+        c.execute("SELECT pokemon_id,species_id FROM pokemon_instances_tb WHERE sex IS NULL")
+        for _pid,_sid in c.fetchall():
+            c.execute("UPDATE pokemon_instances_tb SET sex=%s WHERE pokemon_id=%s",(_roll_sex(int(_sid)),int(_pid)))
         _pokemon_season_rollover_cursor(c)
         conn.commit()
     except Exception as e:
@@ -861,7 +1118,8 @@ def _pokemon_label(row)->str:
     base = NAMES.get(species, 'Pokémon')
     shown = f'{nickname} ({base})' if nickname else base
     shiny = bool(row[10]) if len(row) > 10 else False
-    return f"#{species:03d} · {'✨ ' if shiny else ''}{shown} · Nv.{level}"
+    sex = _sex_symbol(row[17]) if len(row) > 17 else ''
+    return f"#{species:03d} · {'✨ ' if shiny else ''}{shown} {sex} · Nv.{level}"
 
 
 def _types_text(species_id:int)->str:
@@ -922,18 +1180,20 @@ def _iv_grade(pct:int)->str:
     return 'Bajo'
 
 
-def grant_pokemon_with_cursor(c, uid:int, species_id:int, source:str='caja', force_shiny:bool=False, force_perfect:bool=False, level_override:int|None=None, shiny_override:bool|None=None)->dict:
+def grant_pokemon_with_cursor(c, uid:int, species_id:int, source:str='caja', force_shiny:bool=False, force_perfect:bool=False, level_override:int|None=None, shiny_override:bool|None=None, ivs_override:dict|None=None, sex_override:str|None=None)->dict:
     species_id = max(1, min(151, int(species_id)))
     level = max(1, min(MAX_LEVEL, int(level_override))) if level_override is not None else _starting_level(species_id)
     moves = available_moves(species_id, level)
     # Shiny es puramente cosmético y MUY raro: 1 entre 4096.
     shiny = bool(shiny_override) if shiny_override is not None else bool(force_shiny or random.randrange(4096) == 0)
-    ivs = _roll_ivs(force_perfect)
+    ivs = dict(ivs_override) if ivs_override else _roll_ivs(force_perfect)
+    if 'hp' not in ivs:ivs['hp']=((int(ivs['atk']) & 1)*8)+((int(ivs['def']) & 1)*4)+((int(ivs['spd']) & 1)*2)+(int(ivs['spc']) & 1)
+    sex = str(sex_override or _roll_sex(species_id))
     c.execute("""
-        INSERT INTO pokemon_instances_tb(owner_id,species_id,level,xp,moves_json,obtained_from,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp)
-        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING pokemon_id
+        INSERT INTO pokemon_instances_tb(owner_id,species_id,level,xp,moves_json,obtained_from,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,sex)
+        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING pokemon_id
     """, (uid, species_id, level, _xp_floor(level), json.dumps(moves, ensure_ascii=False), source, shiny,
-              ivs['atk'],ivs['def'],ivs['spd'],ivs['spc'],ivs['hp']))
+              ivs['atk'],ivs['def'],ivs['spd'],ivs['spc'],ivs['hp'],sex))
     pid = int(c.fetchone()[0])
     c.execute("""
         INSERT INTO pokemon_pokedex_tb(owner_id,species_id,obtained_count)
@@ -950,7 +1210,7 @@ def grant_pokemon_with_cursor(c, uid:int, species_id:int, source:str='caja', for
     return {
         'pokemon_id': pid, 'species_id': species_id, 'name': NAMES[species_id],
         'level': level, 'rarity': rarity_for(species_id), 'moves': moves, 'shiny': shiny,
-        'iv_percent': _iv_percent(ivs), 'iv_grade': _iv_grade(_iv_percent(ivs)),
+        'iv_percent': _iv_percent(ivs), 'iv_grade': _iv_grade(_iv_percent(ivs)), 'sex': sex,
     }
 
 
@@ -1150,7 +1410,7 @@ def _get_owned(uid:int, limit:int=200):
     conn = _get_connection()
     try:
         c = conn.cursor()
-        c.execute("""SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code
+        c.execute("""SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code,sex
                      FROM pokemon_instances_tb WHERE owner_id=%s ORDER BY pokemon_id LIMIT %s""", (uid,limit))
         return c.fetchall()
     finally:
@@ -1161,7 +1421,7 @@ def _get_instance(uid:int, pid:int):
     conn = _get_connection()
     try:
         c = conn.cursor()
-        c.execute("""SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code
+        c.execute("""SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code,sex
                      FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s""", (uid,pid))
         return c.fetchone()
     finally:
@@ -1235,7 +1495,7 @@ def _team_rows(uid:int):
         out=[]
         for pid in team:
             if pid is None: out.append(None); continue
-            c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); out.append(c.fetchone())
+            c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code,sex FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); out.append(c.fetchone())
         conn.commit(); return out
     except Exception:
         conn.rollback(); return [None,None,None,None]
@@ -1280,7 +1540,8 @@ def _public_team_text(uid:int, display_name:str)->str:
         shown=f'{nickname} ({base})' if nickname else base
         shiny='✨ ' if bool(r[10]) else ''
         star='⭐ ' if principal==pid else ''
-        lines.append(f'{i}. {star}{shiny}#{species:03d} {shown} · Nv.{level}')
+        sex=_sex_symbol(r[17]) if len(r)>17 else ''
+        lines.append(f'{i}. {star}{shiny}#{species:03d} {shown} {sex} · Nv.{level}')
         lines.append(f'   {_types_text(species)}')
         held=r[16] if len(r)>16 else None
         if held in HELD_ITEMS:
@@ -1402,7 +1663,7 @@ async def _send_brag(context, uid:int, pid:int, target:dict):
     principal_line='⭐ PRINCIPAL\n' if principal else ''
     caption=(f"✨ POKÉMON DE {owner}\n"
              f"{principal_line}"
-             f"{rarity_emoji(rarity_for(species))} #{species:03d} {'✨ SHINY · ' if shiny else ''}{title}\n"
+             f"{rarity_emoji(rarity_for(species))} #{species:03d} {'✨ SHINY · ' if shiny else ''}{title} {_sex_symbol(row[17]) if len(row)>17 else ''}\n"
              f"{NAMES[species]} · Nv.{level}\n"
              f"{_types_text(species)}\n"
              f"🧬 IV: {ivpct}% · {_iv_grade(ivpct)}\n"
@@ -1444,7 +1705,7 @@ def _team_for_battle_cursor(c,uid:int,mode:int):
     if len(slots)<mode or any(x is None for x in slots):return None
     mons=[]
     for pid in slots:
-        c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); r=c.fetchone()
+        c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code,sex FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); r=c.fetchone()
         if not r:return None
         mons.append(_battle_mon(r))
     return mons
@@ -1994,6 +2255,10 @@ def _finish_training_cursor(c,bid:int,state:dict)->dict:
     if used<TRAINING_DAILY_LIMIT:
         c.execute("UPDATE pokemon_training_daily_tb SET completed=completed+1,updated_at=NOW() WHERE user_id=%s AND training_date=%s",(uid,day))
         used+=1
+    # Halloween: solo PvE y solo por rivales realmente debilitados. PvP nunca genera dulces.
+    enemy=state.get('players',{}).get(str(TRAINING_BOT_ID),{})
+    defeated_species=[int(m.get('species',0)) for m in enemy.get('mons',[]) if int(m.get('hp',0))<=0]
+    halloween_candies=_halloween_award_species_cursor(c,uid,defeated_species)
     result='win' if won else 'loss'
     c.execute("""UPDATE pokemon_training_sessions_tb SET status='finished',result=%s,xp_per_pokemon=%s,pipesos_reward=%s,
                  held_item_drop=%s,finished_at=NOW() WHERE training_id=%s AND status='active'""",
@@ -2001,7 +2266,8 @@ def _finish_training_cursor(c,bid:int,state:dict)->dict:
     c.execute("UPDATE pokemon_battles_tb SET status='finished',winner_id=%s,state_json=%s,finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s AND status='active'",
               (int(state['winner']),json.dumps(state,ensure_ascii=False),bid))
     return {'training':True,'duplicate':False,'winner':int(state['winner']),'loser':int(state['loser']),'won':won,
-            'xp':xp_amount,'xp_lines':xp_lines,'notes':notes,'pipesos':reward,'used':used,'held_drop':held_drop,'avg':avg}
+            'xp':xp_amount,'xp_lines':xp_lines,'notes':notes,'pipesos':reward,'used':used,'held_drop':held_drop,'avg':avg,
+            'halloween_candies':halloween_candies}
 
 
 def _training_result_lines(final:dict)->list[str]:
@@ -2012,6 +2278,8 @@ def _training_result_lines(final:dict)->list[str]:
     if final.get('held_drop'):
         code=final['held_drop']; x=HELD_ITEMS.get(code)
         if x:lines.append(f"🎁 Encontraste: {x['emoji']} {x['name']}")
+    if int(final.get('halloween_candies',0))>0:
+        lines.append(f"🎃🍬 +{int(final['halloween_candies'])} Dulces Halloween")
     lines += final.get('notes',[])[:6]
     lines.append(f"Entrenamientos de hoy: {int(final.get('used',0))}/{TRAINING_DAILY_LIMIT}")
     return lines
@@ -2425,7 +2693,7 @@ async def poketest_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
         c=conn.cursor(); data=grant_pokemon_with_cursor(c,update.effective_user.id,sid,'prueba_admin',force_shiny=force_shiny,force_perfect=force_perfect); conn.commit()
     except Exception as e:conn.rollback(); return await update.effective_message.reply_text(f'Error de prueba: {e}')
     finally:_put_connection(conn)
-    await update.effective_message.reply_text(f"🧪 Te di #{sid:03d} {'✨ SHINY ' if data.get('shiny') else ''}{NAMES[sid]} Nv.{data['level']} · IV {data.get('iv_percent',0)}% {data.get('iv_grade','')} para probar. No costó PiPesos.")
+    await update.effective_message.reply_text(f"🧪 Te di #{sid:03d} {'✨ SHINY ' if data.get('shiny') else ''}{NAMES[sid]} {_sex_symbol(data.get('sex'))} Nv.{data['level']} · IV {data.get('iv_percent',0)}% {data.get('iv_grade','')} para probar. No costó PiPesos.")
 
 
 def _candy_total(uid:int)->int:
@@ -2688,6 +2956,686 @@ async def pokemonsalvaje_command(update:Update, context:ContextTypes.DEFAULT_TYP
 
 
 
+# ==================== GUARDERÍA / HUEVOS ====================
+def _active_egg_cursor(c,uid:int,for_update:bool=False):
+    sql=("SELECT egg_id,owner_id,source,egg_tier,species_id,progress,status,parent_a,parent_b,parent_a_species,parent_b_species,shiny,iv_atk,iv_def,iv_spd,iv_spc,pokemon_id,created_at "
+         "FROM pokemon_eggs_tb WHERE owner_id=%s AND status IN ('active','hatching') ORDER BY egg_id DESC LIMIT 1")
+    if for_update:sql += ' FOR UPDATE'
+    c.execute(sql,(int(uid),)); return c.fetchone()
+
+
+def _egg_media_cursor(c,key:str):
+    c.execute("SELECT media_type,media_file_id FROM pokemon_egg_media_tb WHERE egg_key=%s",(str(key),)); r=c.fetchone()
+    return (str(r[0]),str(r[1])) if r else (None,None)
+
+
+def _egg_tier_label(tier:str)->str:
+    d=EGG_TIERS.get(str(tier),EGG_TIERS['comun']); return f"{d['emoji']} {d['name']}"
+
+
+def _egg_display_label(row)->str:
+    if not row:return '🥚 Huevo Pokémon'
+    source=str(row[2]); tier=str(row[3])
+    if source.startswith('halloween'):return '🎃🥚 Huevo Maldito'
+    return _egg_tier_label(tier)
+
+
+def _egg_media_key_for_row(row)->str:
+    if row and str(row[2]).startswith('halloween'):return 'cursed_egg'
+    return str(row[3]) if row else 'comun'
+
+
+def _egg_ready_markup(row):
+    if not row:return None
+    if int(row[5])>=EGG_PROGRESS_MAX and str(row[6])=='hatching':
+        return InlineKeyboardMarkup([[InlineKeyboardButton('🥚 Romper huevo',callback_data=f'pk:egghatch:{int(row[0])}')]])
+    return None
+
+
+def _egg_row_text(row, reveal:bool=False)->str:
+    if not row:return '🥚 No tienes un huevo activo.'
+    egg_id,_,source,tier,species,progress,status,*_=row
+    lines=[f"{_egg_display_label(row)} · #{int(egg_id)}",'',f"📈 Progreso: {_egg_progress_text(int(progress))}"]
+    if int(progress)<EGG_PROGRESS_MAX:
+        lines.append('💬 Cada mensaje tuyo en el grupo suma +0.5%.')
+    else:
+        lines += ['', '✨ ¡El huevo está listo!', '🥚 Pulsa «Romper huevo» para comenzar la eclosión.']
+    if source=='crianza':lines.append('💕 Origen: Crianza Pokémon')
+    elif source=='evento':lines.append('🎉 Origen: Huevo encontrado en el evento diario')
+    elif source=='regalo':lines.append('🎁 Origen: Regalo')
+    elif source=='admin':lines.append('🎁 Origen: Regalo especial')
+    elif str(source).startswith('halloween'):lines.append('🎃 Origen: Evento Halloween 2026')
+    if reveal:lines.append(f"🔎 Contenido: #{int(species):03d} {NAMES[int(species)]}")
+    else:lines.append('❓ El Pokémon de dentro seguirá siendo un misterio hasta eclosionar.')
+    return '\n'.join(lines)
+
+
+def _inherit_ivs(row_a,row_b)->dict:
+    # Índices del selector completo: atk/def/spd/spc = 11/12/13/14.
+    parents=[row_a,row_b]; inherited=set(random.sample(['atk','def','spd','spc'],2)); out={}
+    idx={'atk':11,'def':12,'spd':13,'spc':14}
+    for k in ('atk','def','spd','spc'):
+        if k in inherited:
+            pr=random.choice(parents); out[k]=int(pr[idx[k]] if pr[idx[k]] is not None else random.randint(0,15))
+        else:out[k]=random.randint(0,15)
+    out['hp']=((out['atk']&1)*8)+((out['def']&1)*4)+((out['spd']&1)*2)+(out['spc']&1)
+    return out
+
+
+def _egg_shiny_roll(parent_a=None,parent_b=None)->bool:
+    count=sum(1 for r in (parent_a,parent_b) if r is not None and len(r)>10 and bool(r[10]))
+    denom=4096 if count==0 else 2048 if count==1 else 1024
+    return random.randrange(denom)==0
+
+
+def _create_egg_cursor(c,uid:int,species:int,tier:str,source:str,parent_a=None,parent_b=None,parent_a_species=None,parent_b_species=None,ivs:dict|None=None,shiny:bool|None=None)->int:
+    if _active_egg_cursor(c,uid,True):raise ValueError('active_egg')
+    ivs=ivs or _roll_ivs(False); shiny=bool(_egg_shiny_roll() if shiny is None else shiny)
+    c.execute("""INSERT INTO pokemon_eggs_tb(owner_id,source,egg_tier,species_id,parent_a,parent_b,parent_a_species,parent_b_species,shiny,iv_atk,iv_def,iv_spd,iv_spc)
+                 VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING egg_id""",
+              (uid,source,tier,int(species),parent_a,parent_b,parent_a_species,parent_b_species,shiny,ivs['atk'],ivs['def'],ivs['spd'],ivs['spc']))
+    return int(c.fetchone()[0])
+
+
+def _breed_first_markup(uid:int,page:int=0):
+    mons=_get_owned(uid); valid=[r for r in mons if _breedable_species(int(r[1])) and (len(r)>17 and str(r[17]) in ('M','F','N'))]
+    per=8; pages=max(1,math.ceil(len(valid)/per)); page=max(0,min(int(page),pages-1)); chunk=valid[page*per:(page+1)*per]
+    rows=[]
+    for r in chunk:
+        rows.append([InlineKeyboardButton(f"{_sex_symbol(r[17])} {r[2] or NAMES[int(r[1])]} · Nv.{int(r[3])}",callback_data=f'pk:breed1:{int(r[0])}:{page}')])
+    nav=[]
+    if page>0:nav.append(InlineKeyboardButton('⬅️',callback_data=f'pk:breedpage:{page-1}'))
+    nav.append(InlineKeyboardButton(f'{page+1}/{pages}',callback_data='pk:noop'))
+    if page<pages-1:nav.append(InlineKeyboardButton('➡️',callback_data=f'pk:breedpage:{page+1}'))
+    if nav:rows.append(nav)
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
+def _breed_second_markup(uid:int,first_pid:int):
+    first=_get_instance(uid,first_pid)
+    if not first:return None
+    rows=[]
+    for r in _get_owned(uid):
+        if int(r[0])==int(first_pid):continue
+        if len(r)<=17:continue
+        if _breeding_compatible(int(first[1]),str(first[17]),int(r[1]),str(r[17])):
+            rows.append([InlineKeyboardButton(f"{_sex_symbol(r[17])} {r[2] or NAMES[int(r[1])]} · Nv.{int(r[3])}",callback_data=f'pk:breed2:{int(first_pid)}:{int(r[0])}')])
+            if len(rows)>=20:break
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
+async def crianzapokemon_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id; conn=_get_connection(); active=None
+    try:c=conn.cursor(); active=_active_egg_cursor(c,uid)
+    finally:_put_connection(conn)
+    if active:
+        text='🥚 Ya tienes un huevo activo. Debes eclosionarlo o regalarlo antes de criar otro.\n\n'+_egg_row_text(active)
+        try:await context.bot.send_message(uid,text,reply_markup=_egg_ready_markup(active))
+        except Exception:return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
+    else:
+        kb=_breed_first_markup(uid,0)
+        text=(f"💕 CRIANZA POKÉMON\n\nElige el primer Pokémon. PiBot respetará sexo y Grupos Huevo. Ditto tiene su compatibilidad especial.\n"
+              f"💰 Formar un huevo cuesta {BREEDING_COST_PIPESOS:,} PiPesos.\n🥚 Solo puedes tener 1 huevo activo.")
+        if kb is None:text += '\n\n⚠️ No tienes Pokémon aptos para iniciar una crianza.'
+        try:await context.bot.send_message(uid,text,reply_markup=kb)
+        except Exception:return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
+    if update.effective_chat.type!='private':await update.effective_message.reply_text('📩 Te mandé la Guardería Pokémon por privado.')
+
+
+async def guarderiapokemon_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id; conn=_get_connection(); row=None
+    try:c=conn.cursor(); row=_active_egg_cursor(c,uid)
+    finally:_put_connection(conn)
+    text='🏡 GUARDERÍA POKÉMON\n\n'+(_egg_row_text(row) if row else 'No tienes un huevo activo. Usa /crianzapokemon para formar uno.')
+    try:await context.bot.send_message(uid,text,reply_markup=_egg_ready_markup(row))
+    except Exception:return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
+    if update.effective_chat.type!='private':await update.effective_message.reply_text('📩 Te mandé el estado de la guardería por privado.')
+
+
+async def huevos_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id; conn=_get_connection(); row=None; media=(None,None)
+    try:
+        c=conn.cursor(); row=_active_egg_cursor(c,uid)
+        if row:
+            key=_egg_media_key_for_row(row)
+            media=_halloween_media_cursor(c,key) if key=='cursed_egg' else _egg_media_cursor(c,key)
+    finally:_put_connection(conn)
+    text='🥚 TU HUEVO POKÉMON\n\n'+_egg_row_text(row); markup=_egg_ready_markup(row)
+    try:
+        if row and media[0]=='animation' and media[1]:await context.bot.send_animation(uid,animation=media[1],caption=text,reply_markup=markup)
+        elif row and media[0]=='photo' and media[1]:await context.bot.send_photo(uid,photo=media[1],caption=text,reply_markup=markup)
+        else:await context.bot.send_message(uid,text,reply_markup=markup)
+    except Exception:return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
+    if update.effective_chat.type!='private':await update.effective_message.reply_text('📩 Te mandé tu huevo por privado.')
+
+
+async def regalarhuevo_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id; target=_resolve_target(update,context)
+    if target is None:return await update.effective_message.reply_text('🎁 Responde al mensaje de la persona con /regalarhuevo.')
+    if int(target)==int(uid):return await update.effective_message.reply_text('😂 No puedes regalarte tu propio huevo.')
+    conn=_get_connection(); egg=None; name=None; target_has=False
+    try:
+        c=conn.cursor(); egg=_active_egg_cursor(c,uid); target_has=bool(_active_egg_cursor(c,target)); name=_display_name_cursor(c,target)
+    finally:_put_connection(conn)
+    if not egg:return await update.effective_message.reply_text('🥚 No tienes un huevo activo para regalar.')
+    if str(egg[6])!='active':return await update.effective_message.reply_text('🥚 Ese huevo ya está listo para eclosionar. Rómpelo antes de intentar regalar otro.')
+    if target_has:return await update.effective_message.reply_text(f'🥚 {name} ya tiene un huevo activo.')
+    kb=InlineKeyboardMarkup([[InlineKeyboardButton('🎁 Confirmar regalo',callback_data=f'pk:egggift:{int(egg[0])}:{int(target)}')],[InlineKeyboardButton('❌ Cancelar',callback_data='pk:egggiftcancel')]])
+    await update.effective_message.reply_text(f"🎁 ¿Regalar tu {_egg_display_label(egg)} a {name}?\n\nEl progreso actual ({int(egg[5])/100:.1f}%) se conserva.",reply_markup=kb)
+
+
+async def darhuevo_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    try:
+        if not is_botmaster(update.effective_user.id):return await update.effective_message.reply_text('Solo BotMaster puede dar huevos especiales.')
+    except Exception:return await update.effective_message.reply_text('Solo BotMaster puede dar huevos especiales.')
+    target=_resolve_target(update,context)
+    if target is None:return await update.effective_message.reply_text('Responde al mensaje de alguien con /darhuevo [comun|raro|epico|halloween].')
+    raw=(context.args[0].lower() if context.args else 'comun')
+    cursed=raw in ('halloween','maldito','maldita')
+    tier=raw if raw in EGG_TIERS else 'comun'
+    conn=_get_connection(); eid=None; name=None
+    try:
+        c=conn.cursor(); name=_display_name_cursor(c,target)
+        if _active_egg_cursor(c,target):conn.rollback(); return await update.effective_message.reply_text(f'🥚 {name} ya tiene un huevo activo.')
+        if cursed:
+            eid=_create_cursed_egg_cursor(c,target,'halloween_admin')
+        else:
+            species=_roll_gift_egg_species(tier); eid=_create_egg_cursor(c,target,species,tier,'admin')
+        conn.commit()
+    except Exception as e:conn.rollback(); print('[PK give egg]',type(e).__name__,e); return await update.effective_message.reply_text('No pude entregar el huevo.')
+    finally:_put_connection(conn)
+    label='🎃🥚 Huevo Maldito' if cursed else _egg_tier_label(tier)
+    await update.effective_message.reply_text(f'🎁 {name} recibió {label} #{eid}. El Pokémon interior es secreto hasta eclosionar.')
+
+
+def _egg_media_markup():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton('🥚 Huevo Común',callback_data='pk:eggmediapick:comun'),InlineKeyboardButton('🔵 Huevo Raro',callback_data='pk:eggmediapick:raro')],
+        [InlineKeyboardButton('🟣 Huevo Épico',callback_data='pk:eggmediapick:epico')],
+        [InlineKeyboardButton('💥 Animación eclosión',callback_data='pk:eggmediapick:hatching')],
+    ])
+
+
+async def imageneshuevo_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id
+    try:
+        if not is_botmaster(uid):return await update.effective_message.reply_text('Solo BotMaster puede configurar imágenes de huevos.')
+    except Exception:return await update.effective_message.reply_text('Solo BotMaster puede configurar imágenes de huevos.')
+    try:
+        await context.bot.send_message(uid,'🥚 MULTIMEDIA DE HUEVOS\n\nElige qué imagen/GIF quieres configurar. “Animación eclosión” es el GIF que se muestra justo antes de revelar el Pokémon.',reply_markup=_egg_media_markup())
+        if update.effective_chat.type!='private':await update.effective_message.reply_text('📩 Te mandé el panel de huevos por privado.')
+    except Exception:await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
+
+
+async def _send_egg_event_message(context,event_id:int)->bool:
+    conn=_get_connection(); row=None; media=(None,None)
+    try:
+        c=conn.cursor(); c.execute("SELECT chat_id,thread_id,egg_tier,status FROM pokemon_egg_events_tb WHERE event_id=%s",(event_id,)); row=c.fetchone()
+        if row:media=_egg_media_cursor(c,str(row[2]))
+    finally:_put_connection(conn)
+    if not row or row[3]!='active':return False
+    chat_id,thread0,tier=int(row[0]),int(row[1]),str(row[2]); thread_id=None if thread0==0 else thread0
+    text=(f"🥚 ¡OH! ¡HAS ENCONTRADO UN HUEVO!\n\n{_egg_tier_label(tier)} apareció en el camino.\n"
+          "❓ Nadie sabe qué Pokémon hay dentro.\n🚫 Los huevos diarios nunca contienen legendarios.\n"
+          "💬 Cuando alguien lo recoja, sus propios mensajes harán subir el porcentaje hasta 100%.\n\n⏳ El primero que pueda recogerlo se lo queda. Dura 1 hora.")
+    kb=InlineKeyboardMarkup([[InlineKeyboardButton('🥚 Recoger huevo',callback_data=f'pk:eggclaim:{event_id}')]])
+    try:
+        mt,fid=media
+        if mt=='animation' and fid:msg=await context.bot.send_animation(chat_id=chat_id,animation=fid,caption=text,message_thread_id=thread_id,reply_markup=kb)
+        elif mt=='photo' and fid:msg=await context.bot.send_photo(chat_id=chat_id,photo=fid,caption=text,message_thread_id=thread_id,reply_markup=kb)
+        else:msg=await context.bot.send_message(chat_id=chat_id,text=text,message_thread_id=thread_id,reply_markup=kb)
+    except Exception as e:
+        print('[PK egg event send]',type(e).__name__,e)
+        conn=_get_connection()
+        try:c=conn.cursor(); c.execute("DELETE FROM pokemon_egg_events_tb WHERE event_id=%s AND status='active'",(event_id,)); conn.commit()
+        except Exception:conn.rollback()
+        finally:_put_connection(conn)
+        return False
+    conn=_get_connection()
+    try:c=conn.cursor(); c.execute("UPDATE pokemon_egg_events_tb SET message_id=%s WHERE event_id=%s",(msg.message_id,event_id)); conn.commit()
+    except Exception:conn.rollback()
+    finally:_put_connection(conn)
+    try:
+        if context.job_queue:context.job_queue.run_once(_expire_egg_event,EGG_EVENT_LIFETIME_SECONDS,data={'event_id':event_id},name=f'pk_egg_expire:{event_id}')
+    except Exception:pass
+    return True
+
+
+async def _spawn_daily_egg_event(context:ContextTypes.DEFAULT_TYPE,chat_id:int,thread_id:int|None,manual:bool=False)->bool:
+    conn=_get_connection(); eid=None
+    try:
+        c=conn.cursor(); today=datetime.now(POKEMON_TZ).date(); t0=int(thread_id or 0)
+        if not manual:
+            c.execute("SELECT event_id FROM pokemon_egg_events_tb WHERE chat_id=%s AND thread_id=%s AND event_date=%s",(chat_id,t0,today))
+            if c.fetchone():conn.rollback(); return False
+        else:
+            # Los forzados usan una fecha virtual negativa mediante borrado del bloqueo diario activo del mismo día.
+            c.execute("UPDATE pokemon_egg_events_tb SET status='expired',finished_at=NOW() WHERE chat_id=%s AND thread_id=%s AND status='active'",(chat_id,t0))
+            c.execute("DELETE FROM pokemon_egg_events_tb WHERE chat_id=%s AND thread_id=%s AND event_date=%s",(chat_id,t0,today))
+        tiers=list(EGG_EVENT_TIER_WEIGHTS); weights=list(EGG_EVENT_TIER_WEIGHTS.values()); tier=random.choices(tiers,weights=weights,k=1)[0]
+        species=_roll_gift_egg_species(tier)
+        c.execute("INSERT INTO pokemon_egg_events_tb(chat_id,thread_id,event_date,egg_tier,species_id) VALUES(%s,%s,%s,%s,%s) RETURNING event_id",(chat_id,t0,today,tier,species)); eid=int(c.fetchone()[0]); conn.commit()
+    except Exception as e:conn.rollback(); print('[PK egg event db]',type(e).__name__,e); return False
+    finally:_put_connection(conn)
+    return await _send_egg_event_message(context,eid)
+
+
+async def _expire_egg_event(context:ContextTypes.DEFAULT_TYPE):
+    eid=int((getattr(context.job,'data',None) or {}).get('event_id') or 0); row=None; media=(None,None)
+    if not eid:return
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT chat_id,thread_id,egg_tier,status,message_id FROM pokemon_egg_events_tb WHERE event_id=%s FOR UPDATE",(eid,)); row=c.fetchone()
+        if not row or row[3]!='active':conn.rollback(); return
+        media=_egg_media_cursor(c,str(row[2])); c.execute("UPDATE pokemon_egg_events_tb SET status='expired',finished_at=NOW() WHERE event_id=%s",(eid,)); conn.commit()
+    except Exception:conn.rollback(); return
+    finally:_put_connection(conn)
+    text=f"⌛ Nadie recogió {_egg_tier_label(str(row[2]))}. El huevo desapareció."
+    try:
+        if media[0] in ('photo','animation'):await context.bot.edit_message_caption(chat_id=int(row[0]),message_id=int(row[4]),caption=text,reply_markup=None)
+        else:await context.bot.edit_message_text(chat_id=int(row[0]),message_id=int(row[4]),text=text,reply_markup=None)
+    except Exception:pass
+
+
+async def pokemon_egg_event_job(context:ContextTypes.DEFAULT_TYPE):
+    for community in COMUNIDADES:
+        try:
+            chat_id=int(community.get('id_comunidad')); thread_id=_games_topic(chat_id)
+            if thread_id is not None:await _spawn_daily_egg_event(context,chat_id,thread_id,False)
+        except Exception as e:print('[PK egg daily]',type(e).__name__,e)
+
+
+async def huevoahora_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    try:
+        if not is_botmaster(update.effective_user.id):return await update.effective_message.reply_text('Solo BotMaster puede forzar el evento de huevo.')
+    except Exception:return await update.effective_message.reply_text('Solo BotMaster puede forzar el evento de huevo.')
+    if not _is_games_topic(update):return await update.effective_message.reply_text('Usa /huevoahora en Juegos y Casino.')
+    ok=await _spawn_daily_egg_event(context,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),True)
+    if not ok:await update.effective_message.reply_text('No pude crear el evento de huevo.')
+
+
+async def _send_hatch_media(context:ContextTypes.DEFAULT_TYPE,chat_id:int,thread_id:int|None,source:str,caption:str):
+    conn=_get_connection(); media=(None,None)
+    try:
+        c=conn.cursor()
+        media=_halloween_media_cursor(c,'cursed_hatch') if str(source).startswith('halloween') else _egg_media_cursor(c,'hatching')
+    finally:_put_connection(conn)
+    if media[0]=='animation' and media[1]:
+        return await context.bot.send_animation(chat_id=chat_id,animation=media[1],caption=caption,message_thread_id=thread_id)
+    if media[0]=='photo' and media[1]:
+        return await context.bot.send_photo(chat_id=chat_id,photo=media[1],caption=caption,message_thread_id=thread_id)
+    return await context.bot.send_message(chat_id=chat_id,text=caption,message_thread_id=thread_id)
+
+
+async def _hatch_egg(context:ContextTypes.DEFAULT_TYPE,egg_id:int,chat_id:int,thread_id:int|None,display_name:str):
+    # La concesión se confirma en BD antes de la animación para que un doble toque nunca duplique la cría.
+    conn=_get_connection(); result=None; source=''; uid=None
+    try:
+        c=conn.cursor(); c.execute("SELECT owner_id,source,egg_tier,species_id,status,progress,shiny,iv_atk,iv_def,iv_spd,iv_spc FROM pokemon_eggs_tb WHERE egg_id=%s FOR UPDATE",(egg_id,)); r=c.fetchone()
+        if not r or str(r[4])!='hatching' or int(r[5])<EGG_PROGRESS_MAX:conn.rollback(); return None
+        uid,source,species=int(r[0]),str(r[1]),int(r[3]); shiny=bool(r[6]); ivs={'atk':int(r[7]),'def':int(r[8]),'spd':int(r[9]),'spc':int(r[10])}; ivs['hp']=((ivs['atk']&1)*8)+((ivs['def']&1)*4)+((ivs['spd']&1)*2)+(ivs['spc']&1)
+        result=grant_pokemon_with_cursor(c,uid,species,source='huevo_'+source,level_override=1,shiny_override=shiny,ivs_override=ivs)
+        c.execute("UPDATE pokemon_eggs_tb SET status='hatched',pokemon_id=%s,progress=10000,hatched_at=NOW() WHERE egg_id=%s",(int(result['pokemon_id']),egg_id)); conn.commit()
+    except Exception as e:
+        conn.rollback(); print('[PK egg hatch]',type(e).__name__,e); return None
+    finally:_put_connection(conn)
+
+    pre=(f"🥚 ¡EL HUEVO DE {display_name} ESTÁ REACCIONANDO!\n\n"
+         "✨ El huevo empieza a moverse...\n💥 crack... crack...")
+    try:await _send_hatch_media(context,chat_id,thread_id,source,pre)
+    except Exception:pass
+    await asyncio.sleep(2.8)
+    sex=_sex_symbol(result.get('sex')); shiny_line='✨ ¡SHINY!\n' if result.get('shiny') else ''
+    text=(f"🎉 ¡HA NACIDO UN POKÉMON!\n\n{shiny_line}{rarity_emoji(rarity_for(result['species_id']))} #{result['species_id']:03d} {result['name']} {sex} · Nv.1\n"
+          f"{_types_text(result['species_id'])}\n🧬 IV: {result['iv_percent']}% · {result['iv_grade']}\n🎮 Ejemplar #{result['pokemon_id']}")
+    try:await context.bot.send_message(chat_id=chat_id,text=text,message_thread_id=thread_id)
+    except Exception:pass
+    if uid is not None and int(chat_id)!=int(uid):
+        try:await context.bot.send_message(int(uid),text)
+        except Exception:pass
+    return result
+
+
+async def pokemon_egg_activity(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user or update.effective_user.is_bot or not update.effective_message:return
+    if update.effective_chat.type=='private':return
+    try:
+        community_ids={int(x.get('id_comunidad')) for x in COMUNIDADES if x.get('id_comunidad') is not None}
+    except Exception:community_ids=set()
+    if community_ids and int(update.effective_chat.id) not in community_ids:return
+    if update.effective_message.text and update.effective_message.text.lstrip().startswith('/'):return
+    uid=int(update.effective_user.id); egg_id=None; reached=False; row_after=None
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); row=_active_egg_cursor(c,uid,True)
+        if not row or str(row[6])!='active':conn.rollback(); return
+        egg_id=int(row[0]); newp=min(EGG_PROGRESS_MAX,int(row[5])+EGG_PROGRESS_PER_MESSAGE)
+        if newp>=EGG_PROGRESS_MAX:
+            c.execute("UPDATE pokemon_eggs_tb SET progress=10000,status='hatching' WHERE egg_id=%s",(egg_id,)); reached=True
+        else:c.execute("UPDATE pokemon_eggs_tb SET progress=%s WHERE egg_id=%s",(newp,egg_id))
+        conn.commit()
+        if reached:
+            c=conn.cursor(); row_after=_active_egg_cursor(c,uid)
+    except Exception as e:conn.rollback(); print('[PK egg progress]',type(e).__name__,e); return
+    finally:_put_connection(conn)
+    if reached and row_after:
+        name=(update.effective_user.full_name or update.effective_user.first_name or update.effective_user.username or f'Entrenador {uid}').strip()
+        text=(f"🥚 ¡EL HUEVO DE {name} ESTÁ LISTO!\n\n"
+              f"{_egg_display_label(row_after)} llegó al 100%.\n✨ Ya puede comenzar la eclosión.")
+        kb=_egg_ready_markup(row_after)
+        try:await context.bot.send_message(update.effective_chat.id,text,message_thread_id=getattr(update.effective_message,'message_thread_id',None),reply_markup=kb)
+        except Exception:pass
+        try:await context.bot.send_message(uid,'🥚 ¡Tu huevo llegó al 100%!\n\nPulsa el botón cuando quieras romperlo.',reply_markup=kb)
+        except Exception:pass
+
+
+# ==================== EVENTO HALLOWEEN 2026 ====================
+def _halloween_now()->datetime:
+    return datetime.now(POKEMON_TZ)
+
+
+def _halloween_active(now:datetime|None=None)->bool:
+    now=now or _halloween_now()
+    return HALLOWEEN_START <= now <= HALLOWEEN_END
+
+
+def _halloween_countdown_text(now:datetime|None=None)->str:
+    now=now or _halloween_now()
+    if now>HALLOWEEN_END:return 'Evento terminado'
+    if now<HALLOWEEN_START:
+        delta=HALLOWEEN_START-now; prefix='Comienza en'
+    else:
+        delta=HALLOWEEN_END-now; prefix='Termina en'
+    total=max(0,int(delta.total_seconds())); days,h=divmod(total,86400); hours,m=divmod(h,3600); mins=m//60
+    return f'{prefix}: {days} días · {hours} h · {mins} min'
+
+
+def _halloween_media_cursor(c,key:str):
+    c.execute("SELECT media_type,media_file_id FROM pokemon_halloween_media_tb WHERE media_key=%s",(str(key),)); r=c.fetchone()
+    return (str(r[0]),str(r[1])) if r else (None,None)
+
+
+def _halloween_wallet_cursor(c,uid:int,lock:bool=False)->int:
+    c.execute("INSERT INTO pokemon_halloween_wallet_tb(user_id) VALUES(%s) ON CONFLICT DO NOTHING",(int(uid),))
+    c.execute("SELECT candies FROM pokemon_halloween_wallet_tb WHERE user_id=%s"+(' FOR UPDATE' if lock else ''),(int(uid),)); r=c.fetchone()
+    return int(r[0]) if r else 0
+
+
+def _halloween_add_candies_cursor(c,uid:int,amount:int)->int:
+    amount=max(0,int(amount)); _halloween_wallet_cursor(c,uid,True)
+    if amount:
+        c.execute("UPDATE pokemon_halloween_wallet_tb SET candies=candies+%s,earned_total=earned_total+%s,updated_at=NOW() WHERE user_id=%s",(amount,amount,int(uid)))
+    c.execute("SELECT candies FROM pokemon_halloween_wallet_tb WHERE user_id=%s",(int(uid),)); return int(c.fetchone()[0])
+
+
+def _halloween_spend_cursor(c,uid:int,amount:int)->bool:
+    amount=max(0,int(amount)); bal=_halloween_wallet_cursor(c,uid,True)
+    if bal<amount:return False
+    c.execute("UPDATE pokemon_halloween_wallet_tb SET candies=candies-%s,spent_total=spent_total+%s,updated_at=NOW() WHERE user_id=%s",(amount,amount,int(uid)))
+    return True
+
+
+def _halloween_drop_amount(species:int)->int:
+    if not _halloween_active():return 0
+    r=rarity_for(int(species))
+    lo,hi={'comun':(0,2),'raro':(1,3),'epico':(2,5),'legendario':(4,8)}.get(r,(0,2))
+    amount=random.randint(lo,hi)
+    if 'Ghost' in TYPES.get(int(species),()):
+        amount += random.randint(2,4)  # los Fantasma siempre son la mejor fuente del evento
+    return max(0,amount)
+
+
+def _halloween_award_species_cursor(c,uid:int,species_ids)->int:
+    if not _halloween_active():return 0
+    total=sum(_halloween_drop_amount(int(s)) for s in species_ids if s)
+    if total>0:_halloween_add_candies_cursor(c,uid,total)
+    return total
+
+
+def _halloween_themed_species()->int:
+    # 70% temático; 30% cualquier familia Gen 1 no legendaria.
+    if random.random()<0.70:return random.choice(HALLOWEEN_THEME_BASES)
+    pool=sorted({int(BREED_BASE.get(i,i)) for i in range(1,152) if i not in set(LEGENDARY_IDS)})
+    return random.choice(pool)
+
+
+def _grant_halloween_box_cursor(c,uid:int)->dict:
+    species=_halloween_themed_species(); shiny=(random.randrange(HALLOWEEN_BOX_SHINY_DENOMINATOR)==0)
+    data=grant_pokemon_with_cursor(c,uid,species,'halloween_box_2026',shiny_override=shiny)
+    return data
+
+
+def _grant_halloween_pikachu_cursor(c,uid:int)->dict:
+    shiny=(random.random()<HALLOWEEN_PIKACHU_SHINY_CHANCE)
+    data=grant_pokemon_with_cursor(c,uid,25,'halloween_2026_pikachu',shiny_override=shiny)
+    media=_halloween_media_cursor(c,'pikachu_shiny' if shiny else 'pikachu_normal')
+    c.execute("UPDATE pokemon_instances_tb SET nickname=%s,media_type=COALESCE(%s,media_type),media_file_id=COALESCE(%s,media_file_id),updated_at=NOW() WHERE pokemon_id=%s AND owner_id=%s",
+              ('Pikachu Halloween',media[0],media[1],int(data['pokemon_id']),int(uid)))
+    data['special_name']='Pikachu Halloween'; return data
+
+
+def _create_cursed_egg_cursor(c,uid:int,source:str='halloween_shop')->int:
+    if _active_egg_cursor(c,uid,True):raise ValueError('active_egg')
+    species=random.choice(HALLOWEEN_THEME_BASES)
+    shiny=(random.randrange(HALLOWEEN_EGG_SHINY_DENOMINATOR)==0)
+    return _create_egg_cursor(c,uid,species,'epico',source,shiny=shiny)
+
+
+def _grant_normal_pibot_box_cursor(c,uid:int,code:str)->dict:
+    # Reutiliza el mismo roll de las cajas normales; solo cambia la moneda de compra a Dulces Halloween.
+    from handlers.pipeso_extras import _roll_box
+    kind,val,label=_roll_box(code,uid); jackpot_win=0; jackpot_after=10000; gif_bonus=False
+    c.execute("INSERT INTO box_jackpot_tb(jackpot_key,amount,purchases) VALUES('main',10000,0) ON CONFLICT DO NOTHING")
+    c.execute("SELECT amount,purchases FROM box_jackpot_tb WHERE jackpot_key='main' FOR UPDATE"); jr=c.fetchone() or (10000,0)
+    pot=int(jr[0])+10000; chance=0.0002 if code=='epic' else 0.0005
+    if random.random()<chance:
+        jackpot_win=pot; c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(jackpot_win,uid))
+        c.execute("UPDATE box_jackpot_tb SET amount=10000,purchases=purchases+1,last_winner_id=%s,last_win_amount=%s,updated_at=NOW() WHERE jackpot_key='main'",(uid,jackpot_win)); jackpot_after=10000
+    else:
+        c.execute("UPDATE box_jackpot_tb SET amount=%s,purchases=purchases+1,updated_at=NOW() WHERE jackpot_key='main'",(pot,)); jackpot_after=pot
+    if kind=='money':c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(int(val),uid))
+    elif kind=='pokemon':
+        pdata=grant_pokemon_with_cursor(c,uid,int(val),'caja_'+code); label += f" · ejemplar #{pdata['pokemon_id']} · Nv.{pdata['level']} · IV {pdata.get('iv_percent',0)}% {pdata.get('iv_grade','')}" + (' · ✨ SHINY' if pdata.get('shiny') else '')
+    elif kind=='pokeitem':grant_item_with_cursor(c,uid,val,1)
+    elif kind=='title':
+        asset_code='box_'+''.join(ch.lower() if ch.isalnum() else '_' for ch in val).strip('_')
+        c.execute("SELECT 1 FROM social_assets_tb WHERE propietario_id=%s AND asset_type='titulo' AND code=%s LIMIT 1",(uid,asset_code))
+        if c.fetchone():c.execute("UPDATE usuarios_tb SET saldo=saldo+2000 WHERE id_user=%s",(uid,)); label+=' · repetido → +2,000 PiPesos'
+        else:c.execute("INSERT INTO social_assets_tb(asset_type,code,nombre,rareza,valor_base,propietario_id,origen) VALUES('titulo',%s,%s,'caja',0,%s,'caja_misteriosa')",(asset_code,val,uid))
+    elif kind=='cosmetic':
+        from handlers.profile_cosmetics import COSMETICS
+        item=COSMETICS.get(val)
+        if not item:c.execute("UPDATE usuarios_tb SET saldo=saldo+2000 WHERE id_user=%s",(uid,)); label+=' · premio sustituido → +2,000 PiPesos'
+        else:
+            cname,ctype,crarity,cprice,cseason=item; c.execute("SELECT 1 FROM profile_cosmetics_tb WHERE owner_id=%s AND code=%s LIMIT 1",(uid,val))
+            if c.fetchone():c.execute("UPDATE usuarios_tb SET saldo=saldo+2000 WHERE id_user=%s",(uid,)); label+=' · repetido → +2,000 PiPesos'
+            else:c.execute("INSERT INTO profile_cosmetics_tb(code,nombre,cosmetic_type,rareza,precio_compra,owner_id,season_key) VALUES(%s,%s,%s,%s,0,%s,%s)",(val,cname,ctype,crarity,uid,cseason))
+    else:
+        c.execute("INSERT INTO user_box_assets_tb(user_id,asset_type,asset_code,asset_name) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING",(uid,kind,val,label))
+        if c.rowcount==0:c.execute("UPDATE usuarios_tb SET saldo=saldo+2000 WHERE id_user=%s",(uid,)); label+=' · repetido → +2,000 PiPesos'
+    gif_chance=0.002 if code=='epic' else 0.008
+    if random.random()<gif_chance:
+        gif_bonus=True; c.execute("""INSERT INTO profile_gif_license_tb(user_id,expires_at) VALUES(%s,NOW()+INTERVAL '10 days')
+            ON CONFLICT(user_id) DO UPDATE SET expires_at=CASE WHEN profile_gif_license_tb.expires_at IS NOT NULL AND profile_gif_license_tb.expires_at>NOW()
+            THEN profile_gif_license_tb.expires_at+INTERVAL '10 days' ELSE NOW()+INTERVAL '10 days' END,updated_at=NOW()""",(uid,))
+    return {'label':label,'jackpot_win':jackpot_win,'jackpot_after':jackpot_after,'gif_bonus':gif_bonus,'code':code}
+
+
+def _halloween_home_markup():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton('🛒 Tienda',callback_data='pk:eventshop'),InlineKeyboardButton('🎁 Recompensas',callback_data='pk:eventrewards')],
+        [InlineKeyboardButton('🥚 Mi huevo',callback_data='pk:eventegg'),InlineKeyboardButton('ℹ️ Cómo funciona',callback_data='pk:eventinfo')],
+    ])
+
+
+def _halloween_shop_markup():
+    rows=[]
+    for code,item in HALLOWEEN_SHOP.items():
+        rows.append([InlineKeyboardButton(f"{item['emoji']} {item['name']} · {item['price']} 🍬",callback_data=f'pk:eventbuy:{code}')])
+    rows.append([InlineKeyboardButton('⬅️ Evento',callback_data='pk:eventhome')]); return InlineKeyboardMarkup(rows)
+
+
+def _halloween_media_markup():
+    rows=[]; keys=list(HALLOWEEN_MEDIA_KEYS)
+    for i in range(0,len(keys),2):rows.append([InlineKeyboardButton(HALLOWEEN_MEDIA_KEYS[k],callback_data=f'pk:eventmediapick:{k}') for k in keys[i:i+2]])
+    return InlineKeyboardMarkup(rows)
+
+
+async def _send_event_home_to_user(context:ContextTypes.DEFAULT_TYPE,uid:int):
+    conn=_get_connection(); candies=0; media=(None,None)
+    try:
+        c=conn.cursor(); candies=_halloween_wallet_cursor(c,uid); media=_halloween_media_cursor(c,'cover')
+    finally:_put_connection(conn)
+    active=_halloween_active(); status=_halloween_countdown_text()
+    text=(f"🎃 EVENTO HALLOWEEN 2026\n\n🍬 Tus Dulces Halloween: {candies}\n👻 Los Pokémon Fantasma sueltan más dulces.\n"
+          f"✨ Caja Pokémon Halloween: Shiny 1/{HALLOWEEN_BOX_SHINY_DENOMINATOR}.\n🎃⚡ Pikachu Halloween: 80% normal · 20% Shiny.\n\n⏳ {status}")
+    if not active:text += '\n\n🔒 La tienda y los drops del evento ya están cerrados. Lo que ganaste sigue siendo tuyo.'
+    markup=_halloween_home_markup()
+    if media[0]=='animation' and media[1]:return await context.bot.send_animation(uid,animation=media[1],caption=text,reply_markup=markup)
+    if media[0]=='photo' and media[1]:return await context.bot.send_photo(uid,photo=media[1],caption=text,reply_markup=markup)
+    return await context.bot.send_message(uid,text,reply_markup=markup)
+
+
+async def evento_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id
+    try:await _send_event_home_to_user(context,uid)
+    except Exception:return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start para usar /evento.')
+    if update.effective_chat.type!='private':await update.effective_message.reply_text('🎃 Te mandé el evento y la tienda por privado.')
+
+
+async def imagenesevento_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id
+    try:
+        if not is_botmaster(uid):return await update.effective_message.reply_text('Solo BotMaster puede configurar imágenes del evento.')
+    except Exception:return await update.effective_message.reply_text('Solo BotMaster puede configurar imágenes del evento.')
+    try:
+        await context.bot.send_message(uid,'🎃 MULTIMEDIA HALLOWEEN 2026\n\nElige qué elemento quieres configurar y luego envíame una foto o GIF.',reply_markup=_halloween_media_markup())
+        if update.effective_chat.type!='private':await update.effective_message.reply_text('📩 Te mandé el panel de Halloween por privado.')
+    except Exception:await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
+
+
+async def _send_halloween_surprise(context:ContextTypes.DEFAULT_TYPE,event_id:int)->bool:
+    conn=_get_connection(); row=None; media=(None,None)
+    try:
+        c=conn.cursor(); c.execute("SELECT chat_id,thread_id,event_kind,status FROM pokemon_halloween_events_tb WHERE event_id=%s",(event_id,)); row=c.fetchone(); media=_halloween_media_cursor(c,'surprise') if row else (None,None)
+    finally:_put_connection(conn)
+    if not row or str(row[3])!='active':return False
+    chat_id,thread_id=int(row[0]),int(row[1] or 0)
+    text=('🎃 ¡ALGO EXTRAÑO APARECIÓ!\n\nUna presencia se mueve entre las sombras...\n'
+          '👻 ¿Te atreves a investigar?\n\n⏳ Desaparecerá en 30 minutos.')
+    kb=InlineKeyboardMarkup([[InlineKeyboardButton('👻 Investigar',callback_data=f'pk:eventclaim:{event_id}')]])
+    try:
+        if media[0]=='animation' and media[1]:msg=await context.bot.send_animation(chat_id,animation=media[1],caption=text,message_thread_id=thread_id or None,reply_markup=kb)
+        elif media[0]=='photo' and media[1]:msg=await context.bot.send_photo(chat_id,photo=media[1],caption=text,message_thread_id=thread_id or None,reply_markup=kb)
+        else:msg=await context.bot.send_message(chat_id,text,message_thread_id=thread_id or None,reply_markup=kb)
+    except Exception as e:print('[PK Halloween surprise send]',type(e).__name__,e); return False
+    conn=_get_connection()
+    try:c=conn.cursor(); c.execute("UPDATE pokemon_halloween_events_tb SET message_id=%s WHERE event_id=%s",(msg.message_id,event_id)); conn.commit()
+    except Exception:conn.rollback()
+    finally:_put_connection(conn)
+    if context.job_queue:context.job_queue.run_once(_expire_halloween_surprise,HALLOWEEN_EVENT_LIFETIME_SECONDS,data={'event_id':event_id},name=f'pk_halloween_expire:{event_id}')
+    return True
+
+
+async def _spawn_halloween_surprise(context:ContextTypes.DEFAULT_TYPE,chat_id:int,thread_id:int|None,forced_kind:str|None=None,manual:bool=False)->bool:
+    if not manual and not _halloween_active():return False
+    kinds=['candy','cursed_egg','object_box','halloween_box','pikachu','npc','boss']; weights=[35,18,15,12,5,10,5]
+    kind=forced_kind if forced_kind in kinds else random.choices(kinds,weights=weights,k=1)[0]
+    conn=_get_connection(); eid=None
+    try:
+        c=conn.cursor(); t0=int(thread_id or 0)
+        if not manual:
+            c.execute("SELECT 1 FROM pokemon_halloween_events_tb WHERE chat_id=%s AND thread_id=%s AND created_at>NOW()-INTERVAL '90 minutes' AND status='active' LIMIT 1",(chat_id,t0))
+            if c.fetchone():conn.rollback(); return False
+        c.execute("INSERT INTO pokemon_halloween_events_tb(chat_id,thread_id,event_kind) VALUES(%s,%s,%s) RETURNING event_id",(chat_id,t0,kind)); eid=int(c.fetchone()[0]); conn.commit()
+    except Exception as e:conn.rollback(); print('[PK Halloween surprise db]',type(e).__name__,e); return False
+    finally:_put_connection(conn)
+    return await _send_halloween_surprise(context,eid)
+
+
+async def _expire_halloween_surprise(context:ContextTypes.DEFAULT_TYPE):
+    eid=int((getattr(context.job,'data',None) or {}).get('event_id') or 0); row=None
+    if not eid:return
+    conn=_get_connection()
+    try:
+        c=conn.cursor(); c.execute("SELECT chat_id,thread_id,status,message_id FROM pokemon_halloween_events_tb WHERE event_id=%s FOR UPDATE",(eid,)); row=c.fetchone()
+        if not row or str(row[2])!='active':conn.rollback(); return
+        c.execute("UPDATE pokemon_halloween_events_tb SET status='expired',finished_at=NOW() WHERE event_id=%s",(eid,)); conn.commit()
+    except Exception:conn.rollback(); return
+    finally:_put_connection(conn)
+    try:
+        await context.bot.edit_message_caption(chat_id=int(row[0]),message_id=int(row[3]),caption='🌑 La presencia desapareció entre las sombras.',reply_markup=None)
+    except Exception:
+        try:await context.bot.edit_message_text(chat_id=int(row[0]),message_id=int(row[3]),text='🌑 La presencia desapareció entre las sombras.',reply_markup=None)
+        except Exception:pass
+
+
+async def pokemon_halloween_event_job(context:ContextTypes.DEFAULT_TYPE):
+    if not _halloween_active():return
+    for community in COMUNIDADES:
+        try:
+            chat_id=int(community.get('id_comunidad')); thread_id=_games_topic(chat_id)
+            if thread_id is not None:await _spawn_halloween_surprise(context,chat_id,thread_id)
+        except Exception as e:print('[PK Halloween job]',type(e).__name__,e)
+
+
+async def halloweenahora_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    try:
+        if not is_botmaster(update.effective_user.id):return await update.effective_message.reply_text('Solo BotMaster puede forzar Halloween.')
+    except Exception:return await update.effective_message.reply_text('Solo BotMaster puede forzar Halloween.')
+    if not _is_games_topic(update):return await update.effective_message.reply_text('Usa /halloweenahora en Juegos y Casino.')
+    raw=context.args[0].lower() if context.args else None
+    aliases={'huevo':'cursed_egg','caja':'halloween_box','dulces':'candy','pika':'pikachu','pikachu':'pikachu','npc':'npc','jefe':'boss'}
+    kind=aliases.get(raw,raw) if raw else None
+    ok=await _spawn_halloween_surprise(context,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),kind,True)
+    if not ok:await update.effective_message.reply_text('No pude crear la aparición Halloween.')
+
+
+async def npchalloweenahora_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    try:
+        if not is_botmaster(update.effective_user.id):return await update.effective_message.reply_text('Solo BotMaster puede forzar el NPC Halloween.')
+    except Exception:return await update.effective_message.reply_text('Solo BotMaster puede forzar el NPC Halloween.')
+    if not _is_games_topic(update):return await update.effective_message.reply_text('Usa /npchalloweenahora en Juegos y Casino.')
+    ok=await _spawn_halloween_special_npc(context,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),'halloween_trainer',True)
+    if not ok:await update.effective_message.reply_text('No pude crear el NPC Halloween.')
+
+
+async def jefehalloween_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    try:
+        if not is_botmaster(update.effective_user.id):return await update.effective_message.reply_text('Solo BotMaster puede forzar el jefe Halloween.')
+    except Exception:return await update.effective_message.reply_text('Solo BotMaster puede forzar el jefe Halloween.')
+    if not _is_games_topic(update):return await update.effective_message.reply_text('Usa /jefehalloween en Juegos y Casino.')
+    ok=await _spawn_halloween_special_npc(context,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),'halloween_boss',True)
+    if not ok:await update.effective_message.reply_text('No pude crear el jefe Halloween.')
+
+
+async def pikachuhalloweenahora_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    try:
+        if not is_botmaster(update.effective_user.id):return await update.effective_message.reply_text('Solo BotMaster puede forzar Pikachu Halloween.')
+    except Exception:return await update.effective_message.reply_text('Solo BotMaster puede forzar Pikachu Halloween.')
+    if not _is_games_topic(update):return await update.effective_message.reply_text('Usa /pikachuhalloweenahora en Juegos y Casino.')
+    ok=await _spawn_halloween_surprise(context,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),'pikachu',True)
+    if not ok:await update.effective_message.reply_text('No pude crear la aparición de Pikachu Halloween.')
+
+
+async def pokemon_halloween_npc_job(context:ContextTypes.DEFAULT_TYPE):
+    if not _halloween_active():return
+    for community in COMUNIDADES:
+        try:
+            chat_id=int(community.get('id_comunidad')); thread_id=_games_topic(chat_id)
+            if thread_id is not None:await _spawn_halloween_special_npc(context,chat_id,thread_id,'halloween_trainer',False)
+        except Exception as e:print('[PK Halloween NPC job]',type(e).__name__,e)
+
+
+async def pokemon_halloween_boss_job(context:ContextTypes.DEFAULT_TYPE):
+    if not _halloween_active() or _halloween_now().weekday() not in (4,5,6):return
+    for community in COMUNIDADES:
+        try:
+            chat_id=int(community.get('id_comunidad')); thread_id=_games_topic(chat_id)
+            if thread_id is not None:await _spawn_halloween_special_npc(context,chat_id,thread_id,'halloween_boss',False)
+        except Exception as e:print('[PK Halloween boss job]',type(e).__name__,e)
+
+
 # ==================== NPC / LÍDERES / MEDALLAS / DOBLES ====================
 # Subsistema aislado: usa las tablas Pokémon existentes y añade solo sus propias tablas/callbacks.
 
@@ -2725,12 +3673,23 @@ KANTO_LEADERS = {
     'giovanni': {'name':'Giovanni','city':'Ciudad Verde','badge':'Medalla Tierra','badge_emoji':'🌎','emoji':'🌎','pool':[51,112,150]},
 }
 
-NPC_ALL = {**NPC_NORMALS, **KANTO_LEADERS}
+HALLOWEEN_NPCS = {
+    'halloween_trainer': {'name':'Entrenador de las Sombras','emoji':'👻','pool':[92,93,105,94],'event_mode':3},
+    'halloween_boss': {'name':'Gengar · Señor de la Noche','emoji':'💀','pool':[92,93,105,94],'event_mode':3},
+}
+
+NPC_ALL = {**NPC_NORMALS, **KANTO_LEADERS, **HALLOWEEN_NPCS}
 
 
 def _npc_media_cursor(c,key:str):
     c.execute("SELECT media_type,media_file_id FROM pokemon_npc_media_tb WHERE npc_key=%s",(key,))
     r=c.fetchone(); return (str(r[0]),str(r[1])) if r else (None,None)
+
+
+def _npc_media_for_key_cursor(c,key:str):
+    if key=='halloween_trainer':return _halloween_media_cursor(c,'npc')
+    if key=='halloween_boss':return _halloween_media_cursor(c,'boss')
+    return _npc_media_cursor(c,key)
 
 
 def _npc_label(key:str)->str:
@@ -2873,6 +3832,25 @@ def _finish_npc_battle_cursor(c,bid:int,state:dict)->dict:
     for mon in human['mons']:
         selected.append(int(mon['pid'])); selected_levels.append(int(mon['level'])); notes += _grant_pokemon_xp_cursor(c,int(mon['pid']),xp)
     c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(pipes,uid))
+    # Halloween: NPC/líderes pueden soltar dulces por cada rival que realmente cayó.
+    bot=state.get('players',{}).get(str(state.get('bot_player_id')),{})
+    defeated_species=[int(m.get('species',0)) for m in bot.get('mons',[]) if int(m.get('hp',0))<=0]
+    halloween_candies=_halloween_award_species_cursor(c,uid,defeated_species)
+    halloween_bonus=0; halloween_object_box=False; halloween_box=None; halloween_pikachu=None
+    if won and npc_key=='halloween_trainer' and _halloween_active():
+        halloween_bonus=random.randint(10,20); _halloween_add_candies_cursor(c,uid,halloween_bonus)
+        if random.random()<0.25:
+            grant_item_with_cursor(c,uid,'object_box',1); halloween_object_box=True
+        if random.random()<0.12 and not _active_egg_cursor(c,uid,True):
+            _create_cursed_egg_cursor(c,uid,'halloween_npc'); halloween_box='cursed_egg'
+    elif won and npc_key=='halloween_boss' and _halloween_active():
+        halloween_bonus=random.randint(25,40); _halloween_add_candies_cursor(c,uid,halloween_bonus)
+        grant_item_with_cursor(c,uid,'object_box',1); halloween_object_box=True
+        roll=random.random()
+        if roll<0.08:
+            halloween_pikachu=_grant_halloween_pikachu_cursor(c,uid)
+        elif roll<0.30:
+            halloween_box=_grant_halloween_box_cursor(c,uid)
     badge_new=False; tm=None; candies=0; completion=None
     if won and kind=='leader':
         tm=random.choice(list(TM_ITEMS.keys())) if TM_ITEMS else None
@@ -2885,12 +3863,26 @@ def _finish_npc_battle_cursor(c,bid:int,state:dict)->dict:
     c.execute("UPDATE pokemon_battles_tb SET status='finished',winner_id=%s,state_json=%s,finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s",(int(state['winner']),json.dumps(state,ensure_ascii=False),bid))
     return {'npc':True,'leader':kind=='leader','won':won,'winner':int(state['winner']),'loser':int(state['loser']),'uid':uid,'xp':xp,'pipesos':pipes,
             'notes':notes,'npc_key':npc_key,'badge_new':badge_new,'tm':tm,'candies':candies,'object_box':bool(won and kind=='leader'),
-            'bonus_pids':selected if won and kind=='leader' else [],'completion':completion,'chat_id':chat_id,'thread_id':thread_id}
+            'bonus_pids':selected if won and kind=='leader' else [],'completion':completion,'chat_id':chat_id,'thread_id':thread_id,
+            'halloween_candies':halloween_candies,'halloween_bonus':halloween_bonus,'halloween_object_box':halloween_object_box,
+            'halloween_box':halloween_box,'halloween_pikachu':halloween_pikachu}
 
 
 def _npc_result_lines(final:dict)->list[str]:
     d=NPC_ALL.get(final.get('npc_key'),{}); name=d.get('name','Entrenador')
     lines=[f"{'🏆 Victoria' if final.get('won') else '💥 Derrota'} contra {name}.",f"💰 +{int(final.get('pipesos',0)):,} PiPesos",f"⭐ +{int(final.get('xp',0))} XP por Pokémon usado"]
+    if int(final.get('halloween_candies',0))>0:
+        lines.append(f"🎃🍬 Pokémon derrotados: +{int(final['halloween_candies'])} Dulces Halloween")
+    if int(final.get('halloween_bonus',0))>0:
+        lines.append(f"🎃 Bonus del evento: +{int(final['halloween_bonus'])} Dulces Halloween")
+    if final.get('halloween_object_box'):
+        lines.append('🎁 +1 Caja de Objetos Pokémon')
+    if isinstance(final.get('halloween_box'),dict):
+        hb=final['halloween_box']; lines.append(f"🎃📦 Premio del jefe: {'✨ SHINY ' if hb.get('shiny') else ''}{hb.get('name','Pokémon')}")
+    elif final.get('halloween_box')=='cursed_egg':
+        lines.append('🎃🥚 ¡Encontraste un Huevo Maldito!')
+    if isinstance(final.get('halloween_pikachu'),dict):
+        hp=final['halloween_pikachu']; lines.append(f"🎃⚡ ¡Premio raro: {'✨ SHINY ' if hp.get('shiny') else ''}Pikachu Halloween!")
     if final.get('leader') and final.get('won'):
         if final.get('tm') in ITEMS:
             n,e,_,_=ITEMS[final['tm']]; lines.append(f'💿 MT: {e} {n}')
@@ -2920,13 +3912,19 @@ async def _send_npc_encounter(context:ContextTypes.DEFAULT_TYPE,eid:int)->bool:
     conn=_get_connection(); row=None; media=(None,None)
     try:
         c=conn.cursor(); c.execute("SELECT chat_id,thread_id,npc_key,encounter_type,mode,status FROM pokemon_npc_encounters_tb WHERE encounter_id=%s",(eid,)); row=c.fetchone()
-        if row:media=_npc_media_cursor(c,str(row[2]))
+        if row:media=_npc_media_for_key_cursor(c,str(row[2]))
     finally:_put_connection(conn)
     if not row:return False
     chat_id,thread_id,key,kind,mode,status=int(row[0]),row[1],str(row[2]),str(row[3]),int(row[4]),str(row[5])
     if status!='active':return False
     d=NPC_ALL[key]
-    if kind=='leader':
+    if key=='halloween_trainer':
+        text=(f"🎃 ¡UN ENTRENADOR DE HALLOWEEN HA APARECIDO!\n\n{d['emoji']} {d['name']}\n⚔️ Combate {mode}v{mode}\n"
+              "👻 Equipo temático Fantasma/Sombras\n🍬 Victoria: bonus de Dulces Halloween y posibilidad de Caja de Objetos.\n⏳ Disponible durante 10 minutos.")
+    elif key=='halloween_boss':
+        text=(f"💀 JEFE DE HALLOWEEN\n\n{d['emoji']} {d['name']}\n⚔️ Combate {mode}v{mode}\n"
+              "🎃 Un reto especial del evento.\n🍬 Victoria: gran bonus de Dulces + Caja de Objetos.\n⏳ Disponible durante 10 minutos.")
+    elif kind=='leader':
         text=(f"🏟️ ¡UN LÍDER DE GIMNASIO HA APARECIDO!\n\n{d['emoji']} {d['name']} · {d['city']}\n"
               f"⚔️ Combate {mode}v{mode}\n⏳ Disponible durante 10 minutos\n\n🎁 Victoria: PiPesos, mucha XP, MT, Caramelos Raros y Caja de Objetos.")
     else:
@@ -2957,7 +3955,7 @@ async def _expire_npc_encounter(context:ContextTypes.DEFAULT_TYPE):
     try:
         c=conn.cursor(); c.execute("SELECT chat_id,thread_id,npc_key,status,message_id FROM pokemon_npc_encounters_tb WHERE encounter_id=%s FOR UPDATE",(eid,)); row=c.fetchone()
         if not row or row[3] not in ('active','selecting'):conn.rollback(); return
-        c.execute("UPDATE pokemon_npc_encounters_tb SET status='expired',finished_at=NOW() WHERE encounter_id=%s",(eid,)); media=_npc_media_cursor(c,str(row[2])); conn.commit()
+        c.execute("UPDATE pokemon_npc_encounters_tb SET status='expired',finished_at=NOW() WHERE encounter_id=%s",(eid,)); media=_npc_media_for_key_cursor(c,str(row[2])); conn.commit()
     except Exception as e:conn.rollback(); print('[PK NPC expire]',type(e).__name__,e); return
     finally:_put_connection(conn)
     text=f"⌛ {_npc_label(str(row[2]))} se retiró. El encuentro terminó."
@@ -2983,6 +3981,26 @@ async def _spawn_npc_encounter(context:ContextTypes.DEFAULT_TYPE,chat_id:int,thr
             key=forced_key if forced_key in KANTO_LEADERS else random.choice(list(KANTO_LEADERS)); mode=3
         c.execute("INSERT INTO pokemon_npc_encounters_tb(chat_id,thread_id,npc_key,encounter_type,mode,is_manual) VALUES(%s,%s,%s,%s,%s,%s) RETURNING encounter_id",(chat_id,thread_id,key,kind,mode,bool(forced_key))); eid=int(c.fetchone()[0]); conn.commit()
     except Exception as e:conn.rollback(); print('[PK NPC spawn]',type(e).__name__,e); return False
+    finally:_put_connection(conn)
+    return await _send_npc_encounter(context,eid)
+
+
+async def _spawn_halloween_special_npc(context:ContextTypes.DEFAULT_TYPE,chat_id:int,thread_id:int|None,key:str,manual:bool=False)->bool:
+    if key not in HALLOWEEN_NPCS:return False
+    if not manual and not _halloween_active():return False
+    conn=_get_connection(); eid=None
+    try:
+        c=conn.cursor(); today=_today_pokemon_date()
+        if not manual:
+            c.execute("""SELECT 1 FROM pokemon_npc_encounters_tb
+                         WHERE chat_id=%s AND thread_id IS NOT DISTINCT FROM %s AND npc_key=%s
+                           AND is_manual=FALSE AND (created_at AT TIME ZONE 'America/Mexico_City')::date=%s LIMIT 1""",
+                      (chat_id,thread_id,key,today))
+            if c.fetchone():conn.rollback(); return False
+        mode=int(HALLOWEEN_NPCS[key].get('event_mode',3))
+        c.execute("INSERT INTO pokemon_npc_encounters_tb(chat_id,thread_id,npc_key,encounter_type,mode,is_manual) VALUES(%s,%s,%s,'normal',%s,%s) RETURNING encounter_id",
+                  (chat_id,thread_id,key,mode,bool(manual))); eid=int(c.fetchone()[0]); conn.commit()
+    except Exception as e:conn.rollback(); print('[PK Halloween NPC spawn]',type(e).__name__,e); return False
     finally:_put_connection(conn)
     return await _send_npc_encounter(context,eid)
 
@@ -3302,6 +4320,281 @@ async def batalladoblepokemon_command(update:Update, context:ContextTypes.DEFAUL
 
 async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_TYPE,p:list[str],action:str,uid:int)->bool:
     q=update.callback_query
+    if action=='egghatch':
+        egg_id=int(p[2]); conn=_get_connection(); row=None
+        try:
+            c=conn.cursor(); c.execute("SELECT owner_id,status,progress FROM pokemon_eggs_tb WHERE egg_id=%s FOR UPDATE",(egg_id,)); row=c.fetchone(); conn.rollback()
+        finally:_put_connection(conn)
+        if not row or int(row[0])!=uid:return await q.answer('Ese huevo no es tuyo.',show_alert=True) or True
+        if str(row[1])!='hatching' or int(row[2])<EGG_PROGRESS_MAX:return await q.answer('Ese huevo todavía no está listo.',show_alert=True) or True
+        await q.answer('🥚 ¡Empieza la eclosión!',show_alert=False)
+        try:
+            if getattr(q.message,'photo',None) or getattr(q.message,'animation',None):await q.edit_message_caption(caption='🥚 El huevo está temblando... ✨',reply_markup=None)
+            else:await q.edit_message_text('🥚 El huevo está temblando... ✨',reply_markup=None)
+        except Exception:pass
+        name=(q.from_user.full_name or q.from_user.first_name or q.from_user.username or f'Entrenador {uid}').strip()
+        await _hatch_egg(context,egg_id,q.message.chat_id,getattr(q.message,'message_thread_id',None),name)
+        return True
+    if action=='eventhome':
+        await q.answer();
+        try:await _send_event_home_to_user(context,uid)
+        except Exception:pass
+        return True
+    if action=='eventshop':
+        conn=_get_connection(); bal=0; media=(None,None)
+        try:
+            c=conn.cursor(); bal=_halloween_wallet_cursor(c,uid); media=_halloween_media_cursor(c,'shop')
+        finally:_put_connection(conn)
+        await q.answer()
+        text=f'🛒 TIENDA HALLOWEEN\n\n🍬 Tienes {bal} Dulces Halloween.\n\nLas cajas Épica y Legendaria son las mismas cajas normales de PiBot, pero aquí se pagan con dulces.'
+        if media[0]=='animation' and media[1]:await context.bot.send_animation(uid,animation=media[1],caption=text,reply_markup=_halloween_shop_markup())
+        elif media[0]=='photo' and media[1]:await context.bot.send_photo(uid,photo=media[1],caption=text,reply_markup=_halloween_shop_markup())
+        else:await context.bot.send_message(uid,text,reply_markup=_halloween_shop_markup())
+        return True
+    if action=='eventrewards':
+        await q.answer(); await context.bot.send_message(uid,
+            '🎁 RECOMPENSAS HALLOWEEN\n\n'
+            f'🎃📦 Caja Pokémon Halloween: Pokémon Gen 1 no legendario, con probabilidad Shiny 1/{HALLOWEEN_BOX_SHINY_DENOMINATOR}.\n'
+            f'🎃🥚 Huevo Maldito: especies temáticas; Shiny 1/{HALLOWEEN_EGG_SHINY_DENOMINATOR}.\n'
+            '🎃⚡ Pikachu Halloween: variante especial con imagen global; 80% normal y 20% Shiny.\n'
+            '💜🌟 Las cajas normales conservan su roll, Jackpot y XP de temporada.')
+        return True
+    if action=='eventinfo':
+        await q.answer(); await context.bot.send_message(uid,
+            '🎃 CÓMO FUNCIONA\n\n🍬 Durante el evento los Pokémon pueden soltar Dulces Halloween. Los de tipo Fantasma sueltan más.\n'
+            '👻 Hay apariciones sorpresa automáticas, un entrenador Halloween diario y un jefe en viernes, sábado y domingo.\n'
+            '🥚 Los huevos suben +0.5% por cada mensaje tuyo en los grupos oficiales. Al 100% tú decides cuándo romperlos.\n'
+            f'⏳ {_halloween_countdown_text()}')
+        return True
+    if action=='eventegg':
+        conn=_get_connection(); row=None
+        try:c=conn.cursor(); row=_active_egg_cursor(c,uid)
+        finally:_put_connection(conn)
+        await q.answer(); await context.bot.send_message(uid,'🥚 TU HUEVO\n\n'+_egg_row_text(row),reply_markup=_egg_ready_markup(row)); return True
+    if action=='eventmediapick':
+        try:
+            if not is_botmaster(uid):return await q.answer('Solo BotMaster.',show_alert=True) or True
+        except Exception:return await q.answer('Solo BotMaster.',show_alert=True) or True
+        key=str(p[2])
+        if key not in HALLOWEEN_MEDIA_KEYS:return await q.answer('Elemento inválido.',show_alert=True) or True
+        context.user_data['pk_wait_halloween_media']=key
+        await q.answer(); await q.edit_message_text(f"{HALLOWEEN_MEDIA_KEYS[key]}\n\nAhora envíame una foto o GIF por privado.\nEl nuevo archivo reemplazará al anterior.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🗑 Quitar actual',callback_data=f'pk:eventmediaremove:{key}')],[InlineKeyboardButton('⬅️ Volver',callback_data='pk:eventmediahome')]])); return True
+    if action=='eventmediahome':
+        try:
+            if not is_botmaster(uid):return await q.answer('Solo BotMaster.',show_alert=True) or True
+        except Exception:return await q.answer('Solo BotMaster.',show_alert=True) or True
+        context.user_data.pop('pk_wait_halloween_media',None); await q.answer(); await q.edit_message_text('🎃 MULTIMEDIA HALLOWEEN 2026',reply_markup=_halloween_media_markup()); return True
+    if action=='eventmediaremove':
+        try:
+            if not is_botmaster(uid):return await q.answer('Solo BotMaster.',show_alert=True) or True
+        except Exception:return await q.answer('Solo BotMaster.',show_alert=True) or True
+        key=str(p[2]); conn=_get_connection()
+        try:
+            c=conn.cursor(); c.execute("DELETE FROM pokemon_halloween_media_tb WHERE media_key=%s",(key,))
+            if key in ('pikachu_normal','pikachu_shiny'):
+                want_shiny=(key=='pikachu_shiny')
+                c.execute("UPDATE pokemon_instances_tb SET media_type=NULL,media_file_id=NULL,updated_at=NOW() WHERE obtained_from='halloween_2026_pikachu' AND shiny=%s",(want_shiny,))
+            conn.commit()
+        except Exception:conn.rollback()
+        finally:_put_connection(conn)
+        context.user_data.pop('pk_wait_halloween_media',None); await q.answer('Multimedia eliminada.',show_alert=True); return True
+    if action=='eventbuy':
+        code=str(p[2]); item=HALLOWEEN_SHOP.get(code)
+        if not item:return await q.answer('Recompensa inválida.',show_alert=True) or True
+        if not _halloween_active():return await q.answer('🎃 La tienda Halloween ya está cerrada.',show_alert=True) or True
+        conn=_get_connection(); result_text=''; box_result=None; media_key=None; newbal=0
+        try:
+            c=conn.cursor()
+            if code=='cursed_egg' and _active_egg_cursor(c,uid,True):conn.rollback(); return await q.answer('Ya tienes un huevo activo.',show_alert=True) or True
+            if not _halloween_spend_cursor(c,uid,int(item['price'])):conn.rollback(); return await q.answer('No tienes suficientes Dulces Halloween.',show_alert=True) or True
+            if code=='rare_candy':grant_item_with_cursor(c,uid,'rare_candy',1); result_text='🍬 Recibiste 1 Caramelo Raro.'
+            elif code=='object_box':grant_item_with_cursor(c,uid,'object_box',1); result_text='🎁 Recibiste 1 Caja de Objetos Pokémon. Usa /cajaobjetospokemon.'
+            elif code=='cursed_egg':
+                eid=_create_cursed_egg_cursor(c,uid,'halloween_shop'); result_text=f'🎃🥚 Recibiste un Huevo Maldito #{eid}. El Pokémon sigue oculto.'; media_key='cursed_egg'
+            elif code=='halloween_box':
+                data=_grant_halloween_box_cursor(c,uid); result_text=(f"🎃📦 Abriste una Caja Pokémon Halloween.\n\n{'✨ SHINY · ' if data.get('shiny') else ''}#{data['species_id']:03d} {data['name']} {_sex_symbol(data.get('sex'))} · Nv.{data['level']}\n🧬 IV {data['iv_percent']}% · {data['iv_grade']}"); media_key='halloween_box'
+            elif code=='halloween_pikachu':
+                data=_grant_halloween_pikachu_cursor(c,uid); shiny_prefix='✨ SHINY ✨\n' if data.get('shiny') else ''
+                result_text=(f"🎃⚡ ¡PIKACHU HALLOWEEN!\n\n{shiny_prefix}#025 Pikachu Halloween {_sex_symbol(data.get('sex'))} · Nv.{data['level']}\n🧬 IV {data['iv_percent']}% · {data['iv_grade']}\n🎮 Ejemplar #{data['pokemon_id']}"); media_key='pikachu_shiny' if data.get('shiny') else 'pikachu_normal'
+            elif code in ('pibot_epic','pibot_legendary'):
+                box_result=_grant_normal_pibot_box_cursor(c,uid,'epic' if code=='pibot_epic' else 'legendary'); result_text=f"🎁 Abriste una caja normal de PiBot.\n✨ Te salió: {box_result['label']}"
+            newbal=_halloween_wallet_cursor(c,uid); conn.commit()
+        except Exception as e:
+            conn.rollback(); print('[PK Halloween shop]',type(e).__name__,e); return await q.answer('No pude completar la compra; no se gastaron dulces si falló.',show_alert=True) or True
+        finally:_put_connection(conn)
+        if box_result:
+            try:
+                from handlers.season_pass import grant_season_xp
+                xp=grant_season_xp(uid,25 if box_result['code']=='epic' else 60,'box')
+                if xp and xp.get('granted',0)>0:result_text += f"\n⭐ +{xp['granted']} XP de temporada"
+            except Exception:pass
+            if box_result.get('gif_bonus'):result_text += '\n🎞️ BONUS: +10 días de GIF de perfil'
+            if box_result.get('jackpot_win'):result_text += f"\n🎰 ¡JACKPOT! +{int(box_result['jackpot_win']):,} PiPesos"
+            else:result_text += f"\n🎰 Jackpot: {int(box_result.get('jackpot_after',10000)):,} PiPesos"
+        result_text += f'\n\n🍬 Dulces restantes: {newbal}'
+        await q.answer('Compra completada 🎃',show_alert=True)
+        media=(None,None)
+        if media_key:
+            conn=_get_connection()
+            try:c=conn.cursor(); media=_halloween_media_cursor(c,media_key)
+            finally:_put_connection(conn)
+        try:
+            if media[0]=='animation' and media[1]:await context.bot.send_animation(uid,animation=media[1],caption=result_text)
+            elif media[0]=='photo' and media[1]:await context.bot.send_photo(uid,photo=media[1],caption=result_text)
+            else:await context.bot.send_message(uid,result_text)
+        except Exception:pass
+        return True
+    if action=='eventclaim':
+        event_id=int(p[2]); conn=_get_connection(); kind=None; result_text=''; spawn_kind=None; media_key=None
+        try:
+            c=conn.cursor(); c.execute("SELECT chat_id,thread_id,event_kind,status,(expires_at<=NOW()) FROM pokemon_halloween_events_tb WHERE event_id=%s FOR UPDATE",(event_id,)); er=c.fetchone()
+            if not er or str(er[3])!='active' or bool(er[4]):
+                if er and str(er[3])=='active':c.execute("UPDATE pokemon_halloween_events_tb SET status='expired',finished_at=NOW() WHERE event_id=%s",(event_id,)); conn.commit()
+                else:conn.rollback()
+                return await q.answer('La presencia ya desapareció.',show_alert=True) or True
+            kind=str(er[2]); chat_id=int(er[0]); thread_id=int(er[1] or 0)
+            c.execute("UPDATE pokemon_halloween_events_tb SET status='claimed',claimed_by=%s,finished_at=NOW() WHERE event_id=%s",(uid,event_id))
+            name=_display_name_cursor(c,uid)
+            if kind=='candy':
+                amount=random.randint(5,15); bal=_halloween_add_candies_cursor(c,uid,amount); result_text=f'🍬 {name} encontró {amount} Dulces Halloween.\nTotal: {bal} 🍬'
+            elif kind=='object_box':grant_item_with_cursor(c,uid,'object_box',1); result_text=f'🎁 {name} encontró una Caja de Objetos Pokémon.'
+            elif kind=='halloween_box':
+                data=_grant_halloween_box_cursor(c,uid); result_text=f"🎃📦 {name} encontró una Caja Halloween... ¡y salió {'✨ SHINY ' if data.get('shiny') else ''}{data['name']}!"; media_key='halloween_box'
+            elif kind=='pikachu':
+                data=_grant_halloween_pikachu_cursor(c,uid); result_text=f"🎃⚡ {name} encontró a {'✨ SHINY ' if data.get('shiny') else ''}Pikachu Halloween. ¡Se unió a su colección!"; media_key='pikachu_shiny' if data.get('shiny') else 'pikachu_normal'
+            elif kind=='cursed_egg':
+                if _active_egg_cursor(c,uid,True):
+                    amount=12; bal=_halloween_add_candies_cursor(c,uid,amount); result_text=f'🥚 {name} ya tenía un huevo, así que encontró {amount} Dulces Halloween en su lugar. Total: {bal} 🍬'
+                else:
+                    eid=_create_cursed_egg_cursor(c,uid,'halloween_surprise'); result_text=f'🎃🥚 {name} encontró un Huevo Maldito #{eid}. ¡Ahora tendrá que hacerlo crecer hablando!'; media_key='cursed_egg'
+            elif kind=='npc':spawn_kind='halloween_trainer'; result_text=f'👻 {name} investigó las sombras... ¡despertó al Entrenador de las Sombras!'
+            elif kind=='boss':spawn_kind='halloween_boss'; result_text=f'💀 {name} abrió algo que no debía... ¡GENGAR, SEÑOR DE LA NOCHE, apareció!'
+            conn.commit()
+        except Exception as e:
+            conn.rollback(); print('[PK Halloween claim]',type(e).__name__,e); return await q.answer('No pude resolver el evento.',show_alert=True) or True
+        finally:_put_connection(conn)
+        await q.answer('👻 ¡Encontraste algo!',show_alert=True)
+        try:
+            if getattr(q.message,'photo',None) or getattr(q.message,'animation',None):await q.edit_message_caption(caption=result_text,reply_markup=None)
+            else:await q.edit_message_text(result_text,reply_markup=None)
+        except Exception:pass
+        # Si el premio tiene arte propio (Pikachu, huevo o caja), lo mostramos al conseguirlo.
+        if media_key:
+            conn2=_get_connection(); media=(None,None)
+            try:c2=conn2.cursor(); media=_halloween_media_cursor(c2,media_key)
+            finally:_put_connection(conn2)
+            try:
+                if media[0]=='animation' and media[1]:await context.bot.send_animation(chat_id,animation=media[1],caption=result_text,message_thread_id=thread_id or None)
+                elif media[0]=='photo' and media[1]:await context.bot.send_photo(chat_id,photo=media[1],caption=result_text,message_thread_id=thread_id or None)
+            except Exception:pass
+        if spawn_kind:
+            try:await _spawn_halloween_special_npc(context,chat_id,thread_id or None,spawn_kind,True)
+            except Exception as e:print('[PK Halloween spawned NPC]',type(e).__name__,e)
+        return True
+    if action=='breedpage':
+        page=int(p[2]); await q.answer(); await q.edit_message_text('💕 CRIANZA POKÉMON\n\nElige el primer Pokémon:',reply_markup=_breed_first_markup(uid,page)); return True
+    if action=='breed1':
+        pid=int(p[2]); first=_get_instance(uid,pid)
+        if not first:return await q.answer('Ese Pokémon ya no está disponible.',show_alert=True)
+        markup=_breed_second_markup(uid,pid)
+        if not markup:return await q.answer('No tienes otro Pokémon compatible con este.',show_alert=True)
+        await q.answer(); await q.edit_message_text(f"💕 Primer padre: {_pokemon_label(first)}\n\nElige una pareja compatible:",reply_markup=markup); return True
+    if action=='breed2':
+        a,b=int(p[2]),int(p[3]); ra=_get_instance(uid,a); rb=_get_instance(uid,b)
+        if not ra or not rb or len(ra)<=17 or len(rb)<=17:return await q.answer('Alguno ya no está disponible.',show_alert=True)
+        if not _breeding_compatible(int(ra[1]),str(ra[17]),int(rb[1]),str(rb[17])):return await q.answer('Ya no son compatibles.',show_alert=True)
+        offspring=_offspring_species(int(ra[1]),str(ra[17]),int(rb[1]),str(rb[17])); tier=rarity_for(offspring)
+        if tier=='legendario':tier='epico'
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton(f'🥚 Formar huevo · {BREEDING_COST_PIPESOS:,} PiPesos',callback_data=f'pk:breedgo:{a}:{b}')],[InlineKeyboardButton('❌ Cancelar',callback_data='pk:breedcancel')]])
+        await q.answer(); await q.edit_message_text(f"💕 PAREJA COMPATIBLE\n\n1. {_pokemon_label(ra)}\n2. {_pokemon_label(rb)}\n\n🥚 La cría será de la familia #{offspring:03d} {NAMES[offspring]}.\n🧬 Dos DVs se heredarán de los padres; el resto será aleatorio.\n✨ Los padres Shiny mejoran un poco la posibilidad Shiny.\n💰 Coste: {BREEDING_COST_PIPESOS:,} PiPesos.",reply_markup=kb); return True
+    if action=='breedcancel':
+        await q.answer('Crianza cancelada.'); await q.edit_message_text('❌ Crianza cancelada.'); return True
+    if action=='breedgo':
+        a,b=int(p[2]),int(p[3]); conn=_get_connection(); eid=None; tier='comun'; species=None
+        try:
+            c=conn.cursor()
+            if _active_egg_cursor(c,uid,True):conn.rollback(); await q.answer('Ya tienes un huevo activo.',show_alert=True); return True
+            c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code,sex FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id IN (%s,%s) FOR UPDATE",(uid,a,b)); rr={int(x[0]):x for x in c.fetchall()}
+            if a not in rr or b not in rr:conn.rollback(); await q.answer('Alguno de los padres ya no está disponible.',show_alert=True); return True
+            ra,rb=rr[a],rr[b]
+            if not _breeding_compatible(int(ra[1]),str(ra[17]),int(rb[1]),str(rb[17])):conn.rollback(); await q.answer('La pareja ya no es compatible.',show_alert=True); return True
+            c.execute("SELECT saldo FROM usuarios_tb WHERE id_user=%s FOR UPDATE",(uid,)); bal=c.fetchone()
+            if not bal or int(bal[0])<BREEDING_COST_PIPESOS:conn.rollback(); await q.answer(f'Necesitas {BREEDING_COST_PIPESOS:,} PiPesos.',show_alert=True); return True
+            species=_offspring_species(int(ra[1]),str(ra[17]),int(rb[1]),str(rb[17])); tier=rarity_for(species); tier=tier if tier in EGG_TIERS else 'epico'
+            ivs=_inherit_ivs(ra,rb); shiny=_egg_shiny_roll(ra,rb)
+            c.execute("UPDATE usuarios_tb SET saldo=saldo-%s WHERE id_user=%s",(BREEDING_COST_PIPESOS,uid))
+            eid=_create_egg_cursor(c,uid,species,tier,'crianza',a,b,int(ra[1]),int(rb[1]),ivs,shiny); conn.commit()
+        except Exception as e:conn.rollback(); print('[PK breed confirm]',type(e).__name__,e); await q.answer('No pude formar el huevo.',show_alert=True); return True
+        finally:_put_connection(conn)
+        await q.answer('¡Huevo formado! 🥚',show_alert=True); await q.edit_message_text(f"🥚 ¡LA GUARDERÍA TE ENTREGÓ UN HUEVO!\n\n{_egg_tier_label(tier)} #{eid}\n❓ El Pokémon permanecerá oculto hasta eclosionar.\n💬 Cada mensaje tuyo en el grupo suma +0.5%.\n📈 Necesitas llegar a 100%.\n\nLos padres ya regresaron contigo."); return True
+    if action=='egggiftcancel':
+        await q.answer('Regalo cancelado.');
+        try:await q.edit_message_text('❌ Regalo de huevo cancelado.')
+        except Exception:pass
+        return True
+    if action=='egggift':
+        egg_id,target=int(p[2]),int(p[3]); conn=_get_connection(); target_name=None; tier='comun'; cursed=False
+        try:
+            c=conn.cursor(); c.execute("SELECT owner_id,egg_tier,status,source FROM pokemon_eggs_tb WHERE egg_id=%s FOR UPDATE",(egg_id,)); er=c.fetchone()
+            if not er or int(er[0])!=uid or str(er[2])!='active':conn.rollback(); await q.answer('Ese huevo ya no puede regalarse.',show_alert=True); return True
+            if _active_egg_cursor(c,target,True):conn.rollback(); await q.answer('La otra persona ya tiene un huevo.',show_alert=True); return True
+            tier=str(er[1]); cursed=str(er[3]).startswith('halloween'); target_name=_display_name_cursor(c,target)
+            new_source='halloween_regalo' if cursed else 'regalo'
+            c.execute("UPDATE pokemon_eggs_tb SET owner_id=%s,source=%s WHERE egg_id=%s",(target,new_source,egg_id)); conn.commit()
+        except Exception as e:conn.rollback(); print('[PK egg gift]',type(e).__name__,e); await q.answer('No pude regalarlo.',show_alert=True); return True
+        finally:_put_connection(conn)
+        label='🎃🥚 Huevo Maldito' if cursed else _egg_tier_label(tier)
+        await q.answer('Huevo regalado 🎁',show_alert=True)
+        try:await q.edit_message_text(f'🎁 ¡Huevo regalado!\n\n{target_name} recibió {label}. Conservó todo su progreso.')
+        except Exception:pass
+        try:await context.bot.send_message(target,f'🎁 {q.from_user.full_name} te regaló {label}. Usa /huevos para ver su progreso.')
+        except Exception:pass
+        return True
+    if action=='eggclaim':
+        event_id=int(p[2]); conn=_get_connection(); tier='comun'; egg_id=None; name=None; media=(None,None)
+        try:
+            c=conn.cursor(); c.execute("SELECT chat_id,thread_id,egg_tier,species_id,status,message_id,(expires_at<=NOW()) FROM pokemon_egg_events_tb WHERE event_id=%s FOR UPDATE",(event_id,)); er=c.fetchone()
+            if not er or str(er[4])!='active' or bool(er[6]):
+                if er and str(er[4])=='active':c.execute("UPDATE pokemon_egg_events_tb SET status='expired',finished_at=NOW() WHERE event_id=%s",(event_id,)); conn.commit()
+                else:conn.rollback()
+                await q.answer('Ese huevo ya no está disponible.',show_alert=True); return True
+            if _active_egg_cursor(c,uid,True):conn.rollback(); await q.answer('Ya tienes un huevo activo. Eclosiónalo o regálalo primero.',show_alert=True); return True
+            tier=str(er[2]); species=int(er[3]); egg_id=_create_egg_cursor(c,uid,species,tier,'evento'); name=_display_name_cursor(c,uid); media=_egg_media_cursor(c,tier)
+            c.execute("UPDATE pokemon_egg_events_tb SET status='claimed',claimed_by=%s,finished_at=NOW() WHERE event_id=%s",(uid,event_id)); conn.commit()
+        except Exception as e:conn.rollback(); print('[PK egg claim]',type(e).__name__,e); await q.answer('No pude recoger el huevo.',show_alert=True); return True
+        finally:_put_connection(conn)
+        await q.answer('¡Te quedaste el huevo! 🥚',show_alert=True)
+        text=f"🎉 {name} encontró {_egg_tier_label(tier)} #{egg_id}.\n💬 Sus mensajes harán subir el progreso hasta que eclosione."
+        try:
+            if media[0] in ('photo','animation'):await q.edit_message_caption(caption=text,reply_markup=None)
+            else:await q.edit_message_text(text,reply_markup=None)
+        except Exception:pass
+        try:await context.bot.send_message(uid,f'🥚 ¡El huevo ya es tuyo!\n\nUsa /huevos para revisar el progreso. Cada mensaje tuyo en el grupo suma +0.5%.')
+        except Exception:pass
+        return True
+    if action=='eggmediapick':
+        try:allowed=is_botmaster(uid)
+        except Exception:allowed=False
+        if not allowed:await q.answer('Solo BotMaster.',show_alert=True); return True
+        key=str(p[2]);
+        if key not in ('comun','raro','epico','hatching'):await q.answer('Tipo inválido.',show_alert=True); return True
+        context.user_data['pk_wait_egg_media']=key
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton('🗑 Quitar actual',callback_data=f'pk:eggmediaremove:{key}')],[InlineKeyboardButton('⬅️ Volver',callback_data='pk:eggmediahome')]])
+        await q.answer(); await q.edit_message_text(f"🥚 Seleccionado: {key}.\n\nAhora envíame aquí una FOTO o GIF/animación de Telegram.",reply_markup=kb); return True
+    if action=='eggmediahome':
+        try:allowed=is_botmaster(uid)
+        except Exception:allowed=False
+        if not allowed:await q.answer('Solo BotMaster.',show_alert=True); return True
+        await q.answer(); await q.edit_message_text('🥚 MULTIMEDIA DE HUEVOS',reply_markup=_egg_media_markup()); return True
+    if action=='eggmediaremove':
+        try:allowed=is_botmaster(uid)
+        except Exception:allowed=False
+        if not allowed:await q.answer('Solo BotMaster.',show_alert=True); return True
+        key=str(p[2]); conn=_get_connection()
+        try:c=conn.cursor(); c.execute("DELETE FROM pokemon_egg_media_tb WHERE egg_key=%s",(key,)); conn.commit()
+        except Exception:conn.rollback()
+        finally:_put_connection(conn)
+        context.user_data.pop('pk_wait_egg_media',None); await q.answer('Multimedia eliminada.',show_alert=True); return True
     if action=='openobjbox':
         reward=_open_object_box(uid); await q.answer('Caja abierta 🎁' if reward else 'No tienes Cajas de Objetos.',show_alert=True)
         if reward:
@@ -3384,15 +4677,21 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             if _battle_busy_cursor(c,uid):conn.rollback(); await q.answer('Ya tienes otra batalla Pokémon pendiente o activa.',show_alert=True); return True
             user_mons=[]
             for pid in selected:
-                c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); rr=c.fetchone()
+                c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code,sex FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); rr=c.fetchone()
                 if not rr:conn.rollback(); await q.answer('Uno de tus Pokémon ya no está disponible.',show_alert=True); return True
                 user_mons.append(_battle_mon(rr))
             definition=NPC_ALL[key]; pool=list(definition['pool']); chosen=[]
-            while len(chosen)<mode:
-                chosen.append(pool[len(chosen)%len(pool)] if kind=='leader' else random.choice(pool))
-            # Cada rival escala contra el Pokémon correspondiente elegido por el jugador,
-            # no contra un promedio general del equipo: mismo nivel, +1 o +2.
-            bot_mons=[_make_npc_mon(sp,max(1,min(MAX_LEVEL,int(user_mons[i]['level'])+random.choice([0,1,2])))) for i,sp in enumerate(chosen)]
+            if key=='halloween_boss':
+                chosen=[92,105,94][:mode]  # Gastly → Marowak → Gengar; Gengar siempre cierra el jefe.
+            elif key=='halloween_trainer':
+                chosen=[92,93,105][:mode]
+            else:
+                while len(chosen)<mode:
+                    chosen.append(pool[len(chosen)%len(pool)] if kind=='leader' else random.choice(pool))
+            # Cada rival escala contra el Pokémon correspondiente elegido por el jugador.
+            # Los NPC normales/líderes conservan +0/+1/+2. Halloween usa un pequeño bonus de dificultad.
+            level_offsets=[2,3,4] if key=='halloween_boss' else ([1,2,3] if key=='halloween_trainer' else [0,1,2])
+            bot_mons=[_make_npc_mon(sp,max(1,min(MAX_LEVEL,int(user_mons[i]['level'])+random.choice(level_offsets)))) for i,sp in enumerate(chosen)]
             bot_id=-1_000_000-eid
             state={'status':'active','battle_kind':'leader' if kind=='leader' else 'npc','human_user_id':uid,'bot_player_id':bot_id,'npc_encounter_id':eid,'npc_key':key,'mode':mode,'round':1,'choices':{},
                    'players':{str(uid):{'name':_display_name_cursor(c,uid),'mons':user_mons,'active':0},str(bot_id):{'name':definition['name'],'mons':bot_mons,'active':0}}}
@@ -3453,8 +4752,11 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             if action=='legmaster':
                 c.execute("UPDATE pokemon_items_tb SET qty=qty-1 WHERE owner_id=%s AND item_code='master_ball' AND qty>0 RETURNING qty",(uid,))
                 if not c.fetchone():conn.rollback(); await q.answer('Ya no tienes Master Ball.',show_alert=True); return True
-                caught=grant_pokemon_with_cursor(c,uid,species,f'kanto_legendary:{eid}',level_override=level,shiny_override=shiny); c.execute("UPDATE pokemon_legendary_encounters_tb SET status='caught',finished_at=NOW() WHERE encounter_id=%s",(eid,)); conn.commit()
-                await q.answer('🟣 ¡Captura garantizada!',show_alert=True); await q.edit_message_text(f"🟣 MASTER BALL\n\n🎉 ¡Capturaste a #{species:03d} {'✨ SHINY ' if shiny else ''}{NAMES[species]} Nv.{level}!\n🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}",reply_markup=None); return True
+                caught=grant_pokemon_with_cursor(c,uid,species,f'kanto_legendary:{eid}',level_override=level,shiny_override=shiny)
+                halloween_candies=_halloween_award_species_cursor(c,uid,[species])
+                c.execute("UPDATE pokemon_legendary_encounters_tb SET status='caught',finished_at=NOW() WHERE encounter_id=%s",(eid,)); conn.commit()
+                extra=f"\n🎃🍬 +{halloween_candies} Dulces Halloween" if halloween_candies>0 else ''
+                await q.answer('🟣 ¡Captura garantizada!',show_alert=True); await q.edit_message_text(f"🟣 MASTER BALL\n\n🎉 ¡Capturaste a #{species:03d} {'✨ SHINY ' if shiny else ''}{NAMES[species]} Nv.{level}!\n{_sex_text(caught.get('sex'))}\n🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}{extra}",reply_markup=None); return True
             attempts+=1; c.execute("UPDATE pokemon_legendary_encounters_tb SET attempts=%s WHERE encounter_id=%s",(attempts,eid)); conn.commit()
         except Exception as e:conn.rollback(); print('[PK legendary action]',type(e).__name__,e); await q.answer('No pude preparar la captura.',show_alert=True); return True
         finally:_put_connection(conn)
@@ -3472,18 +4774,19 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             except Exception:pass
             return True
         await asyncio.sleep(WILD_DICE_ANIMATION_SECONDS); threshold=WILD_CATCH_THRESHOLD.get('legendario',6); effect={1:'PÉSIMO',2:'FLOJO',3:'BIEN',4:'MUY BIEN',5:'EXCELENTE',6:'PERFECTO'}[value]
-        conn=_get_connection(); caught=None
+        conn=_get_connection(); caught=None; halloween_candies=0
         try:
             c=conn.cursor(); c.execute("SELECT status,attempts,max_attempts FROM pokemon_legendary_encounters_tb WHERE encounter_id=%s FOR UPDATE",(eid,)); st=c.fetchone()
             if not st or st[0]!='revealed':conn.rollback(); return True
             if value>=threshold:
-                caught=grant_pokemon_with_cursor(c,uid,species,f'kanto_legendary:{eid}',level_override=level,shiny_override=shiny); c.execute("UPDATE pokemon_legendary_encounters_tb SET status='caught',finished_at=NOW() WHERE encounter_id=%s",(eid,))
+                caught=grant_pokemon_with_cursor(c,uid,species,f'kanto_legendary:{eid}',level_override=level,shiny_override=shiny); halloween_candies=_halloween_award_species_cursor(c,uid,[species]); c.execute("UPDATE pokemon_legendary_encounters_tb SET status='caught',finished_at=NOW() WHERE encounter_id=%s",(eid,))
             elif attempts>=max_attempts:c.execute("UPDATE pokemon_legendary_encounters_tb SET status='escaped',finished_at=NOW() WHERE encounter_id=%s",(eid,))
             conn.commit()
         except Exception:conn.rollback()
         finally:_put_connection(conn)
         if caught:
-            await q.edit_message_text(f"🎲 {value}/6 · {effect}\n🎉 ¡Capturaste a #{species:03d} {'✨ SHINY ' if shiny else ''}{NAMES[species]} Nv.{level}!\n🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}",reply_markup=None); return True
+            extra=f"\n🎃🍬 +{halloween_candies} Dulces Halloween" if halloween_candies>0 else ''
+            await q.edit_message_text(f"🎲 {value}/6 · {effect}\n🎉 ¡Capturaste a #{species:03d} {'✨ SHINY ' if shiny else ''}{NAMES[species]} Nv.{level}!\n{_sex_text(caught.get('sex'))}\n🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}{extra}",reply_markup=None); return True
         if attempts>=max_attempts:
             await q.edit_message_text(f"🎲 {value}/6 · {effect}\n❌ Fallaron los {max_attempts} tiros.\n\n#{species:03d} {'✨ SHINY ' if shiny else ''}{NAMES[species]} escapó.",reply_markup=None); return True
         conn=_get_connection()
@@ -3712,7 +5015,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         extra=''
         if data.get('held_drop') in HELD_ITEMS:
             x=HELD_ITEMS[data['held_drop']]; extra=f"\n🎁 Objeto equipable: {x['emoji']} {x['name']}"
-        return await q.edit_message_text(f"{box_title}\n\n✨ ¡Te salió #{data['species_id']:03d} SHINY {data['name']}!\n⭐ Nv.{data['level']} · 🧬 IV {data['iv_percent']}% · {data['iv_grade']}{extra}\n\nSe agregó a tu colección, no a tu equipo.")
+        return await q.edit_message_text(f"{box_title}\n\n✨ ¡Te salió #{data['species_id']:03d} SHINY {data['name']} {_sex_symbol(data.get('sex'))}!\n⭐ Nv.{data['level']} · 🧬 IV {data['iv_percent']}% · {data['iv_grade']}{extra}\n\nSe agregó a tu colección, no a tu equipo.")
     if action=='tcreate':
         mode=int(p[2])
         try:
@@ -3893,7 +5196,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             except Exception:pass
             return
         if master_mode:
-            conn=_get_connection(); caught=None; drop=None; held_drop=None
+            conn=_get_connection(); caught=None; drop=None; held_drop=None; halloween_candies=0
             try:
                 c=conn.cursor(); c.execute("SELECT status,species_id,level,shiny,caught_by FROM pokemon_wild_spawns_tb WHERE spawn_id=%s FOR UPDATE",(spawn_id,)); fresh=c.fetchone()
                 if not fresh or fresh[0]!='throwing' or fresh[4] is None or int(fresh[4])!=uid:conn.rollback()
@@ -3909,6 +5212,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                         held_drop=_roll_wild_held_item(species,shiny)
                         if held_drop:grant_item_with_cursor(c,uid,held_drop,1)
                         _ensure_trainer_row_cursor(c,uid); c.execute("UPDATE pokemon_trainer_tb SET wild_catches=wild_catches+1,updated_at=NOW() WHERE user_id=%s",(uid,))
+                        halloween_candies=_halloween_award_species_cursor(c,uid,[species])
                         c.execute("UPDATE pokemon_wild_spawns_tb SET status='caught',finished_at=NOW() WHERE spawn_id=%s",(spawn_id,)); conn.commit()
             except Exception as e:
                 conn.rollback(); print('[PK wild master]',type(e).__name__,e)
@@ -3920,11 +5224,12 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             rarity=rarity_for(species); shiny_line='✨ SHINY ✨\n' if shiny else ''
             identity=(f"{shiny_line}{rarity_emoji(rarity)} #{species:03d} {NAMES[species]} · Nv.{level}\n{_types_text(species)}\n⭐ Rareza: {rarity.upper()}")
             if species==132:
-                fake_species=_wild_ditto_disguise_species(spawn_id); result=(f"🟣 MASTER BALL\n🎉 ¡Pokémon capturado!\n👀 Parecía ser {NAMES[fake_species]}...\n✨ Espera... algo no cuadra...\n💥 ¡ERA DITTO!\n\n🎉 ¡{trainer_name} atrapó a Ditto!\n\n{identity}\n🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}")
-            else:result=(f"🟣 MASTER BALL · ¡CAPTURA GARANTIZADA!\n🎉 ¡{trainer_name} atrapó al Pokémon!\n\n{identity}\n🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}")
+                fake_species=_wild_ditto_disguise_species(spawn_id); result=(f"🟣 MASTER BALL\n🎉 ¡Pokémon capturado!\n👀 Parecía ser {NAMES[fake_species]}...\n✨ Espera... algo no cuadra...\n💥 ¡ERA DITTO!\n\n🎉 ¡{trainer_name} atrapó a Ditto!\n\n{identity}\n{_sex_text(caught.get('sex'))}\n🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}")
+            else:result=(f"🟣 MASTER BALL · ¡CAPTURA GARANTIZADA!\n🎉 ¡{trainer_name} atrapó al Pokémon!\n\n{identity}\n{_sex_text(caught.get('sex'))}\n🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}")
             if drop:result += f"\n🎁 Soltó: {_drop_label(drop)}"
             if held_drop in HELD_ITEMS:
                 x=HELD_ITEMS[held_drop]; result += f"\n🎒 Objeto equipable: {x['emoji']} {x['name']}"
+            if halloween_candies>0:result += f"\n🎃🍬 +{halloween_candies} Dulces Halloween"
             await q.answer('🟣 ¡Captura garantizada!',show_alert=True)
             try:await q.edit_message_text(f'🏆 CAPTURADO POR {trainer_name}\n\n{identity}',reply_markup=None)
             except Exception:pass
@@ -3958,7 +5263,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         effect={1:'PÉSIMO',2:'FLOJO',3:'BIEN',4:'MUY BIEN',5:'EXCELENTE',6:'PERFECTO'}[value]
         threshold=WILD_CATCH_THRESHOLD[rarity_for(species)]
         if value>=threshold:
-            conn=_get_connection(); caught=None; trainer_name=q.from_user.first_name; drop=None; held_drop=None
+            conn=_get_connection(); caught=None; trainer_name=q.from_user.first_name; drop=None; held_drop=None; halloween_candies=0
             try:
                 c=conn.cursor(); c.execute("SELECT status,species_id,level,shiny,chat_id,thread_id,message_id,caught_by FROM pokemon_wild_spawns_tb WHERE spawn_id=%s FOR UPDATE",(spawn_id,)); fresh=c.fetchone()
                 if not fresh or fresh[0]!='throwing' or fresh[7] is None or int(fresh[7])!=uid:
@@ -3971,6 +5276,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                     held_drop=_roll_wild_held_item(species,shiny)
                     if held_drop:grant_item_with_cursor(c,uid,held_drop,1)
                     _ensure_trainer_row_cursor(c,uid); c.execute("UPDATE pokemon_trainer_tb SET wild_catches=wild_catches+1,updated_at=NOW() WHERE user_id=%s",(uid,))
+                    halloween_candies=_halloween_award_species_cursor(c,uid,[species])
                     c.execute("UPDATE pokemon_wild_spawns_tb SET status='caught',finished_at=NOW() WHERE spawn_id=%s",(spawn_id,)); conn.commit()
             except Exception as e:
                 conn.rollback(); print('[PK wild catch]',type(e).__name__,e); caught=None
@@ -3988,13 +5294,14 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                         f"👀 Parecía ser {NAMES[fake_species]}...\n"
                         f"✨ Espera... algo no cuadra...\n💥 ¡ERA DITTO!\n\n"
                         f"🎉 ¡{trainer_name} atrapó a Ditto!\n\n{identity}\n"
-                        f"🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}")
+                        f"{_sex_text(caught.get('sex'))}\n🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}")
             else:
                 result=(f"🎲 {value}/6 · {effect}\n🎉 ¡{trainer_name} atrapó al Pokémon misterioso!\n\n{identity}\n"
-                        f"🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}")
+                        f"{_sex_text(caught.get('sex'))}\n🧬 IV: {caught.get('iv_percent',0)}% · {caught.get('iv_grade','')}\n🎮 Ejemplar #{caught.get('pokemon_id')}")
             if drop:result += f"\n🎁 Soltó: {_drop_label(drop)}"
             if held_drop in HELD_ITEMS:
                 x=HELD_ITEMS[held_drop]; result += f"\n🎒 Objeto equipable: {x['emoji']} {x['name']}"
+            if halloween_candies>0:result += f"\n🎃🍬 +{halloween_candies} Dulces Halloween"
             try:
                 await context.bot.edit_message_text(chat_id=q.message.chat_id,message_id=q.message.message_id,text=f'🏆 CAPTURADO POR {trainer_name}\n\n{identity}',reply_markup=None)
             except Exception:pass
@@ -4132,7 +5439,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
     if action=='releaseconfirm':
         pid=int(p[2]); conn=_get_connection(); result=None
         try:
-            c=conn.cursor(); c.execute("""SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s FOR UPDATE""",(uid,pid)); row=c.fetchone()
+            c=conn.cursor(); c.execute("""SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code,sex FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s FOR UPDATE""",(uid,pid)); row=c.fetchone()
             if not row:conn.rollback(); return await q.answer('Ese Pokémon ya no está en tu colección.',show_alert=True)
             if _battle_busy_cursor(c,uid) or _trade_busy_cursor(c,uid):conn.rollback(); return await q.answer('Termina tu batalla/intercambio antes de liberar Pokémon.',show_alert=True)
             _ensure_team_row_cursor(c,uid); c.execute("SELECT slot1,slot2,slot3,slot4,principal_pokemon_id FROM pokemon_team_tb WHERE owner_id=%s FOR UPDATE",(uid,)); team=c.fetchone() or (None,None,None,None,None)
@@ -4732,6 +6039,54 @@ async def pokemon_media_input(update:Update, context:ContextTypes.DEFAULT_TYPE):
     if m.animation:media_type='animation'; file_id=m.animation.file_id
     elif m.video:media_type='video'; file_id=m.video.file_id
     elif m.photo:media_type='photo'; file_id=m.photo[-1].file_id
+
+    # Multimedia global de Halloween, configurada por BotMaster desde /imagenesevento.
+    event_key=context.user_data.get('pk_wait_halloween_media')
+    if event_key:
+        try:allowed=is_botmaster(update.effective_user.id)
+        except Exception:allowed=False
+        if not allowed:
+            context.user_data.pop('pk_wait_halloween_media',None); return await m.reply_text('Solo BotMaster puede configurar multimedia de Halloween.')
+        if media_type not in ('photo','animation') or not file_id:return await m.reply_text('Envíame una FOTO o un GIF/animación de Telegram.')
+        if event_key not in HALLOWEEN_MEDIA_KEYS:
+            context.user_data.pop('pk_wait_halloween_media',None); return await m.reply_text('Ese elemento de Halloween ya no existe.')
+        conn=_get_connection(); ok=False
+        try:
+            c=conn.cursor(); c.execute("""INSERT INTO pokemon_halloween_media_tb(media_key,media_type,media_file_id,updated_by)
+                                        VALUES(%s,%s,%s,%s)
+                                        ON CONFLICT(media_key) DO UPDATE SET media_type=EXCLUDED.media_type,media_file_id=EXCLUDED.media_file_id,updated_by=EXCLUDED.updated_by,updated_at=NOW()""",
+                                      (event_key,media_type,file_id,update.effective_user.id))
+            # Pikachu Halloween usa arte global: al cambiarlo se actualizan también los ya entregados.
+            if event_key in ('pikachu_normal','pikachu_shiny'):
+                want_shiny=(event_key=='pikachu_shiny')
+                c.execute("UPDATE pokemon_instances_tb SET media_type=%s,media_file_id=%s,updated_at=NOW() WHERE obtained_from='halloween_2026_pikachu' AND shiny=%s",
+                          (media_type,file_id,want_shiny))
+            conn.commit(); ok=True
+        except Exception as e:conn.rollback(); print('[PK Halloween media]',type(e).__name__,e)
+        finally:_put_connection(conn)
+        context.user_data.pop('pk_wait_halloween_media',None)
+        return await m.reply_text(f"✅ {HALLOWEEN_MEDIA_KEYS[event_key]}: {'GIF' if media_type=='animation' else 'imagen'} guardado." if ok else 'No pude guardar la multimedia de Halloween.')
+
+    # Multimedia global de huevos/eclosión, configurada por BotMaster desde /imageneshuevo.
+    egg_key=context.user_data.get('pk_wait_egg_media')
+    if egg_key:
+        try:allowed=is_botmaster(update.effective_user.id)
+        except Exception:allowed=False
+        if not allowed:
+            context.user_data.pop('pk_wait_egg_media',None); return await m.reply_text('Solo BotMaster puede configurar multimedia de huevos.')
+        if media_type not in ('photo','animation') or not file_id:return await m.reply_text('Envíame una FOTO o un GIF/animación de Telegram.')
+        if egg_key not in ('comun','raro','epico','hatching'):
+            context.user_data.pop('pk_wait_egg_media',None); return await m.reply_text('Ese tipo de huevo ya no existe.')
+        conn=_get_connection(); ok=False
+        try:
+            c=conn.cursor(); c.execute("""INSERT INTO pokemon_egg_media_tb(egg_key,media_type,media_file_id,updated_by)
+                                        VALUES(%s,%s,%s,%s)
+                                        ON CONFLICT(egg_key) DO UPDATE SET media_type=EXCLUDED.media_type,media_file_id=EXCLUDED.media_file_id,updated_by=EXCLUDED.updated_by,updated_at=NOW()""",
+                                      (egg_key,media_type,file_id,update.effective_user.id)); conn.commit(); ok=True
+        except Exception as e:conn.rollback(); print('[PK egg media]',type(e).__name__,e)
+        finally:_put_connection(conn)
+        context.user_data.pop('pk_wait_egg_media',None)
+        return await m.reply_text(f"✅ {egg_key}: {'GIF' if media_type=='animation' else 'imagen'} guardado." if ok else 'No pude guardar la multimedia del huevo.')
 
     # Multimedia global de NPC/líder, configurada solo por BotMaster desde /imagenesnpc.
     npc_key=context.user_data.get('pk_wait_npc_media')
