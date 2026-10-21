@@ -1557,6 +1557,27 @@ async def _sync_single_battle_views(context,bid:int,state:dict,chat_id:int,threa
     return public_mid
 
 
+async def _update_single_public_final(context,bid:int,state:dict,chat_id:int,thread_id,message_id:int|None,note:str|None,result_text:str):
+    """Garantiza que el cierre y sus recompensas queden visibles en el mensaje público."""
+    text=_battle_text(state,note) + "\n\n🏁 Batalla terminada.\n\n" + str(result_text)
+    edited=False
+    if message_id:
+        try:
+            await context.bot.edit_message_text(chat_id=int(chat_id),message_id=int(message_id),text=text,reply_markup=None)
+            edited=True
+        except Exception as e:
+            if 'not modified' in str(e).lower():edited=True
+    if not edited:
+        try:
+            msg=await context.bot.send_message(chat_id=int(chat_id),text=text,message_thread_id=thread_id)
+            await _store_battle_public_message_id(bid,int(msg.message_id))
+            return int(msg.message_id)
+        except Exception as e:
+            print('[PK public final]',type(e).__name__,e)
+            return None
+    return int(message_id) if message_id else None
+
+
 async def _send_private_battle_result(context,state:dict,text:str,skip_chat_id:int|None=None):
     for uid in _human_battle_ids(state):
         if skip_chat_id is not None and int(uid)==int(skip_chat_id):continue
@@ -1767,11 +1788,18 @@ def _resolve_round_cursor(c,bid:int,state:dict)->tuple[str|None,list[str],dict]:
     ids=list(state['players'].keys()); choices=state.get('choices',{})
     if any(uid not in choices for uid in ids):return None,[],state
     logs=[]
+    # Cada acción pertenece al Pokémon que estaba activo cuando comenzó la resolución.
+    # Si ese Pokémon cae antes de actuar y entra un reemplazo, la acción vieja NO se hereda.
+    source_active={uid:int(state['players'][uid]['active']) for uid in ids}
     order=sorted(ids,key=lambda u:_choice_speed(state['players'][u],choices[u]),reverse=True)
     for uid in order:
         if state.get('status')!='active':break
         p=state['players'][uid]; oppid=ids[1] if uid==ids[0] else ids[0]; o=state['players'][oppid]; choice=choices[uid]
-        mon=p['mons'][p['active']]
+        original_active=source_active.get(uid)
+        if original_active is None or int(p['active'])!=int(original_active):
+            # El Pokémon que eligió la acción fue debilitado/cambiado antes de su turno.
+            continue
+        mon=p['mons'][int(original_active)]
         if mon['hp']<=0:continue
         if choice['type']=='switch':
             idx=int(choice['index'])
@@ -3079,6 +3107,27 @@ async def _sync_double_battle_views(context,bid:int,state:dict,chat_id:int,threa
     return public_mid
 
 
+async def _update_double_public_final(context,bid:int,state:dict,chat_id:int,thread_id,message_id:int|None,note:str|None,result_text:str):
+    """Garantiza que el resultado final doble quede visible en el grupo."""
+    text=_double_text(state,note) + "\n\n🏁 Batalla terminada.\n\n" + str(result_text)
+    edited=False
+    if message_id:
+        try:
+            await context.bot.edit_message_text(chat_id=int(chat_id),message_id=int(message_id),text=text,reply_markup=None)
+            edited=True
+        except Exception as e:
+            if 'not modified' in str(e).lower():edited=True
+    if not edited:
+        try:
+            msg=await context.bot.send_message(chat_id=int(chat_id),text=text,message_thread_id=thread_id)
+            await _store_battle_public_message_id(bid,int(msg.message_id))
+            return int(msg.message_id)
+        except Exception as e:
+            print('[PK double public final]',type(e).__name__,e)
+            return None
+    return int(message_id) if message_id else None
+
+
 async def _sync_double_private_only(context,bid:int,state:dict,uid:int,note:str|None=None):
     return await _set_private_battle_view(context,bid,uid,_double_private_text(state,uid,note,False),_double_private_markup(bid,state,uid,False),False)
 
@@ -3512,8 +3561,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             except Exception:pass
             w=state['players'][str(final['winner'])]['name']; l=state['players'][str(final['loser'])]['name']
             result_text=f"🏆 {w} ganó la batalla doble Pokémon.\n💰 {w}: +{WIN_PIPESOS:,} PiPesos\n💰 {l}: +{LOSS_PIPESOS:,} PiPesos\n🎮 Los 4 Pokémon: ganador +{WIN_POKEMON_XP} XP c/u · rival +{LOSS_POKEMON_XP} XP c/u\n📈 Ranking: ±{final['elo']} puntos"
-            try:await context.bot.send_message(chat[0],result_text,message_thread_id=chat[1])
-            except Exception:pass
+            await _update_double_public_final(context,bid,state,chat[0],chat[1],chat[2],note,result_text)
             await _send_private_battle_result(context,state,result_text,skip_chat_id=chat[0])
         return True
     if action=='dswitchmenu':
@@ -3559,8 +3607,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         except Exception:pass
         w=state['players'][str(final['winner'])]['name']; l=state['players'][str(final['loser'])]['name']
         result_text=f"🏆 {w} ganó la batalla doble Pokémon.\n💰 {w}: +{WIN_PIPESOS:,} PiPesos\n💰 {l}: +{LOSS_PIPESOS:,} PiPesos\n🎮 Los 4 Pokémon: ganador +{WIN_POKEMON_XP} XP c/u · rival +{LOSS_POKEMON_XP} XP c/u\n📈 Ranking: ±{final['elo']} puntos"
-        try:await context.bot.send_message(chat[0],result_text,message_thread_id=chat[1])
-        except Exception:pass
+        await _update_double_public_final(context,bid,state,chat[0],chat[1],chat[2],f"🏳 {state['players'][str(uid)]['name']} se rindió.",result_text)
         await _send_private_battle_result(context,state,result_text,skip_chat_id=chat[0])
         return True
     return False
@@ -4504,14 +4551,12 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         if final:
             if final.get('training'):
                 result_text='\n'.join(_training_result_lines(final))
-                try:await context.bot.send_message(chat_id,result_text,message_thread_id=thread_id)
-                except Exception:pass
+                await _update_single_public_final(context,bid,state,chat_id,thread_id,msgid,note,result_text)
                 await _send_private_battle_result(context,state,result_text,skip_chat_id=chat_id)
                 return
             if final.get('npc'):
                 result_text='\n'.join(_npc_result_lines(final))
-                try:await context.bot.send_message(chat_id,result_text,message_thread_id=thread_id)
-                except Exception:pass
+                await _update_single_public_final(context,bid,state,chat_id,thread_id,msgid,note,result_text)
                 await _send_private_battle_result(context,state,result_text,skip_chat_id=chat_id)
                 if final.get('leader') and final.get('won') and final.get('bonus_pids'):
                     try:await context.bot.send_message(final['uid'],f'⭐ BONO DE LÍDER · +{LEADER_BONUS_XP} XP\nElige uno de los Pokémon que usaste:',reply_markup=_leader_bonus_markup(bid,final['bonus_pids']))
@@ -4527,8 +4572,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             wname=state['players'][str(final['winner'])]['name']; lname=state['players'][str(final['loser'])]['name']
             lines=[f"🏆 {wname} ganó la batalla Pokémon.",f"💰 {wname}: +{WIN_PIPESOS:,} PiPesos · ⭐ +{WIN_SEASON_XP} XP de temporada",f"💰 {lname}: +{LOSS_PIPESOS:,} PiPesos · ⭐ +{LOSS_SEASON_XP} XP de temporada",f"🎮 Pokémon: ganador +{WIN_POKEMON_XP} XP c/u · rival +{LOSS_POKEMON_XP} XP c/u",f"📈 Ranking: ±{final['elo']} puntos"]+final['notes'][:6]
             result_text='\n'.join(lines)
-            try:await context.bot.send_message(chat_id,result_text,message_thread_id=thread_id)
-            except Exception:pass
+            await _update_single_public_final(context,bid,state,chat_id,thread_id,msgid,note,result_text)
             await _send_private_battle_result(context,state,result_text,skip_chat_id=chat_id)
             tinfo=final.get('tournament')
             if tinfo:
@@ -4584,8 +4628,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         if final.get('training'):result_text='\n'.join(_training_result_lines(final))
         elif final.get('npc'):result_text='\n'.join(_npc_result_lines(final))
         else:result_text=f"🏳 {state['players'][str(uid)]['name']} se rindió.\n🏆 Gana {state['players'][str(final['winner'])]['name']}."
-        try:await context.bot.send_message(chat_id,result_text,message_thread_id=thread_id)
-        except Exception:pass
+        await _update_single_public_final(context,bid,state,chat_id,thread_id,msgid,f"🏳 {state['players'][str(uid)]['name']} se rindió.",result_text)
         await _send_private_battle_result(context,state,result_text,skip_chat_id=chat_id)
         return
 
