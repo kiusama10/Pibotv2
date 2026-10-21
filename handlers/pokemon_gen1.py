@@ -3042,11 +3042,11 @@ def _breed_first_markup(uid:int,page:int=0):
     per=8; pages=max(1,math.ceil(len(valid)/per)); page=max(0,min(int(page),pages-1)); chunk=valid[page*per:(page+1)*per]
     rows=[]
     for r in chunk:
-        rows.append([InlineKeyboardButton(f"{_sex_symbol(r[17])} {r[2] or NAMES[int(r[1])]} · Nv.{int(r[3])}",callback_data=f'pk:breed1:{int(r[0])}:{page}')])
+        rows.append([InlineKeyboardButton(f"{_sex_symbol(r[17])} {r[2] or NAMES[int(r[1])]} · Nv.{int(r[3])}",callback_data=f'pk:breed1:{int(uid)}:{int(r[0])}:{page}')])
     nav=[]
-    if page>0:nav.append(InlineKeyboardButton('⬅️',callback_data=f'pk:breedpage:{page-1}'))
+    if page>0:nav.append(InlineKeyboardButton('⬅️',callback_data=f'pk:breedpage:{int(uid)}:{page-1}'))
     nav.append(InlineKeyboardButton(f'{page+1}/{pages}',callback_data='pk:noop'))
-    if page<pages-1:nav.append(InlineKeyboardButton('➡️',callback_data=f'pk:breedpage:{page+1}'))
+    if page<pages-1:nav.append(InlineKeyboardButton('➡️',callback_data=f'pk:breedpage:{int(uid)}:{page+1}'))
     if nav:rows.append(nav)
     return InlineKeyboardMarkup(rows) if rows else None
 
@@ -3059,7 +3059,7 @@ def _breed_second_markup(uid:int,first_pid:int):
         if int(r[0])==int(first_pid):continue
         if len(r)<=17:continue
         if _breeding_compatible(int(first[1]),str(first[17]),int(r[1]),str(r[17])):
-            rows.append([InlineKeyboardButton(f"{_sex_symbol(r[17])} {r[2] or NAMES[int(r[1])]} · Nv.{int(r[3])}",callback_data=f'pk:breed2:{int(first_pid)}:{int(r[0])}')])
+            rows.append([InlineKeyboardButton(f"{_sex_symbol(r[17])} {r[2] or NAMES[int(r[1])]} · Nv.{int(r[3])}",callback_data=f'pk:breed2:{int(uid)}:{int(first_pid)}:{int(r[0])}')])
             if len(rows)>=20:break
     return InlineKeyboardMarkup(rows) if rows else None
 
@@ -3070,26 +3070,20 @@ async def crianzapokemon_command(update:Update,context:ContextTypes.DEFAULT_TYPE
     finally:_put_connection(conn)
     if active:
         text='🥚 Ya tienes un huevo activo. Debes eclosionarlo o regalarlo antes de criar otro.\n\n'+_egg_row_text(active)
-        try:await context.bot.send_message(uid,text,reply_markup=_egg_ready_markup(active))
-        except Exception:return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
-    else:
-        kb=_breed_first_markup(uid,0)
-        text=(f"💕 CRIANZA POKÉMON\n\nElige el primer Pokémon. PiBot respetará sexo y Grupos Huevo. Ditto tiene su compatibilidad especial.\n"
-              f"💰 Formar un huevo cuesta {BREEDING_COST_PIPESOS:,} PiPesos.\n🥚 Solo puedes tener 1 huevo activo.")
-        if kb is None:text += '\n\n⚠️ No tienes Pokémon aptos para iniciar una crianza.'
-        try:await context.bot.send_message(uid,text,reply_markup=kb)
-        except Exception:return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
-    if update.effective_chat.type!='private':await update.effective_message.reply_text('📩 Te mandé la Guardería Pokémon por privado.')
+        return await update.effective_message.reply_text(text,reply_markup=_egg_ready_markup(active))
+    kb=_breed_first_markup(uid,0)
+    text=(f"💕 CRIANZA POKÉMON · {update.effective_user.full_name}\n\nElige el primer Pokémon. PiBot respetará sexo y Grupos Huevo. Ditto tiene su compatibilidad especial.\n"
+          f"💰 Formar un huevo cuesta {BREEDING_COST_PIPESOS:,} PiPesos.\n🥚 Solo puedes tener 1 huevo activo.")
+    if kb is None:text += '\n\n⚠️ No tienes Pokémon aptos para iniciar una crianza.'
+    return await update.effective_message.reply_text(text,reply_markup=kb)
 
 
 async def guarderiapokemon_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id; conn=_get_connection(); row=None
     try:c=conn.cursor(); row=_active_egg_cursor(c,uid)
     finally:_put_connection(conn)
-    text='🏡 GUARDERÍA POKÉMON\n\n'+(_egg_row_text(row) if row else 'No tienes un huevo activo. Usa /crianzapokemon para formar uno.')
-    try:await context.bot.send_message(uid,text,reply_markup=_egg_ready_markup(row))
-    except Exception:return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
-    if update.effective_chat.type!='private':await update.effective_message.reply_text('📩 Te mandé el estado de la guardería por privado.')
+    text=f'🏡 GUARDERÍA POKÉMON · {update.effective_user.full_name}\n\n'+(_egg_row_text(row) if row else 'No tienes un huevo activo. Usa /crianzapokemon para formar uno.')
+    return await update.effective_message.reply_text(text,reply_markup=_egg_ready_markup(row))
 
 
 async def huevos_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
@@ -3461,18 +3455,18 @@ def _grant_normal_pibot_box_cursor(c,uid:int,code:str)->dict:
     return {'label':label,'jackpot_win':jackpot_win,'jackpot_after':jackpot_after,'gif_bonus':gif_bonus,'code':code}
 
 
-def _halloween_home_markup():
+def _halloween_home_markup(uid:int):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton('🛒 Tienda',callback_data='pk:eventshop'),InlineKeyboardButton('🎁 Recompensas',callback_data='pk:eventrewards')],
-        [InlineKeyboardButton('🥚 Mi huevo',callback_data='pk:eventegg'),InlineKeyboardButton('ℹ️ Cómo funciona',callback_data='pk:eventinfo')],
+        [InlineKeyboardButton('🛒 Tienda',callback_data=f'pk:eventshop:{int(uid)}'),InlineKeyboardButton('🎁 Recompensas',callback_data=f'pk:eventrewards:{int(uid)}')],
+        [InlineKeyboardButton('🥚 Mi huevo',callback_data=f'pk:eventegg:{int(uid)}'),InlineKeyboardButton('ℹ️ Cómo funciona',callback_data=f'pk:eventinfo:{int(uid)}')],
     ])
 
 
-def _halloween_shop_markup():
+def _halloween_shop_markup(uid:int):
     rows=[]
     for code,item in HALLOWEEN_SHOP.items():
-        rows.append([InlineKeyboardButton(f"{item['emoji']} {item['name']} · {item['price']} 🍬",callback_data=f'pk:eventbuy:{code}')])
-    rows.append([InlineKeyboardButton('⬅️ Evento',callback_data='pk:eventhome')]); return InlineKeyboardMarkup(rows)
+        rows.append([InlineKeyboardButton(f"{item['emoji']} {item['name']} · {item['price']} 🍬",callback_data=f'pk:eventbuy:{int(uid)}:{code}')])
+    rows.append([InlineKeyboardButton('⬅️ Evento',callback_data=f'pk:eventhome:{int(uid)}')]); return InlineKeyboardMarkup(rows)
 
 
 def _halloween_media_markup():
@@ -3481,26 +3475,26 @@ def _halloween_media_markup():
     return InlineKeyboardMarkup(rows)
 
 
-async def _send_event_home_to_user(context:ContextTypes.DEFAULT_TYPE,uid:int):
-    conn=_get_connection(); candies=0; media=(None,None)
+async def _send_event_home(context:ContextTypes.DEFAULT_TYPE,uid:int,chat_id:int,thread_id:int|None=None):
+    conn=_get_connection(); candies=0; media=(None,None); owner_name=f'Entrenador {uid}'
     try:
-        c=conn.cursor(); candies=_halloween_wallet_cursor(c,uid); media=_halloween_media_cursor(c,'cover')
+        c=conn.cursor(); candies=_halloween_wallet_cursor(c,uid); media=_halloween_media_cursor(c,'cover'); owner_name=_display_name_cursor(c,uid)
     finally:_put_connection(conn)
     active=_halloween_active(); status=_halloween_countdown_text()
-    text=(f"🎃 EVENTO HALLOWEEN 2026\n\n🍬 Tus Dulces Halloween: {candies}\n👻 Los Pokémon Fantasma sueltan más dulces.\n"
+    text=(f"🎃 EVENTO HALLOWEEN 2026 · {owner_name}\n\n🍬 Tus Dulces Halloween: {candies}\n👻 Los Pokémon Fantasma sueltan más dulces.\n"
           f"✨ Caja Pokémon Halloween: Shiny 1/{HALLOWEEN_BOX_SHINY_DENOMINATOR}.\n🎃⚡ Pikachu Halloween: exclusivo de la tienda · 80% normal · 20% Shiny.\n\n⏳ {status}")
     if not active:text += '\n\n🔒 La tienda y los drops del evento ya están cerrados. Lo que ganaste sigue siendo tuyo.'
-    markup=_halloween_home_markup()
-    if media[0]=='animation' and media[1]:return await context.bot.send_animation(uid,animation=media[1],caption=text,reply_markup=markup)
-    if media[0]=='photo' and media[1]:return await context.bot.send_photo(uid,photo=media[1],caption=text,reply_markup=markup)
-    return await context.bot.send_message(uid,text,reply_markup=markup)
+    markup=_halloween_home_markup(uid)
+    kwargs={'reply_markup':markup}
+    if thread_id:kwargs['message_thread_id']=thread_id
+    if media[0]=='animation' and media[1]:return await context.bot.send_animation(chat_id,animation=media[1],caption=text,**kwargs)
+    if media[0]=='photo' and media[1]:return await context.bot.send_photo(chat_id,photo=media[1],caption=text,**kwargs)
+    return await context.bot.send_message(chat_id,text,**kwargs)
 
 
 async def evento_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    uid=update.effective_user.id
-    try:await _send_event_home_to_user(context,uid)
-    except Exception:return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start para usar /evento.')
-    if update.effective_chat.type!='private':await update.effective_message.reply_text('🎃 Te mandé el evento y la tienda por privado.')
+    uid=update.effective_user.id; chat_id=update.effective_chat.id; thread_id=getattr(update.effective_message,'message_thread_id',None)
+    return await _send_event_home(context,uid,chat_id,thread_id)
 
 
 async def imagenesevento_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
@@ -4322,42 +4316,48 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         name=(q.from_user.full_name or q.from_user.first_name or q.from_user.username or f'Entrenador {uid}').strip()
         await _hatch_egg(context,egg_id,q.message.chat_id,getattr(q.message,'message_thread_id',None),name)
         return True
-    if action=='eventhome':
-        await q.answer();
-        try:await _send_event_home_to_user(context,uid)
-        except Exception:pass
-        return True
-    if action=='eventshop':
-        conn=_get_connection(); bal=0; media=(None,None)
-        try:
-            c=conn.cursor(); bal=_halloween_wallet_cursor(c,uid); media=_halloween_media_cursor(c,'shop')
-        finally:_put_connection(conn)
-        await q.answer()
-        text=f'🛒 TIENDA HALLOWEEN\n\n🍬 Tienes {bal} Dulces Halloween.\n\nLas cajas Épica y Legendaria son las mismas cajas normales de PiBot, pero aquí se pagan con dulces.'
-        if media[0]=='animation' and media[1]:await context.bot.send_animation(uid,animation=media[1],caption=text,reply_markup=_halloween_shop_markup())
-        elif media[0]=='photo' and media[1]:await context.bot.send_photo(uid,photo=media[1],caption=text,reply_markup=_halloween_shop_markup())
-        else:await context.bot.send_message(uid,text,reply_markup=_halloween_shop_markup())
-        return True
-    if action=='eventrewards':
-        await q.answer(); await context.bot.send_message(uid,
-            '🎁 RECOMPENSAS HALLOWEEN\n\n'
-            f'🎃📦 Caja Pokémon Halloween: Pokémon Gen 1 no legendario, con probabilidad Shiny 1/{HALLOWEEN_BOX_SHINY_DENOMINATOR}.\n'
-            f'🎃🥚 Huevo Maldito: especies temáticas; Shiny 1/{HALLOWEEN_EGG_SHINY_DENOMINATOR}.\n'
-            '🎃⚡ Pikachu Halloween: exclusivo de la tienda; al comprarlo tiene 80% normal y 20% Shiny.\n'
-            '💜🌟 Las cajas normales conservan su roll, Jackpot y XP de temporada.')
-        return True
-    if action=='eventinfo':
-        await q.answer(); await context.bot.send_message(uid,
-            '🎃 CÓMO FUNCIONA\n\n🍬 Durante el evento los Pokémon pueden soltar Dulces Halloween. Los de tipo Fantasma sueltan más.\n'
-            '🍬 Hay apariciones automáticas de Dulces Halloween para recoger, un entrenador Halloween diario y un jefe en viernes, sábado y domingo.\n'
-            '🥚 Los huevos suben +0.5% por cada mensaje tuyo en los grupos oficiales. Al 100% tú decides cuándo romperlos.\n'
-            f'⏳ {_halloween_countdown_text()}')
-        return True
-    if action=='eventegg':
-        conn=_get_connection(); row=None
-        try:c=conn.cursor(); row=_active_egg_cursor(c,uid)
-        finally:_put_connection(conn)
-        await q.answer(); await context.bot.send_message(uid,'🥚 TU HUEVO\n\n'+_egg_row_text(row),reply_markup=_egg_ready_markup(row)); return True
+    if action in ('eventhome','eventshop','eventrewards','eventinfo','eventegg'):
+        owner=int(p[2]) if len(p)>2 and str(p[2]).isdigit() else uid
+        if owner!=uid:return await q.answer('Este menú del evento no es tuyo. Usa /evento.',show_alert=True) or True
+        chat_id=q.message.chat_id; thread_id=getattr(q.message,'message_thread_id',None)
+        if action=='eventhome':
+            await q.answer();
+            try:await _send_event_home(context,uid,chat_id,thread_id)
+            except Exception:pass
+            return True
+        if action=='eventshop':
+            conn=_get_connection(); bal=0; media=(None,None)
+            try:
+                c=conn.cursor(); bal=_halloween_wallet_cursor(c,uid); media=_halloween_media_cursor(c,'shop')
+            finally:_put_connection(conn)
+            await q.answer()
+            text=f'🛒 TIENDA HALLOWEEN · {q.from_user.full_name}\n\n🍬 Tienes {bal} Dulces Halloween.\n\nLas cajas Épica y Legendaria son las mismas cajas normales de PiBot, pero aquí se pagan con dulces.'
+            kwargs={'reply_markup':_halloween_shop_markup(uid)}
+            if thread_id:kwargs['message_thread_id']=thread_id
+            if media[0]=='animation' and media[1]:await context.bot.send_animation(chat_id,animation=media[1],caption=text,**kwargs)
+            elif media[0]=='photo' and media[1]:await context.bot.send_photo(chat_id,photo=media[1],caption=text,**kwargs)
+            else:await context.bot.send_message(chat_id,text,**kwargs)
+            return True
+        if action=='eventrewards':
+            await q.answer(); await context.bot.send_message(chat_id,
+                '🎁 RECOMPENSAS HALLOWEEN\n\n'
+                f'🎃📦 Caja Pokémon Halloween: Pokémon Gen 1 no legendario, con probabilidad Shiny 1/{HALLOWEEN_BOX_SHINY_DENOMINATOR}.\n'
+                f'🎃🥚 Huevo Maldito: especies temáticas; Shiny 1/{HALLOWEEN_EGG_SHINY_DENOMINATOR}.\n'
+                '🎃⚡ Pikachu Halloween: exclusivo de la tienda; al comprarlo tiene 80% normal y 20% Shiny.\n'
+                '💜🌟 Las cajas normales conservan su roll, Jackpot y XP de temporada.',message_thread_id=thread_id or None)
+            return True
+        if action=='eventinfo':
+            await q.answer(); await context.bot.send_message(chat_id,
+                '🎃 CÓMO FUNCIONA\n\n🍬 Durante el evento los Pokémon pueden soltar Dulces Halloween. Los de tipo Fantasma sueltan más.\n'
+                '🍬 Hay apariciones automáticas de Dulces Halloween para recoger, un entrenador Halloween diario y un jefe en viernes, sábado y domingo.\n'
+                '🥚 Los huevos suben +0.5% por cada mensaje tuyo en los grupos oficiales. Al 100% tú decides cuándo romperlos.\n'
+                f'⏳ {_halloween_countdown_text()}',message_thread_id=thread_id or None)
+            return True
+        if action=='eventegg':
+            conn=_get_connection(); row=None
+            try:c=conn.cursor(); row=_active_egg_cursor(c,uid)
+            finally:_put_connection(conn)
+            await q.answer(); await context.bot.send_message(chat_id,f'🥚 HUEVO DE {q.from_user.full_name}\n\n'+_egg_row_text(row),reply_markup=_egg_ready_markup(row),message_thread_id=thread_id or None); return True
     if action=='eventmediapick':
         try:
             if not is_botmaster(uid):return await q.answer('Solo BotMaster.',show_alert=True) or True
@@ -4386,7 +4386,9 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         finally:_put_connection(conn)
         context.user_data.pop('pk_wait_halloween_media',None); await q.answer('Multimedia eliminada.',show_alert=True); return True
     if action=='eventbuy':
-        code=str(p[2]); item=HALLOWEEN_SHOP.get(code)
+        owner=int(p[2]) if len(p)>3 and str(p[2]).isdigit() else uid
+        if owner!=uid:return await q.answer('Este menú de compra no es tuyo. Usa /evento.',show_alert=True) or True
+        code=str(p[3] if len(p)>3 and str(p[2]).isdigit() else p[2]); item=HALLOWEEN_SHOP.get(code)
         if not item:return await q.answer('Recompensa inválida.',show_alert=True) or True
         if not _halloween_active():return await q.answer('🎃 La tienda Halloween ya está cerrada.',show_alert=True) or True
         conn=_get_connection(); result_text=''; box_result=None; media_key=None; newbal=0
@@ -4426,9 +4428,10 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             try:c=conn.cursor(); media=_halloween_media_cursor(c,media_key)
             finally:_put_connection(conn)
         try:
-            if media[0]=='animation' and media[1]:await context.bot.send_animation(uid,animation=media[1],caption=result_text)
-            elif media[0]=='photo' and media[1]:await context.bot.send_photo(uid,photo=media[1],caption=result_text)
-            else:await context.bot.send_message(uid,result_text)
+            target_chat=q.message.chat_id; target_thread=getattr(q.message,'message_thread_id',None)
+            if media[0]=='animation' and media[1]:await context.bot.send_animation(target_chat,animation=media[1],caption=result_text,message_thread_id=target_thread or None)
+            elif media[0]=='photo' and media[1]:await context.bot.send_photo(target_chat,photo=media[1],caption=result_text,message_thread_id=target_thread or None)
+            else:await context.bot.send_message(target_chat,result_text,message_thread_id=target_thread or None)
         except Exception:pass
         return True
     if action=='eventclaim':
@@ -4469,25 +4472,39 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             except Exception as e:print('[PK Halloween spawned NPC]',type(e).__name__,e)
         return True
     if action=='breedpage':
-        page=int(p[2]); await q.answer(); await q.edit_message_text('💕 CRIANZA POKÉMON\n\nElige el primer Pokémon:',reply_markup=_breed_first_markup(uid,page)); return True
+        if len(p)>=4: owner,page=int(p[2]),int(p[3])
+        else: owner,page=uid,int(p[2])
+        if owner!=uid:return await q.answer('Este menú de crianza no es tuyo.',show_alert=True) or True
+        await q.answer(); await q.edit_message_text(f'💕 CRIANZA POKÉMON · {q.from_user.full_name}\n\nElige el primer Pokémon:',reply_markup=_breed_first_markup(uid,page)); return True
     if action=='breed1':
-        pid=int(p[2]); first=_get_instance(uid,pid)
+        if len(p)>=5: owner,pid= int(p[2]),int(p[3])
+        else: owner,pid=uid,int(p[2])
+        if owner!=uid:return await q.answer('Este menú de crianza no es tuyo.',show_alert=True) or True
+        first=_get_instance(uid,pid)
         if not first:return await q.answer('Ese Pokémon ya no está disponible.',show_alert=True)
         markup=_breed_second_markup(uid,pid)
         if not markup:return await q.answer('No tienes otro Pokémon compatible con este.',show_alert=True)
         await q.answer(); await q.edit_message_text(f"💕 Primer padre: {_pokemon_label(first)}\n\nElige una pareja compatible:",reply_markup=markup); return True
     if action=='breed2':
-        a,b=int(p[2]),int(p[3]); ra=_get_instance(uid,a); rb=_get_instance(uid,b)
+        if len(p)>=5: owner,a,b=int(p[2]),int(p[3]),int(p[4])
+        else: owner,a,b=uid,int(p[2]),int(p[3])
+        if owner!=uid:return await q.answer('Este menú de crianza no es tuyo.',show_alert=True) or True
+        ra=_get_instance(uid,a); rb=_get_instance(uid,b)
         if not ra or not rb or len(ra)<=17 or len(rb)<=17:return await q.answer('Alguno ya no está disponible.',show_alert=True)
         if not _breeding_compatible(int(ra[1]),str(ra[17]),int(rb[1]),str(rb[17])):return await q.answer('Ya no son compatibles.',show_alert=True)
         offspring=_offspring_species(int(ra[1]),str(ra[17]),int(rb[1]),str(rb[17])); tier=rarity_for(offspring)
         if tier=='legendario':tier='epico'
-        kb=InlineKeyboardMarkup([[InlineKeyboardButton(f'🥚 Formar huevo · {BREEDING_COST_PIPESOS:,} PiPesos',callback_data=f'pk:breedgo:{a}:{b}')],[InlineKeyboardButton('❌ Cancelar',callback_data='pk:breedcancel')]])
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton(f'🥚 Formar huevo · {BREEDING_COST_PIPESOS:,} PiPesos',callback_data=f'pk:breedgo:{uid}:{a}:{b}')],[InlineKeyboardButton('❌ Cancelar',callback_data=f'pk:breedcancel:{uid}')]])
         await q.answer(); await q.edit_message_text(f"💕 PAREJA COMPATIBLE\n\n1. {_pokemon_label(ra)}\n2. {_pokemon_label(rb)}\n\n🥚 La cría será de la familia #{offspring:03d} {NAMES[offspring]}.\n🧬 Dos DVs se heredarán de los padres; el resto será aleatorio.\n✨ Los padres Shiny mejoran un poco la posibilidad Shiny.\n💰 Coste: {BREEDING_COST_PIPESOS:,} PiPesos.",reply_markup=kb); return True
     if action=='breedcancel':
+        owner=int(p[2]) if len(p)>2 else uid
+        if owner!=uid:return await q.answer('Este menú de crianza no es tuyo.',show_alert=True) or True
         await q.answer('Crianza cancelada.'); await q.edit_message_text('❌ Crianza cancelada.'); return True
     if action=='breedgo':
-        a,b=int(p[2]),int(p[3]); conn=_get_connection(); eid=None; tier='comun'; species=None
+        if len(p)>=5: owner,a,b=int(p[2]),int(p[3]),int(p[4])
+        else: owner,a,b=uid,int(p[2]),int(p[3])
+        if owner!=uid:return await q.answer('Este menú de crianza no es tuyo.',show_alert=True) or True
+        conn=_get_connection(); eid=None; tier='comun'; species=None
         try:
             c=conn.cursor()
             if _active_egg_cursor(c,uid,True):conn.rollback(); await q.answer('Ya tienes un huevo activo.',show_alert=True); return True
