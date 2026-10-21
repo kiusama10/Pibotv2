@@ -1507,6 +1507,37 @@ def _move_menu(bid:int,mon:dict):
 # Mensajes espejo de batalla por privado. Solo guardamos IDs de mensajes en memoria;
 # el estado real de la batalla sigue viviendo exclusivamente en state_json/DB.
 _BATTLE_PRIVATE_VIEW_MESSAGES={}
+# Menús auxiliares temporales de batalla (movimiento/objetivo/cambio/objeto).
+# Se eliminan al registrar la acción para que el privado no se llene de mensajes viejos.
+_BATTLE_PRIVATE_TRANSIENT_MESSAGES={}
+
+
+def _remember_battle_transient(bid:int,uid:int,message_id:int):
+    key=(int(bid),int(uid))
+    _BATTLE_PRIVATE_TRANSIENT_MESSAGES.setdefault(key,set()).add(int(message_id))
+
+
+async def _delete_battle_transients(context,bid:int,uid:int):
+    key=(int(bid),int(uid)); mids=list(_BATTLE_PRIVATE_TRANSIENT_MESSAGES.pop(key,set()))
+    for mid in mids:
+        try:await context.bot.delete_message(chat_id=int(uid),message_id=int(mid))
+        except Exception:pass
+
+
+async def _send_battle_transient(context,bid:int,uid:int,text:str,markup=None):
+    # Al abrir un submenú nuevo, borra cualquier selector anterior de esa batalla.
+    await _delete_battle_transients(context,bid,uid)
+    try:
+        msg=await context.bot.send_message(chat_id=int(uid),text=text,reply_markup=markup)
+        _remember_battle_transient(bid,uid,int(msg.message_id))
+        return msg
+    except Exception:
+        return None
+
+
+async def _delete_all_battle_transients(context,bid:int,state:dict):
+    for human in _human_battle_ids(state):
+        await _delete_battle_transients(context,bid,human)
 
 
 def _human_battle_ids(state:dict)->list[int]:
@@ -3537,7 +3568,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         if state.get('status')!='active' or state.get('replacement_needed',{}).get(key):await q.answer('Primero completa los reemplazos pendientes.',show_alert=True); return True
         pl=state['players'][key]
         if pos not in (0,1) or pos>=len(pl.get('active',[])) or pl['mons'][pl['active'][pos]]['hp']<=0:await q.answer('Ese Pokémon ya no puede actuar.',show_alert=True); return True
-        await q.answer(); await q.message.reply_text('Elige movimiento:',reply_markup=_double_mon_action_markup(bid,state,uid,pos)); return True
+        await q.answer(); await _send_battle_transient(context,bid,uid,'Elige movimiento:',_double_mon_action_markup(bid,state,uid,pos)); return True
     if action=='dmove':
         bid,pos,mi=int(p[2]),int(p[3]),int(p[4]); br=_get_battle(bid)
         if not br or br[6]!='active':await q.answer('Terminó.',show_alert=True); return True
@@ -3557,7 +3588,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         for tpos,tidx in enumerate(state['players'][opp]['active']):
             tm=state['players'][opp]['mons'][tidx]
             if tm['hp']>0:rows.append([InlineKeyboardButton(f"🎯 {_battle_title_mon(tm)} · {tm['hp']}/{tm['max_hp']} HP",callback_data=f'pk:dtarget:{bid}:{pos}:{mi}:{tpos}')])
-        await q.answer(); await q.message.reply_text(f"Objetivo para {MOVES[code][0]}:",reply_markup=InlineKeyboardMarkup(rows)); return True
+        await q.answer(); await _send_battle_transient(context,bid,uid,f"Objetivo para {MOVES[code][0]}:",InlineKeyboardMarkup(rows)); return True
     if action in ('dtarget','dswitch'):
         bid=int(p[2]); conn=_get_connection(); state=None; final=None; logs=[]; chat=None
         try:
@@ -3585,6 +3616,10 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         except Exception as e:conn.rollback(); print('[PK double action]',type(e).__name__,e); await q.answer('No pude registrar la acción.',show_alert=True); return True
         finally:_put_connection(conn)
         await q.answer('Acción elegida ✅')
+        # El selector usado ya no sirve; se borra para no acumular menús por ronda.
+        await _delete_battle_transients(context,bid,uid)
+        if logs or final:
+            await _delete_all_battle_transients(context,bid,state)
         note='\n'.join(logs[-10:]) if logs else 'Esperando las demás acciones…'
         await _sync_double_battle_views(context,bid,state,chat[0],chat[1],chat[2],note,final=bool(final))
         if final:
@@ -3606,7 +3641,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         for i,m in enumerate(pl['mons']):
             if i not in pl['active'] and m['hp']>0:rows.append([InlineKeyboardButton(f"🔄 {_battle_title_mon(m)} · {m['hp']}/{m['max_hp']} HP",callback_data=f'pk:dswitch:{bid}:{pos}:{i}')])
         if not rows:await q.answer('No tienes reserva disponible.',show_alert=True); return True
-        await q.answer(); await q.message.reply_text('Elige cambio:',reply_markup=InlineKeyboardMarkup(rows)); return True
+        await q.answer(); await _send_battle_transient(context,bid,uid,'Elige cambio:',InlineKeyboardMarkup(rows)); return True
     if action=='dreplace':
         bid,pos,new=int(p[2]),int(p[3]),int(p[4]); conn=_get_connection(); state=None; chat=None
         try:
@@ -3618,6 +3653,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         except Exception:conn.rollback(); await q.answer('No pude cambiarlo.',show_alert=True); return True
         finally:_put_connection(conn)
         await q.answer('Reemplazo listo ✅')
+        await _delete_battle_transients(context,bid,uid)
         try:await q.edit_message_text('✅ Pokémon enviado al campo.')
         except Exception:pass
         await _sync_double_battle_views(context,bid,state,chat[0],chat[1],chat[2],'Reemplazos listos.')
@@ -3633,6 +3669,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         except Exception:conn.rollback(); await q.answer('No pude rendirte.',show_alert=True); return True
         finally:_put_connection(conn)
         await q.answer('Te rendiste.',show_alert=True)
+        await _delete_all_battle_transients(context,bid,state)
         await _sync_double_battle_views(context,bid,state,chat[0],chat[1],chat[2],f"🏳 {state['players'][str(uid)]['name']} se rindió.",final=True)
         try:
             from handlers.season_pass import grant_season_xp
@@ -4577,6 +4614,10 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         except Exception as e:conn.rollback(); print('[PK action]',type(e).__name__,e); return await q.answer('No pude registrar la acción.',show_alert=True)
         finally:_put_connection(conn)
         await q.answer('Acción elegida ✅')
+        # Borra selectores auxiliares de cambio/objeto usados en esta ronda.
+        await _delete_battle_transients(context,bid,uid)
+        if logs or final:
+            await _delete_all_battle_transients(context,bid,state)
         # Sincroniza el mismo estado en el grupo y en los paneles privados.
         # Las decisiones pendientes nunca se publican; solo se muestran resultados ya resueltos.
         note='\n'.join(logs[-8:]) if logs else 'Esperando la elección del rival…'
@@ -4630,7 +4671,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         for i,m in enumerate(pl['mons']):
             if i!=pl['active'] and m['hp']>0:rows.append([InlineKeyboardButton(f"🔄 {_battle_title_mon(m)} · {m['hp']}/{m['max_hp']} HP",callback_data=f'pk:bswitch:{bid}:{i}')])
         if not rows:return await q.answer('No tienes otro Pokémon disponible.',show_alert=True)
-        await q.answer(); return await q.message.reply_text('Elige cambio para esta ronda:',reply_markup=InlineKeyboardMarkup(rows))
+        await q.answer(); return await _send_battle_transient(context,bid,uid,'Elige cambio para esta ronda:',InlineKeyboardMarkup(rows))
     if action=='bitemmenu':
         bid=int(p[2]); conn=_get_connection()
         try:c=conn.cursor(); c.execute("SELECT item_code,qty FROM pokemon_items_tb WHERE owner_id=%s AND qty>0",(uid,)); inv=c.fetchall()
@@ -4640,7 +4681,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             if code in ITEMS and ITEMS[code][3] in ('heal','revive'):
                 name,em,_,_=ITEMS[code]; rows.append([InlineKeyboardButton(f'{em} {name} ×{qty}',callback_data=f'pk:bitem:{bid}:{code}')])
         if not rows:return await q.answer('No tienes objetos utilizables en batalla.',show_alert=True)
-        await q.answer(); return await q.message.reply_text('🎒 Elige objeto para esta ronda:',reply_markup=InlineKeyboardMarkup(rows))
+        await q.answer(); return await _send_battle_transient(context,bid,uid,'🎒 Elige objeto para esta ronda:',InlineKeyboardMarkup(rows))
     if action=='surrender':
         bid=int(p[2]); conn=_get_connection(); final=None; state=None; chat_id=None; thread_id=None
         try:
@@ -4656,6 +4697,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         except Exception:conn.rollback(); return await q.answer('No pude rendirte.',show_alert=True)
         finally:_put_connection(conn)
         await q.answer('Te rendiste.',show_alert=True)
+        await _delete_all_battle_transients(context,bid,state)
         br2=_get_battle(bid); msgid=br2[8] if br2 else None
         await _sync_single_battle_views(context,bid,state,chat_id,thread_id,msgid,f"🏳 {state['players'][str(uid)]['name']} se rindió.",final=True)
         if final.get('training'):result_text='\n'.join(_training_result_lines(final))
