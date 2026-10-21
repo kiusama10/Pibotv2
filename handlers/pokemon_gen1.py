@@ -1264,6 +1264,39 @@ async def equipo_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type!='private': await update.effective_message.reply_text('📩 Tu equipo es privado; te lo mandé por PV.')
 
 
+def _public_team_text(uid:int, display_name:str)->str:
+    rows=_team_rows(uid)
+    principal=_principal_pid(uid)
+    lines=[f'🎒 EQUIPO POKÉMON · {display_name}','']
+    if not any(rows):
+        lines.append('Todavía no tienes Pokémon en tu equipo.')
+        return '\n'.join(lines)
+    for i,r in enumerate(rows,1):
+        if not r:
+            lines.append(f'{i}. — Vacío —')
+            continue
+        pid,species,nickname,level=int(r[0]),int(r[1]),r[2],int(r[3])
+        base=NAMES.get(species,'Pokémon')
+        shown=f'{nickname} ({base})' if nickname else base
+        shiny='✨ ' if bool(r[10]) else ''
+        star='⭐ ' if principal==pid else ''
+        lines.append(f'{i}. {star}{shiny}#{species:03d} {shown} · Nv.{level}')
+        lines.append(f'   {_types_text(species)}')
+        held=r[16] if len(r)>16 else None
+        if held in HELD_ITEMS:
+            item=HELD_ITEMS[held]
+            lines.append(f"   🎒 {item['emoji']} {item['name']}")
+    return '\n'.join(lines)
+
+
+async def mostrarequipo_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type=='private':
+        return await update.effective_message.reply_text('📢 Usa /mostrarequipo en el grupo donde quieras enseñar tu equipo.')
+    user=update.effective_user
+    display_name=(user.full_name or user.first_name or user.username or 'Entrenador').strip()
+    await update.effective_message.reply_text(_public_team_text(user.id,display_name))
+
+
 def _items_text(uid:int)->str:
     conn=_get_connection()
     try:
