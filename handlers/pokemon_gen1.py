@@ -1771,6 +1771,46 @@ def _team_for_battle_cursor(c,uid:int,mode:int):
     return mons
 
 
+def _pvp_team_slot_ids_cursor(c,uid:int)->list[int]:
+    """Los PvP normales eligen exclusivamente entre los 4 espacios de /equipo."""
+    _ensure_team_row_cursor(c,uid)
+    c.execute("SELECT slot1,slot2,slot3,slot4 FROM pokemon_team_tb WHERE owner_id=%s",(uid,))
+    row=c.fetchone() or (None,None,None,None)
+    return [int(x) for x in row if x is not None]
+
+
+def _pvp_selection_markup_cursor(c,uid:int,bid:int,mode:int,selected:list[int],ready:bool=False):
+    rows=[]; slots=_pvp_team_slot_ids_cursor(c,uid)
+    order={int(pid):i+1 for i,pid in enumerate(selected)}
+    for pid in slots:
+        c.execute("SELECT species_id,nickname,level,shiny FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); r=c.fetchone()
+        if not r:continue
+        shown=r[1] or NAMES[int(r[0])]; shiny='✨ ' if r[3] else ''
+        prefix=f'{order[pid]}️⃣' if pid in order and order[pid] <= 3 else ('✅' if pid in order else '⬜')
+        rows.append([InlineKeyboardButton(f'{prefix} {shiny}{shown} · Nv.{int(r[2])}',callback_data=f'pk:pvppick:{bid}:{pid}')])
+    if len(selected)==mode and not ready:
+        rows.append([InlineKeyboardButton(f'✅ Confirmar equipo {mode}v{mode}',callback_data=f'pk:pvpready:{bid}')])
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
+def _pvp_mons_from_ids_cursor(c,uid:int,pids:list[int])->list[dict]|None:
+    mons=[]
+    for pid in pids:
+        c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code,sex FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,int(pid))); r=c.fetchone()
+        if not r:return None
+        mons.append(_battle_mon(r))
+    return mons
+
+
+def _pvp_setup_public_text(state:dict)->str:
+    ids=list(state.get('players',{})); ready=state.get('pvp_ready',{})
+    mode=int(state.get('mode',1)); lines=[f'⚔️ PREPARANDO BATALLA POKÉMON {mode}v{mode}','',
+        'Cada entrenador está eligiendo su equipo por privado.','Los Pokémon elegidos siguen ocultos hasta que salgan al combate.','']
+    for key in ids:
+        pl=state['players'][key]; lines.append(f"{'✅' if ready.get(key) else '⌛'} {pl['name']}")
+    return '\n'.join(lines)
+
+
 def _battle_title_mon(mon:dict)->str:
     species=int(mon['species']); base=NAMES[species]; name=mon.get('nickname') or base
     shown=f"{name} ({base})" if mon.get('nickname') else base
@@ -2439,7 +2479,7 @@ async def batallapokemon_command(update:Update, context:ContextTypes.DEFAULT_TYP
         text=f'🏆 <b>BATALLA DE TORNEO</b>{who}\n\nFormato obligatorio: {tmode}v{tmode}. El ganador avanzará automáticamente en el cuadro.'
     else:
         kb=InlineKeyboardMarkup([[InlineKeyboardButton('1️⃣ 1v1',callback_data=f'pk:accept:{bid}:1'),InlineKeyboardButton('2️⃣ 2v2',callback_data=f'pk:accept:{bid}:2'),InlineKeyboardButton('3️⃣ 3v3',callback_data=f'pk:accept:{bid}:3')],[InlineKeyboardButton('❌ Cancelar',callback_data=f'pk:cancelchallenge:{bid}')]])
-        text=f'⚔️ <b>RETO POKÉMON</b>{who}\n\nEl rival elige formato. El equipo permanece privado y solo se revelan los Pokémon que salen a pelear.'
+        text=f'⚔️ <b>RETO POKÉMON</b>{who}\n\nEl rival elige formato. Después ambos eligen por privado qué Pokémon de sus 4 usar y en qué orden. El equipo permanece oculto hasta salir a pelear.'
     await update.effective_message.reply_text(text,reply_markup=kb,parse_mode='HTML')
 
 
@@ -6048,14 +6088,71 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             challenger=int(br[0]); invited=int(br[1]) if br[1] is not None else None
             if uid==challenger:conn.rollback(); return await q.answer('El rival debe aceptar.',show_alert=True)
             if invited is not None and uid!=invited:conn.rollback(); return await q.answer('Este reto era para otra persona.',show_alert=True)
-            a=_team_for_battle_cursor(c,challenger,mode); b=_team_for_battle_cursor(c,uid,mode)
-            if not a or not b:conn.rollback(); return await q.answer(f'Los dos necesitan {mode} Pokémon colocados en los primeros {mode} espacios del equipo.',show_alert=True)
-            state={'status':'active','mode':mode,'round':1,'choices':{},'players':{str(challenger):{'name':_display_name_cursor(c,challenger),'mons':a,'active':0},str(uid):{'name':_display_name_cursor(c,uid),'mons':b,'active':0}}}
+            a_slots=_pvp_team_slot_ids_cursor(c,challenger); b_slots=_pvp_team_slot_ids_cursor(c,uid)
+            if len(a_slots)<mode or len(b_slots)<mode:conn.rollback(); return await q.answer(f'Los dos necesitan al menos {mode} Pokémon dentro de los 4 espacios de /equipo.',show_alert=True)
+            state={'status':'setup','battle_kind':'pvp','mode':mode,'round':1,'choices':{},'pvp_selected':{str(challenger):[],str(uid):[]},'pvp_ready':{},
+                   'players':{str(challenger):{'name':_display_name_cursor(c,challenger),'mons':[],'active':0},str(uid):{'name':_display_name_cursor(c,uid),'mons':[],'active':0}}}
             c.execute("UPDATE pokemon_battles_tb SET opponent_id=%s,mode=%s,status='active',state_json=%s,message_id=%s,updated_at=NOW() WHERE battle_id=%s",(uid,mode,json.dumps(state,ensure_ascii=False),q.message.message_id,bid)); conn.commit()
-        except Exception as e:conn.rollback(); print('[PK accept]',e); return await q.answer('No pude iniciar la batalla.',show_alert=True)
+        except Exception as e:conn.rollback(); print('[PK accept setup]',type(e).__name__,e); return await q.answer('No pude preparar la selección de equipo.',show_alert=True)
         finally:_put_connection(conn)
-        await q.answer('¡Batalla aceptada!')
-        await _sync_single_battle_views(context,bid,state,int(br[3]),br[4],q.message.message_id,'La batalla está sincronizada. Las decisiones se eligen por privado.')
+        await q.answer('¡Reto aceptado! Elijan sus Pokémon por privado.')
+        for player in (challenger,uid):
+            conn2=_get_connection()
+            try:
+                c2=conn2.cursor(); markup=_pvp_selection_markup_cursor(c2,player,bid,mode,[],False)
+            finally:_put_connection(conn2)
+            try:await context.bot.send_message(player,f'⚔️ BATALLA POKÉMON {mode}v{mode}\n\nElige {mode} Pokémon de tus 4 de /equipo.\nEl orden en que los marques será el orden de salida.',reply_markup=markup)
+            except Exception:pass
+        try:await q.edit_message_text(_pvp_setup_public_text(state))
+        except Exception:pass
+        return
+    if action in ('pvppick','pvpready'):
+        bid=int(p[2]); conn=_get_connection(); state=None; chat=None; start=False
+        try:
+            c=conn.cursor(); c.execute("SELECT state_json,status,chat_id,thread_id,message_id FROM pokemon_battles_tb WHERE battle_id=%s FOR UPDATE",(bid,)); br=c.fetchone()
+            if not br or br[1]!='active':conn.rollback(); return await q.answer('La batalla ya no está disponible.',show_alert=True)
+            state=json.loads(br[0]); key=str(uid)
+            if state.get('battle_kind')!='pvp' or state.get('status')!='setup' or key not in state.get('players',{}):conn.rollback(); return await q.answer('Esta selección ya terminó.',show_alert=True)
+            mode=int(state.get('mode',1)); selected=[int(x) for x in state.setdefault('pvp_selected',{}).get(key,[])]
+            if state.setdefault('pvp_ready',{}).get(key):conn.rollback(); return await q.answer('Tu equipo ya está confirmado.',show_alert=True)
+            slots=_pvp_team_slot_ids_cursor(c,uid)
+            if action=='pvppick':
+                pid=int(p[3])
+                if pid not in slots:conn.rollback(); return await q.answer('Ese Pokémon ya no está en tus 4 espacios de /equipo.',show_alert=True)
+                if pid in selected:selected.remove(pid)
+                elif len(selected)<mode:selected.append(pid)
+                else:conn.rollback(); return await q.answer(f'Ya elegiste {mode}. Quita uno primero.',show_alert=True)
+                state['pvp_selected'][key]=selected
+            else:
+                if len(selected)!=mode:conn.rollback(); return await q.answer(f'Elige exactamente {mode} Pokémon.',show_alert=True)
+                if any(pid not in slots for pid in selected):conn.rollback(); return await q.answer('Tu /equipo cambió. Vuelve a seleccionar.',show_alert=True)
+                state['pvp_ready'][key]=True
+                if all(state['pvp_ready'].get(k) for k in state['players']):
+                    for k in list(state['players']):
+                        chosen=[int(x) for x in state['pvp_selected'][k]]
+                        mons=_pvp_mons_from_ids_cursor(c,int(k),chosen)
+                        if not mons or len(mons)!=mode:conn.rollback(); return await q.answer('Uno de los equipos cambió. Vuelvan a iniciar el reto.',show_alert=True)
+                        state['players'][k]['mons']=mons; state['players'][k]['active']=0
+                    state['status']='active'; start=True
+            c.execute("UPDATE pokemon_battles_tb SET state_json=%s,updated_at=NOW() WHERE battle_id=%s",(json.dumps(state,ensure_ascii=False),bid)); conn.commit(); chat=(int(br[2]),br[3],br[4])
+        except Exception as e:conn.rollback(); print('[PK PvP team select]',type(e).__name__,e); return await q.answer('No pude guardar tu selección.',show_alert=True)
+        finally:_put_connection(conn)
+        if start:
+            await q.answer('¡Equipos listos!')
+            try:await q.edit_message_text('✅ Equipo confirmado. La batalla ya comenzó.')
+            except Exception:pass
+            await _sync_single_battle_views(context,bid,state,chat[0],chat[1],chat[2],'Equipos confirmados. Las decisiones se eligen por privado.')
+        elif action=='pvpready':
+            await q.answer('Equipo confirmado ✅')
+            try:await q.edit_message_text('✅ Equipo confirmado. Esperando al rival…')
+            except Exception:pass
+            try:await context.bot.edit_message_text(chat_id=chat[0],message_id=chat[2],text=_pvp_setup_public_text(state))
+            except Exception:pass
+        else:
+            conn2=_get_connection()
+            try:c2=conn2.cursor(); markup=_pvp_selection_markup_cursor(c2,uid,bid,int(state['mode']),selected,False)
+            finally:_put_connection(conn2)
+            await q.answer(); await q.edit_message_text(f"⚔️ Elige {int(state['mode'])} Pokémon\nElegidos: {len(selected)}/{int(state['mode'])}\nEl orden de selección será el orden de salida.",reply_markup=markup)
         return
     if action=='action':
         bid=int(p[2]); br=_get_battle(bid)
