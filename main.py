@@ -88,7 +88,7 @@ from handlers.batalla_naval import batalla_naval, cancelar_naval, naval_callback
 from handlers.gato import gato, cancelar_gato, ranking_gato, gato_callback, ensure_gato_tables
 from handlers.saocb_telegram import sao_command, sao_name_command, sao_callback, ensure_saocb_telegram_tables
 from handlers.saocb_mobile import sao_app_link_command, ensure_saocb_mobile_tables
-from handlers.pokemon_gen1 import (pokemon_command, pokedex_command, equipo_command, mostrarequipo_command, pokeobjetos_command, nombrarpokemon_command, fotopokemon_command, presumirpokemon_command, batallapokemon_command, batalladoblepokemon_command, entrenamientopokemon_command, entregar_command, intercambiopokemon_command, cancelarintercambiopokemon_command, gifintercambio_command, quitargifintercambio_command, shinys_command, rankingpokemon_command, cajapokemon_command, cajaobjetospokemon_command, darcajapokemon_command, torneopokemon_command, poketest_command, entrenador_command, liberarpokemon_command, caramelospokemon_command, pokemonsalvaje_command, npcpokemon_command, medallas_command, imagenesnpc_command, npcahora_command, liderahora_command, crianzapokemon_command, guarderiapokemon_command, huevos_command, regalarhuevo_command, darhuevo_command, imageneshuevo_command, huevoahora_command, evento_command, imagenesevento_command, halloweenahora_command, npchalloweenahora_command, jefehalloween_command, pokemon_egg_activity, pokemon_breeding_ready_job, pokemon_egg_event_job, pokemon_halloween_event_job, pokemon_halloween_npc_job, pokemon_halloween_boss_job, pokemon_wild_spawn_job, pokemon_npc_spawn_job, pokemon_leader_spawn_job, pokemon_callback, pokemon_text_input, pokemon_media_input, ensure_pokemon_tables)
+from handlers.pokemon_gen1 import (pokemon_command, pokedex_command, equipo_command, mostrarequipo_command, pokeobjetos_command, nombrarpokemon_command, fotopokemon_command, presumirpokemon_command, batallapokemon_command, batalladoblepokemon_command, entrenamientopokemon_command, entregar_command, intercambiopokemon_command, cancelarintercambiopokemon_command, gifintercambio_command, quitargifintercambio_command, shinys_command, rankingpokemon_command, cajapokemon_command, cajaobjetospokemon_command, darcajapokemon_command, torneopokemon_command, poketest_command, entrenador_command, liberarpokemon_command, caramelospokemon_command, pokemonsalvaje_command, npcpokemon_command, medallas_command, imagenesnpc_command, npcahora_command, liderahora_command, crianzapokemon_command, guarderiapokemon_command, huevos_command, regalarhuevo_command, darhuevo_command, imageneshuevo_command, huevoahora_command, evento_command, imagenesevento_command, halloweenahora_command, npchalloweenahora_command, jefehalloween_command, pokemon_egg_activity, pokemon_breeding_ready_job, pokemon_egg_event_job, pokemon_halloween_event_job, pokemon_halloween_npc_job, pokemon_halloween_boss_job, safari_command, rocketpokemon_command, rocketahora_command, raidpokemon_command, raidahora_command, misionespokemon_command, logrospokemon_command, amistadpokemon_command, climapokemon_command, ligapokemon_command, pokemon_weather_job, pokemon_rocket_job, pokemon_raid_job, pokemon_daily_missions_job, pokemon_adventure_maintenance_job, pokemon_wild_spawn_job, pokemon_npc_spawn_job, pokemon_leader_spawn_job, pokemon_callback, pokemon_text_input, pokemon_media_input, ensure_pokemon_tables)
 
 # Constants
 RUTA_CASTIGADOS = PUNISHMENT_FILE
@@ -563,6 +563,12 @@ def main() -> None:
         app.job_queue.run_repeating(pokemon_halloween_event_job, interval=10800, first=900, name='pokemon_halloween_surprise_3h')
         app.job_queue.run_daily(pokemon_halloween_npc_job, time=_pk_dt_time(hour=19, minute=15, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_halloween_npc_daily')
         app.job_queue.run_daily(pokemon_halloween_boss_job, time=_pk_dt_time(hour=22, minute=15, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_halloween_boss_weekend')
+        # Expansión Pokémon: clima, Rocket diario, incursiones cada ~2 días y mantenimiento de eventos.
+        app.job_queue.run_repeating(pokemon_weather_job, interval=21600, first=600, name='pokemon_weather_6h')
+        app.job_queue.run_daily(pokemon_rocket_job, time=_pk_dt_time(hour=17, minute=45, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_rocket_daily')
+        app.job_queue.run_daily(pokemon_raid_job, time=_pk_dt_time(hour=21, minute=45, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_raid_check_daily')
+        app.job_queue.run_daily(pokemon_daily_missions_job, time=_pk_dt_time(hour=0, minute=0, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_daily_missions_24h')
+        app.job_queue.run_repeating(pokemon_adventure_maintenance_job, interval=60, first=30, name='pokemon_adventure_maintenance')
         # Pregunta del Día: 10:00 AM hora de México. El coordinador reserva su ventana para evitar choques.
         from datetime import time as dt_time
         from zoneinfo import ZoneInfo as _ZoneInfo
@@ -708,6 +714,16 @@ def main() -> None:
     app.add_handler(CommandHandler("halloweenahora", halloweenahora_command), group=2)
     app.add_handler(CommandHandler("npchalloweenahora", npchalloweenahora_command), group=2)
     app.add_handler(CommandHandler("jefehalloween", jefehalloween_command), group=2)
+    app.add_handler(CommandHandler("safari", safari_command), group=2)
+    app.add_handler(CommandHandler("rocketpokemon", rocketpokemon_command), group=2)
+    app.add_handler(CommandHandler("rocketahora", rocketahora_command), group=2)
+    app.add_handler(CommandHandler("raidpokemon", raidpokemon_command), group=2)
+    app.add_handler(CommandHandler("raidahora", raidahora_command), group=2)
+    app.add_handler(CommandHandler("misionespokemon", misionespokemon_command), group=2)
+    app.add_handler(CommandHandler("logrospokemon", logrospokemon_command), group=2)
+    app.add_handler(CommandHandler("amistadpokemon", amistadpokemon_command), group=2)
+    app.add_handler(CommandHandler("climapokemon", climapokemon_command), group=2)
+    app.add_handler(CommandHandler("ligapokemon", ligapokemon_command), group=2)
     app.add_handler(CommandHandler("pokeobjetos", pokeobjetos_command), group=2)
     app.add_handler(CommandHandler("nombrarpokemon", nombrarpokemon_command), group=2)
     app.add_handler(CommandHandler("fotopokemon", fotopokemon_command), group=2)
