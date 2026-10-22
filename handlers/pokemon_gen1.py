@@ -794,6 +794,7 @@ def ensure_pokemon_tables():
               species_id SMALLINT NOT NULL CHECK(species_id BETWEEN 1 AND 151),
               level SMALLINT NOT NULL CHECK(level BETWEEN 1 AND 100),
               shiny BOOLEAN NOT NULL DEFAULT FALSE,
+              is_returning BOOLEAN NOT NULL DEFAULT FALSE,
               status TEXT NOT NULL DEFAULT 'active',
               message_id BIGINT,
               caught_by BIGINT,
@@ -1181,7 +1182,7 @@ def ensure_pokemon_tables():
               last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
-        c.execute("ALTER TABLE pokemon_wild_spawns_tb ADD COLUMN IF NOT EXISTS returning BOOLEAN NOT NULL DEFAULT FALSE")
+        c.execute("ALTER TABLE pokemon_wild_spawns_tb ADD COLUMN IF NOT EXISTS is_returning BOOLEAN NOT NULL DEFAULT FALSE")
         c.execute("ALTER TABLE pokemon_instances_tb ADD COLUMN IF NOT EXISTS friendship INT NOT NULL DEFAULT 0")
         c.execute("""
             CREATE TABLE IF NOT EXISTS pokemon_streak_rewards_tb(
@@ -3455,7 +3456,7 @@ async def _spawn_wild(context:ContextTypes.DEFAULT_TYPE, chat_id:int, thread_id:
             returning=True; species=int(fug[1]); level=int(fug[2]); shiny=bool(fug[3]); c.execute("UPDATE pokemon_fugitives_tb SET status='returned' WHERE fugitive_id=%s",(int(fug[0]),))
         else:
             species=_wild_species_cursor(c,chat_id,thread_id); level=min(MAX_LEVEL,_starting_level(species)+random.randint(0,5)); shiny=(random.randrange(WILD_SHINY_DENOMINATOR)==0)
-        c.execute("INSERT INTO pokemon_wild_spawns_tb(chat_id,thread_id,species_id,level,shiny,returning) VALUES(%s,%s,%s,%s,%s,%s) RETURNING spawn_id",(chat_id,thread_id,species,level,shiny,returning)); spawn_id=int(c.fetchone()[0]); conn.commit()
+        c.execute("INSERT INTO pokemon_wild_spawns_tb(chat_id,thread_id,species_id,level,shiny,is_returning) VALUES(%s,%s,%s,%s,%s,%s) RETURNING spawn_id",(chat_id,thread_id,species,level,shiny,returning)); spawn_id=int(c.fetchone()[0]); conn.commit()
     except Exception as e:
         conn.rollback(); print('[PK wild spawn db]',type(e).__name__,e); return False
     finally:_put_connection(conn)
