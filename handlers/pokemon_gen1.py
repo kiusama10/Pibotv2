@@ -138,6 +138,7 @@ RAID_ATTACK_COOLDOWN_SECONDS = 60
 RAID_LEGENDARY_CHANCE = 0.10  # 10% de las incursiones pueden ser legendarias.
 RAID_LEGENDARY_BOSSES = (144,145,146,150,151)
 RAID_LEGENDARY_SHINY_DENOMINATOR = 256  # Se decide una sola vez por raid; nunca uno por participante.
+RAID_NORMAL_SHINY_DENOMINATOR = 512  # Muy raro; también es un único ejemplar para toda la incursión.
 RAID_LEGENDARY_CAPTURE_ATTEMPTS = 3
 RAID_LEGENDARY_CAPTURE_SECONDS = 600  # 10 minutos para que el entrenador elegido haga sus 3 tiros.
 RAID_LEGENDARY_DICE_SUCCESS = 6  # Solo un 6 captura al legendario.
@@ -4671,7 +4672,8 @@ def _raid_text(row,catcher_name:str|None=None)->str:
     legendary=bool(row[11])
     if str(row[7])=='capture':
         who=catcher_name or 'el entrenador elegido'
-        return (f"🌟 INCURSIÓN LEGENDARIA DERROTADA\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} · Nv.{int(row[4])}\n"
+        cap_title='🌟 LEGENDARIO DERROTADO' if legendary else '🏆 JEFE DE INCURSIÓN DERROTADO'
+        return (f"{cap_title}\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} · Nv.{int(row[4])}\n"
                 f"🎯 {who} obtuvo la oportunidad de captura.\n🎲 Intentos usados: {int(row[14])}/{RAID_LEGENDARY_CAPTURE_ATTEMPTS}\n"
                 f"⏳ {(left+59)//60} min para completar la captura.\n\nSolo un 6 en el dado consigue atraparlo.")
     title='🌟 INCURSIÓN LEGENDARIA' if legendary else '💥 INCURSIÓN POKÉMON'
@@ -4703,18 +4705,41 @@ async def _refresh_raid_message(context,raid_id:int):
     if not row:return
     status=str(row[7]); capstatus=str(row[15] or 'none')
     if status=='capture':text=_raid_text(row,catcher_name)
-    elif status=='finished' and bool(row[11]) and capstatus=='caught':
-        text=(f"🏆 INCURSIÓN LEGENDARIA COMPLETADA\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} fue derrotado.\n"
+    elif status=='finished' and capstatus=='caught':
+        title='🏆 INCURSIÓN LEGENDARIA COMPLETADA' if bool(row[11]) else '🏆 INCURSIÓN COMPLETADA'
+        text=(f"{title}\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} fue derrotado.\n"
               f"🎉 {catcher_name or 'El entrenador elegido'} logró capturarlo en {int(row[14])}/{RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros."
               + ("\n✨ ¡Y resultó ser SHINY!" if bool(row[12]) else ''))
-    elif status=='finished' and bool(row[11]) and capstatus=='escaped':
-        text=(f"💨 EL LEGENDARIO ESCAPÓ\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} fue derrotado en la incursión, "
+    elif status=='finished' and capstatus=='escaped':
+        title='💨 EL LEGENDARIO ESCAPÓ' if bool(row[11]) else '💨 EL JEFE DE INCURSIÓN ESCAPÓ'
+        text=(f"{title}\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} fue derrotado en la incursión, "
               f"pero escapó durante la captura.\n🎲 Se usaron {int(row[14])}/{RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros.")
     elif status=='finished':text=f"🏆 INCURSIÓN COMPLETADA\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} fue derrotado por el grupo.\n🎁 Premios entregados a los participantes."
     elif status=='expired':text=f"💨 INCURSIÓN FALLIDA\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} escapó."
     else:text=_raid_text(row,catcher_name)
     try:await context.bot.edit_message_text(chat_id=int(row[1]),message_id=int(row[8]),text=text,reply_markup=_raid_markup(row))
     except Exception:pass
+
+
+def _raid_reference_level_cursor(c)->int:
+    """Nivel mediano de los Pokémon que los entrenadores tienen actualmente en /equipo.
+
+    Evita que una cuenta muy alta desbalancee el raid para todo el grupo. Si aún no
+    hay equipos configurados, usa un nivel base bajo y seguro.
+    """
+    c.execute("""
+        SELECT p.level
+        FROM pokemon_team_tb t
+        JOIN pokemon_instances_tb p
+          ON p.owner_id=t.owner_id
+         AND p.pokemon_id IN (t.slot1,t.slot2,t.slot3,t.slot4)
+        WHERE p.level IS NOT NULL
+    """)
+    levels=sorted(int(r[0]) for r in c.fetchall() if r and r[0] is not None)
+    if not levels:return 10
+    n=len(levels)
+    if n%2:return max(1,min(MAX_LEVEL,int(levels[n//2])))
+    return max(1,min(MAX_LEVEL,round((levels[n//2-1]+levels[n//2])/2)))
 
 
 async def _spawn_raid(context,chat_id:int,thread_id:int|None,manual:bool=False,forced_legendary:bool|None=None)->bool:
@@ -4724,11 +4749,16 @@ async def _spawn_raid(context,chat_id:int,thread_id:int|None,manual:bool=False,f
         if last and not manual and (datetime.now(timezone.utc)-last[0]).total_seconds()<47*3600:conn.rollback(); return False
         if _raid_active_cursor(c,chat_id,thread_id):conn.rollback(); return False
         legendary=(bool(forced_legendary) if forced_legendary is not None else random.random()<RAID_LEGENDARY_CHANCE)
+        reference_level=_raid_reference_level_cursor(c)
         if legendary:
-            sp=random.choice(RAID_LEGENDARY_BOSSES); level=random.randint(78,92); maxhp=22_000+level*180
+            # Los legendarios quedan claramente por encima del nivel habitual del grupo,
+            # pero sin saltos absurdos (p. ej. equipos Nv.25 -> jefe aprox. Nv.31-35).
+            sp=random.choice(RAID_LEGENDARY_BOSSES); level=max(5,min(MAX_LEVEL,reference_level+random.randint(6,10))); maxhp=22_000+level*180
             shiny=(random.randrange(RAID_LEGENDARY_SHINY_DENOMINATOR)==0)
         else:
-            sp=random.choice(RAID_BOSSES); level=random.randint(50,75); maxhp=9000+level*90; shiny=False
+            # Raid normal: solo 2-5 niveles por encima del nivel mediano de los equipos.
+            # Ejemplo pedido: equipos alrededor de Nv.25 -> jefe Nv.27-30.
+            sp=random.choice(RAID_BOSSES); level=max(3,min(MAX_LEVEL,reference_level+random.randint(2,5))); maxhp=9000+level*90; shiny=(random.randrange(RAID_NORMAL_SHINY_DENOMINATOR)==0)
         c.execute("""INSERT INTO pokemon_raids_tb(chat_id,thread_id,species_id,level,max_hp,hp,is_legendary,shiny)
                      VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
                      RETURNING """+RAID_SELECT,(chat_id,int(thread_id or 0),sp,level,maxhp,maxhp,legendary,shiny)); row=c.fetchone(); conn.commit()
@@ -5758,7 +5788,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         except Exception:return await q.answer('Abre primero el privado de PiBot.',show_alert=True) or True
         return True
     if action=='raidmon':
-        raid_id,pid=int(p[2]),int(p[3]); conn=_get_connection(); damage=0; defeated=False; hp=0; top=None; catcher=None; legendary=False; best_eff=1.0
+        raid_id,pid=int(p[2]),int(p[3]); conn=_get_connection(); damage=0; defeated=False; hp=0; top=None; catcher=None; legendary=False; best_eff=1.0; total_damage=0; attacks_now=0; trainer_name=f'Entrenador {uid}'
         try:
             c=conn.cursor(); c.execute(f"SELECT {RAID_SELECT} FROM pokemon_raids_tb WHERE raid_id=%s FOR UPDATE",(raid_id,)); raid=c.fetchone()
             if not raid or str(raid[7])!='active' or raid[10]<=datetime.now(timezone.utc):conn.rollback(); return await q.answer('La incursión terminó.',show_alert=True) or True
@@ -5776,7 +5806,8 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             eff_mult=1.25 if best_eff>=2 else (0.90 if best_eff<1 else 1.0)
             damage=max(80,int((int(mon[1])*9+ivpct*2+random.randint(40,160))*eff_mult)); hp=max(0,int(raid[6])-damage); defeated=hp<=0
             # Primero registra ataque/daño para que la selección ponderada incluya el golpe final.
-            c.execute("INSERT INTO pokemon_raid_participants_tb(raid_id,user_id,damage,attacks,last_attack_at) VALUES(%s,%s,%s,1,NOW()) ON CONFLICT(raid_id,user_id) DO UPDATE SET damage=pokemon_raid_participants_tb.damage+EXCLUDED.damage,attacks=pokemon_raid_participants_tb.attacks+1,last_attack_at=NOW()",(raid_id,uid,damage))
+            c.execute("INSERT INTO pokemon_raid_participants_tb(raid_id,user_id,damage,attacks,last_attack_at) VALUES(%s,%s,%s,1,NOW()) ON CONFLICT(raid_id,user_id) DO UPDATE SET damage=pokemon_raid_participants_tb.damage+EXCLUDED.damage,attacks=pokemon_raid_participants_tb.attacks+1,last_attack_at=NOW() RETURNING damage,attacks",(raid_id,uid,damage))
+            pr=c.fetchone() or (damage,1); total_damage=int(pr[0]); attacks_now=int(pr[1]); trainer_name=_display_name_cursor(c,uid)
             c.execute("UPDATE pokemon_instances_tb SET friendship=LEAST(255,friendship+1) WHERE pokemon_id=%s",(pid,))
             if defeated:
                 c.execute("SELECT user_id,damage FROM pokemon_raid_participants_tb WHERE raid_id=%s ORDER BY damage DESC",(raid_id,)); parts=c.fetchall(); top=int(parts[0][0]) if parts else None
@@ -5784,40 +5815,53 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
                     puid=int(puid); c.execute("UPDATE usuarios_tb SET saldo=saldo+2500 WHERE id_user=%s",(puid,)); grant_item_with_cursor(c,puid,'rare_candy',1)
                     if random.random()<0.10:grant_item_with_cursor(c,puid,'safari_ticket',1)
                 if top is not None:grant_item_with_cursor(c,top,'object_box',1)
-                if legendary:
-                    catcher=_raid_weighted_catcher(parts)
-                    c.execute("""UPDATE pokemon_raids_tb SET hp=0,status='capture',catcher_id=%s,capture_attempts=0,capture_status='pending',
-                                 expires_at=NOW()+(%s * INTERVAL '1 second'),finished_at=NULL WHERE raid_id=%s""",(catcher,RAID_LEGENDARY_CAPTURE_SECONDS,raid_id))
-                else:
-                    c.execute("UPDATE pokemon_raids_tb SET hp=0,status='finished',finished_at=NOW() WHERE raid_id=%s",(raid_id,))
+                # Tanto raids normales como legendarias generan UN solo ejemplar capturable.
+                # El derecho se sortea ponderado por daño y el elegido dispone de 3 tiros.
+                catcher=_raid_weighted_catcher(parts)
+                c.execute("""UPDATE pokemon_raids_tb SET hp=0,status='capture',catcher_id=%s,capture_attempts=0,capture_status='pending',
+                             expires_at=NOW()+(%s * INTERVAL '1 second'),finished_at=NULL WHERE raid_id=%s""",(catcher,RAID_LEGENDARY_CAPTURE_SECONDS,raid_id))
             else:
                 c.execute("UPDATE pokemon_raids_tb SET hp=%s WHERE raid_id=%s",(hp,raid_id))
             conn.commit()
         except Exception as e:conn.rollback(); print('[PK raid attack]',type(e).__name__,e); return await q.answer('No pude aplicar tu ataque.',show_alert=True) or True
         finally:_put_connection(conn)
         await q.answer(f"💥 -{damage} PS{' · súper eficaz' if best_eff>=2 else ''}",show_alert=True)
+        # El detalle del ataque se queda en el panel privado del jugador.
+        try:
+            await q.edit_message_text(
+                f"💥 INCURSIÓN · ATAQUE COMPLETADO\n\n"
+                f"Hiciste {damage:,} de daño{' súper eficaz' if best_eff>=2 else ''}.\n"
+                f"🔥 Daño total aportado: {total_damage:,}\n"
+                f"⚔️ Ataques usados: {attacks_now}/{RAID_USER_ATTACKS}\n"
+                f"❤️ PS compartidos del jefe: {hp:,}/{int(raid[5]):,}"
+            )
+        except Exception:pass
         await _refresh_raid_message(context,raid_id)
-        if defeated:
-            if legendary and catcher is not None:
-                conn=_get_connection(); cname=f'Entrenador {catcher}'
-                try:c=conn.cursor(); cname=_display_name_cursor(c,catcher)
-                finally:_put_connection(conn)
-                text=(f"🌟 ¡INCURSIÓN LEGENDARIA COMPLETADA!\n\nTodos los participantes: +2,500 PiPesos +1 Caramelo Raro.\n"
-                      f"🥇 Mayor daño: Caja de Objetos Pokémon.\n\n🎯 {cname} fue elegido para intentar capturar a {NAMES[int(raid[3])]}.\n"
-                      f"🎲 Tiene {RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros. Solo un 6 lo captura.")
-                try:await context.bot.send_message(int(raid[1]),text,message_thread_id=(raid[2] or None))
-                except Exception:pass
-                try:await context.bot.send_message(catcher,f"🌟 Te tocó la oportunidad de capturar a {NAMES[int(raid[3])]} de la incursión.\nTienes {RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros. Usa el botón de la incursión en Juegos y Casino.")
-                except Exception:pass
-            else:
-                try:await context.bot.send_message(int(raid[1]),'🏆 ¡INCURSIÓN COMPLETADA!\nTodos los participantes: +2,500 PiPesos +1 Caramelo Raro.\n🥇 Mayor daño: Caja de Objetos Pokémon.',message_thread_id=(raid[2] or None))
-                except Exception:pass
+        # Toda la elección/ataque ocurre en privado. En el grupo solo aparece el resumen
+        # acumulado del entrenador y la tarjeta compartida con los PS ya actualizados.
+        try:
+            await context.bot.send_message(int(raid[1]),f"⚔️ {trainer_name} acumula {total_damage:,} de daño total en la incursión. · Ataques {attacks_now}/{RAID_USER_ATTACKS}",message_thread_id=(raid[2] or None))
+        except Exception:pass
+        if defeated and catcher is not None:
+            conn=_get_connection(); cname=f'Entrenador {catcher}'
+            try:c=conn.cursor(); cname=_display_name_cursor(c,catcher)
+            finally:_put_connection(conn)
+            title='🌟 ¡INCURSIÓN LEGENDARIA COMPLETADA!' if legendary else '🏆 ¡INCURSIÓN COMPLETADA!'
+            text=(f"{title}\n\nTodos los participantes: +2,500 PiPesos +1 Caramelo Raro.\n"
+                  f"🥇 Mayor daño: Caja de Objetos Pokémon.\n\n🎯 {cname} fue elegido para intentar capturar a {NAMES[int(raid[3])]}.\n"
+                  f"🎲 Tiene {RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros. Solo un 6 lo captura.")
+            try:await context.bot.send_message(int(raid[1]),text,message_thread_id=(raid[2] or None))
+            except Exception:pass
+            try:
+                prefix='🌟 ' if legendary else '💥 '
+                await context.bot.send_message(catcher,f"{prefix}Te tocó la oportunidad de capturar a {NAMES[int(raid[3])]} de la incursión.\nTienes {RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros. Usa el botón de la incursión en Juegos y Casino.")
+            except Exception:pass
         return True
     if action=='raidcatch':
         raid_id=int(p[2]); conn=_get_connection(); raid=None
         try:
             c=conn.cursor(); c.execute(f"SELECT {RAID_SELECT} FROM pokemon_raids_tb WHERE raid_id=%s FOR UPDATE",(raid_id,)); raid=c.fetchone()
-            if not raid or not bool(raid[11]) or str(raid[7])!='capture':conn.rollback(); return await q.answer('Esta captura legendaria ya terminó.',show_alert=True) or True
+            if not raid or str(raid[7])!='capture':conn.rollback(); return await q.answer('Esta captura de incursión ya terminó.',show_alert=True) or True
             if int(raid[13] or 0)!=uid:conn.rollback(); return await q.answer('Solo el entrenador elegido puede hacer estos tiros.',show_alert=True) or True
             if raid[10] and raid[10]<=datetime.now(timezone.utc):
                 c.execute("UPDATE pokemon_raids_tb SET status='finished',capture_status='escaped',finished_at=NOW() WHERE raid_id=%s",(raid_id,)); conn.commit(); await _refresh_raid_message(context,raid_id); return await q.answer('Se acabó el tiempo de captura.',show_alert=True) or True
@@ -5844,7 +5888,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             if not cur or str(cur[7])!='capture' or int(cur[13] or 0)!=uid:conn.rollback(); return True
             attempts=int(cur[14])+1; caught=(value==RAID_LEGENDARY_DICE_SUCCESS)
             if caught:
-                data=grant_pokemon_with_cursor(c,uid,int(cur[3]),f'raid_legendary:{raid_id}',level_override=int(cur[4]),shiny_override=bool(cur[12]))
+                data=grant_pokemon_with_cursor(c,uid,int(cur[3]),f"{'raid_legendary' if bool(cur[11]) else 'raid_normal'}:{raid_id}",level_override=int(cur[4]),shiny_override=bool(cur[12]))
                 c.execute("UPDATE pokemon_raids_tb SET status='finished',capture_attempts=%s,capture_status='caught',finished_at=NOW() WHERE raid_id=%s",(attempts,raid_id))
             elif attempts>=RAID_LEGENDARY_CAPTURE_ATTEMPTS:
                 escaped=True; c.execute("UPDATE pokemon_raids_tb SET status='finished',capture_attempts=%s,capture_status='escaped',finished_at=NOW() WHERE raid_id=%s",(attempts,raid_id))
@@ -5855,7 +5899,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         finally:_put_connection(conn)
         await _refresh_raid_message(context,raid_id)
         if caught and data:
-            text=(f"🎉 ¡CAPTURA LEGENDARIA!\n\n🎲 {value}/6\n"
+            text=(f"🎉 ¡CAPTURA DE INCURSIÓN!\n\n🎲 {value}/6\n"
                   f"{'✨ SHINY · ' if data.get('shiny') else ''}#{int(data['species_id']):03d} {data['name']} {_sex_symbol(data.get('sex'))} · Nv.{int(data['level'])}\n"
                   f"🧬 IV {int(data.get('iv_percent',0))}% · {data.get('iv_grade','')}\n🎮 Ejemplar #{int(data['pokemon_id'])}")
             try:await context.bot.send_message(int(raid[1]),text,message_thread_id=(raid[2] or None))
