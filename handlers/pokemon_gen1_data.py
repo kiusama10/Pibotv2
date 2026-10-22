@@ -278,6 +278,7 @@ MOVES = {
     "twineedle":("Doble Ataque","Bug",50,100,20,"damage"),
     "pin_missile":("Pin Misil","Bug",60,85,20,"damage"),
     "lick":("Lengüetazo","Ghost",20,100,30,"damage"),
+    "confuse_ray":("Rayo Confuso","Ghost",0,100,10,"debuff_atk"),
     "night_shade":("Tinieblas","Ghost",0,100,15,"fixed"),
     "hypnosis":("Hipnosis","Psychic",0,60,20,"sleep"),
     "dream_eater":("Comesueños","Psychic",100,100,15,"damage"),
@@ -297,7 +298,7 @@ MOVES = {
 }
 
 TYPE_MOVESETS = {
-    "Normal":[(1,"tackle"),(10,"quick_attack"),(25,"body_slam"),(45,"hyper_beam")],
+    "Normal":[(1,"tackle"),(6,"growl"),(10,"quick_attack"),(24,"body_slam"),(45,"hyper_beam")],
     "Fire":[(1,"ember"),(15,"fire_spin"),(30,"flamethrower"),(48,"fire_blast")],
     "Water":[(1,"water_gun"),(15,"bubble_beam"),(30,"surf"),(48,"hydro_pump")],
     "Grass":[(1,"vine_whip"),(14,"razor_leaf"),(28,"mega_drain"),(48,"solar_beam")],
@@ -316,25 +317,28 @@ TYPE_MOVESETS = {
 
 # Casos emblemáticos donde un set genérico no representa bien al Pokémon.
 SPECIAL_LEARNSETS = {
+    # Casos con progresión limitada a propósito (como en los juegos).
     10:[(1,"tackle")], 11:[(1,"harden")], 13:[(1,"poison_sting")], 14:[(1,"harden")],
     25:[(1,"thunder_shock"),(1,"growl"),(9,"thunder_wave"),(16,"quick_attack"),(26,"swift"),(33,"agility"),(43,"thunder")],
     26:[(1,"thunder_shock"),(1,"growl"),(1,"quick_attack"),(1,"thunder")],
     63:[(1,"teleport")],
-    92:[(1,"lick"),(1,"hypnosis"),(21,"night_shade"),(35,"dream_eater")],
-    93:[(1,"lick"),(1,"hypnosis"),(21,"night_shade"),(38,"dream_eater")],
-    94:[(1,"lick"),(1,"hypnosis"),(29,"night_shade"),(38,"dream_eater")],
+    # Familia Gastly: al llegar a niveles medios ya dispone de cuatro movimientos reales
+    # y después los nuevos se ofrecen para reemplazo, nunca se pisan automáticamente.
+    92:[(1,"lick"),(1,"confuse_ray"),(10,"hypnosis"),(18,"night_shade"),(35,"dream_eater")],
+    93:[(1,"lick"),(1,"confuse_ray"),(10,"hypnosis"),(18,"night_shade"),(35,"dream_eater")],
+    94:[(1,"lick"),(1,"confuse_ray"),(10,"hypnosis"),(18,"night_shade"),(32,"dream_eater"),(40,"psychic")],
     129:[(1,"splash"),(15,"tackle")],
-    130:[(1,"tackle"),(20,"bite" if "bite" in MOVES else "body_slam"),(25,"dragon_rage"),(32,"hydro_pump"),(41,"hyper_beam")],
+    130:[(1,"tackle"),(1,"water_gun"),(15,"bubble_beam"),(25,"dragon_rage"),(32,"hydro_pump"),(41,"hyper_beam")],
     132:[(1,"transform")],
-    133:[(1,"tackle"),(16,"quick_attack"),(31,"body_slam"),(45,"agility")],
-    144:[(1,"ice_beam"),(20,"agility"),(40,"blizzard"),(51,"hyper_beam")],
-    145:[(1,"thunder_shock"),(20,"agility"),(40,"thunderbolt"),(51,"thunder")],
-    146:[(1,"ember"),(20,"agility"),(40,"flamethrower"),(51,"fire_blast")],
-    147:[(1,"wrap" if "wrap" in MOVES else "slam"),(10,"thunder_wave"),(20,"agility"),(30,"dragon_rage")],
-    148:[(1,"slam"),(10,"thunder_wave"),(20,"agility"),(35,"dragon_rage")],
-    149:[(1,"slam"),(10,"thunder_wave"),(20,"agility"),(35,"dragon_rage"),(55,"hyper_beam")],
-    150:[(1,"confusion"),(20,"swift"),(40,"psychic"),(55,"recover"),(63,"agility")],
-    151:[(1,"pound"),(10,"transform"),(20,"body_slam"),(30,"metronome"),(40,"psychic")],
+    133:[(1,"tackle"),(1,"growl"),(16,"quick_attack"),(20,"swift"),(31,"body_slam"),(45,"agility")],
+    144:[(1,"peck"),(1,"ice_beam"),(16,"wing_attack"),(20,"agility"),(40,"blizzard"),(51,"hyper_beam")],
+    145:[(1,"peck"),(1,"thunder_shock"),(16,"wing_attack"),(20,"agility"),(40,"thunderbolt"),(51,"thunder")],
+    146:[(1,"peck"),(1,"ember"),(15,"fire_spin"),(20,"agility"),(40,"flamethrower"),(51,"fire_blast")],
+    147:[(1,"tackle"),(1,"slam"),(10,"thunder_wave"),(15,"body_slam"),(20,"dragon_rage"),(30,"agility")],
+    148:[(1,"tackle"),(1,"slam"),(10,"thunder_wave"),(15,"body_slam"),(20,"dragon_rage"),(35,"agility")],
+    149:[(1,"wing_attack"),(1,"slam"),(10,"thunder_wave"),(15,"body_slam"),(20,"dragon_rage"),(35,"agility"),(55,"hyper_beam")],
+    150:[(1,"confusion"),(10,"psybeam"),(20,"swift"),(25,"recover"),(40,"psychic"),(63,"agility")],
+    151:[(1,"pound"),(10,"transform"),(15,"confusion"),(20,"body_slam"),(30,"metronome"),(40,"psychic")],
 }
 
 # Tabla de efectividad de tipos inspirada en Gen 1. Solo se listan cambios a 2,
@@ -393,7 +397,7 @@ def available_moves(species_id:int,level:int)->list[str]:
     if rows is None:
         rows=[]
         # Un movimiento normal asegura que cualquier Pokémon pueda pelear.
-        rows.extend([(1,"tackle"),(12,"quick_attack"),(28,"body_slam")])
+        rows.extend([(1,"tackle"),(12,"quick_attack"),(24,"body_slam")])
         for tp in TYPES.get(species_id,("Normal",)):
             rows.extend(TYPE_MOVESETS.get(tp,[]))
     learned=[]

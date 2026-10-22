@@ -393,7 +393,7 @@ def _species_level_learnset(species_id:int)->list[tuple[int,str]]:
     sid=int(species_id)
     rows=SPECIAL_LEARNSETS.get(sid)
     if rows is None:
-        rows=[(1,'tackle'),(12,'quick_attack'),(28,'body_slam')]
+        rows=[(1,'tackle'),(12,'quick_attack'),(24,'body_slam')]
         for tp in TYPES.get(sid,('Normal',)):
             rows.extend(TYPE_MOVESETS.get(tp,[]))
     out=[]; seen=set()
@@ -444,31 +444,62 @@ def _level_path_and_moves_cursor(c,owner_id:int,pokemon_id:int,species_id:int,ni
             c.execute("""INSERT INTO pokemon_pokedex_tb(owner_id,species_id,obtained_count) VALUES(%s,%s,1)
                          ON CONFLICT(owner_id,species_id) DO UPDATE SET last_obtained_at=NOW()""",(int(owner_id),species))
             notes.append(f'✨ {nickname or NAMES[old_species]} evolucionó a {NAMES[species]}.')
-            # Si la forma evolucionada aprende algo exactamente al mismo nivel, también se ofrece.
+            # Al evolucionar, rellena huecos con movimientos naturales de la nueva forma
+            # que ya correspondan a su nivel. No reemplaza nada sin permiso.
+            if len(current_moves)<4:
+                for req,code in _species_level_learnset(species):
+                    if int(req)>lv:break
+                    if code in current_moves:continue
+                    _queue_level_move_cursor(c,owner_id,pokemon_id,species,nickname,current_moves,code,notes)
+                    if len(current_moves)>=4:break
+            # Si la forma evolucionada aprende algo exactamente al mismo nivel y ya
+            # estaba completa, se ofrece mediante el selector normal.
             for code in _species_moves_at_level(species,lv):
                 _queue_level_move_cursor(c,owner_id,pokemon_id,species,nickname,current_moves,code,notes)
     return species
 
 
 def _repair_incomplete_level_moves_cursor(c)->int:
-    """Repara colecciones viejas con <4 movimientos sin reescribir sets ya elegidos."""
+    """Repara sets viejos y recupera aprendizajes de nivel que quedaron saltados.
+
+    - Con menos de 4 movimientos, completa huecos en orden cronológico.
+    - Con 4 movimientos, solo encola movimientos posteriores al último movimiento
+      natural que conserva el Pokémon; así no ofrece ataques viejos/debiles ni pisa MT.
+    - Las decisiones pendientes se resuelven por privado, una por una.
+    """
     c.execute("SELECT pokemon_id,owner_id,species_id,nickname,level,moves_json FROM pokemon_instances_tb ORDER BY pokemon_id")
     rows=c.fetchall(); changed=0
     for pid,owner,species,nick,level,moves_json in rows:
         try:moves=[str(x) for x in json.loads(moves_json or '[]') if str(x) in MOVES]
         except Exception:moves=[]
-        # No tocamos sets completos: pudieron contener MT o decisiones del jugador.
-        if len(moves)>=4:continue
+        # Quita duplicados conservando el orden elegido por el jugador.
+        moves=list(dict.fromkeys(moves))[:4]
+        learnset=[(int(req),str(code)) for req,code in _species_level_learnset(int(species)) if int(req)<=int(level)]
+        req_by_code={}
+        for req,code in learnset:req_by_code[code]=max(req,req_by_code.get(code,0))
         before=list(moves)
-        eligible=[]
-        for req,code in _species_level_learnset(int(species)):
-            if int(req)<=int(level) and code not in eligible:eligible.append(code)
-        for code in eligible:
+
+        # Primero rellena huecos con movimientos que ya debería conocer.
+        for req,code in learnset:
             if len(moves)>=4:break
             if code not in moves:moves.append(code)
         if moves!=before:
             c.execute("UPDATE pokemon_instances_tb SET moves_json=%s,updated_at=NOW() WHERE pokemon_id=%s",(json.dumps(moves,ensure_ascii=False),int(pid)))
             changed+=1
+
+        # Si el set ya está completo, recupera solo aprendizajes posteriores.
+        natural_reqs=[req_by_code[m] for m in moves if m in req_by_code]
+        # Si el jugador reemplazó TODO por MT/elecciones ajenas al learnset, respetamos su set.
+        if len(moves)>=4 and not natural_reqs:
+            continue
+        frontier=max(natural_reqs,default=0)
+        for req,code in learnset:
+            if code in moves or req<=frontier:continue
+            c.execute("SELECT status FROM pokemon_move_learning_tb WHERE pokemon_id=%s AND move_code=%s ORDER BY request_id DESC LIMIT 1",(int(pid),code))
+            hist=c.fetchone()
+            if hist and str(hist[0]) in ('learned','skipped','pending'):continue
+            c.execute("""INSERT INTO pokemon_move_learning_tb(owner_id,pokemon_id,move_code,status)
+                         VALUES(%s,%s,%s,'pending') ON CONFLICT DO NOTHING""",(int(owner),int(pid),code))
     return changed
 
 
@@ -491,7 +522,13 @@ async def _notify_pending_move_learning(context:ContextTypes.DEFAULT_TYPE,owner_
         c.execute(f"""SELECT ml.request_id,ml.owner_id,ml.pokemon_id,ml.move_code,p.species_id,p.nickname,p.moves_json
                       FROM pokemon_move_learning_tb ml
                       JOIN pokemon_instances_tb p ON p.pokemon_id=ml.pokemon_id AND p.owner_id=ml.owner_id
-                      WHERE {where} ORDER BY ml.request_id ASC LIMIT 30""",tuple(params))
+                      WHERE {where}
+                        AND NOT EXISTS (
+                          SELECT 1 FROM pokemon_move_learning_tb prev
+                          WHERE prev.pokemon_id=ml.pokemon_id AND prev.status='pending'
+                            AND prev.request_id<ml.request_id
+                        )
+                      ORDER BY ml.request_id ASC LIMIT 30""",tuple(params))
         pending=c.fetchall(); conn.rollback()
     except Exception as e:
         conn.rollback(); print('[PK move learn pending]',type(e).__name__,e)
@@ -5610,7 +5647,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             elif action=='saffight':
                 if row[7] is None or bool(row[11]):conn.rollback(); return await q.answer('No necesitas pelear ahora.',show_alert=True) or True
                 markup=_safari_team_markup_cursor(c,uid,sid); conn.rollback(); await q.answer();
-                try:await q.edit_message_text(_safari_text(row)+'\n\nElige quién peleará:',reply_markup=markup)
+                try:await q.edit_message_text(_safari_text(row)+'\n\nElige quién saldrá primero. Durante la pelea podrás cambiar entre tus Pokémon de /equipo:',reply_markup=markup)
                 except Exception:pass
                 return True
             elif action=='safball':
@@ -5653,19 +5690,27 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             if str(sr[4])!='active' or sr[10]<=datetime.now(timezone.utc):conn.rollback(); return await q.answer('Tu Safari terminó.',show_alert=True) or True
             if sr[5] is None or bool(sr[9]):conn.rollback(); return await q.answer('Ese encuentro ya cambió.',show_alert=True) or True
             if _battle_busy_cursor(c,uid):conn.rollback(); return await q.answer('Ya tienes una batalla Pokémon pendiente o activa.',show_alert=True) or True
-            c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code,sex FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); rr=c.fetchone()
-            if not rr or pid not in _npc_team_slot_ids_cursor(c,uid):conn.rollback(); return await q.answer('Ese Pokémon ya no está en tus 4 espacios.',show_alert=True) or True
-            user_mon=_battle_mon(rr); sp=int(sr[5]); level=int(sr[6]); ivs=json.loads(sr[8] or '{}'); moves=available_moves(sp,level); hp=_stat_value(sp,level,'hp',int(ivs.get('hp',0)))
+            # Safari usa los 4 espacios actuales de /equipo. El Pokémon elegido aquí
+            # solo decide quién sale primero; durante la pelea se puede cambiar normalmente.
+            slot_ids=_npc_team_slot_ids_cursor(c,uid)
+            if pid not in slot_ids:conn.rollback(); return await q.answer('Ese Pokémon ya no está en tus 4 espacios.',show_alert=True) or True
+            ordered_ids=[pid]+[x for x in slot_ids if int(x)!=int(pid)]
+            user_mons=[]
+            for team_pid in ordered_ids:
+                c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code,sex FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,int(team_pid))); rr=c.fetchone()
+                if rr:user_mons.append(_battle_mon(rr))
+            if not user_mons:conn.rollback(); return await q.answer('No pude preparar tu equipo Safari. Revisa /equipo.',show_alert=True) or True
+            sp=int(sr[5]); level=int(sr[6]); ivs=json.loads(sr[8] or '{}'); moves=available_moves(sp,level); hp=_stat_value(sp,level,'hp',int(ivs.get('hp',0)))
             bot_mon={'pid':-2_000_000_000-sid,'species':sp,'nickname':None,'level':level,'hp':hp,'max_hp':hp,'moves':moves,'pp':{m:MOVES[m][4] for m in moves if m in MOVES},'status':None,'sleep':0,'stages':{'atk':0,'def':0,'spd':0},'shiny':bool(sr[7]),'ivs':ivs,'held_item':None,'choice_lock':None}
-            botid=-2_000_000-sid; state={'status':'active','battle_kind':'safari','safari_session_id':sid,'safari_user_id':uid,'bot_player_id':botid,'mode':1,'round':1,'choices':{},'players':{str(uid):{'name':_display_name_cursor(c,uid),'mons':[user_mon],'active':0},str(botid):{'name':'Pokémon Safari','mons':[bot_mon],'active':0}}}
-            c.execute("INSERT INTO pokemon_battles_tb(chat_id,thread_id,challenger_id,opponent_id,mode,status,state_json) VALUES(%s,%s,%s,%s,1,'active',%s) RETURNING battle_id",(int(sr[2]),int(sr[3] or 0),uid,botid,json.dumps(state,ensure_ascii=False))); bid=int(c.fetchone()[0]); c.execute("INSERT INTO pokemon_safari_battles_tb(battle_id,session_id,user_id) VALUES(%s,%s,%s)",(bid,sid,uid)); conn.commit(); chat=(int(sr[2]),int(sr[3] or 0))
+            botid=-2_000_000-sid; safari_mode=len(user_mons); state={'status':'active','battle_kind':'safari','safari_session_id':sid,'safari_user_id':uid,'bot_player_id':botid,'mode':safari_mode,'round':1,'choices':{},'players':{str(uid):{'name':_display_name_cursor(c,uid),'mons':user_mons,'active':0},str(botid):{'name':'Pokémon Safari','mons':[bot_mon],'active':0}}}
+            c.execute("INSERT INTO pokemon_battles_tb(chat_id,thread_id,challenger_id,opponent_id,mode,status,state_json) VALUES(%s,%s,%s,%s,%s,'active',%s) RETURNING battle_id",(int(sr[2]),int(sr[3] or 0),uid,botid,safari_mode,json.dumps(state,ensure_ascii=False))); bid=int(c.fetchone()[0]); c.execute("INSERT INTO pokemon_safari_battles_tb(battle_id,session_id,user_id) VALUES(%s,%s,%s)",(bid,sid,uid)); conn.commit(); chat=(int(sr[2]),int(sr[3] or 0))
         except Exception as e:conn.rollback(); print('[PK safari battle]',type(e).__name__,e); return await q.answer('No pude iniciar la pelea Safari.',show_alert=True) or True
         finally:_put_connection(conn)
         await q.answer('⚔️ ¡Comienza la pelea!')
         try:
-            msg=await context.bot.send_message(chat[0],_battle_text(state,'🌿 Zona Safari · puedes lanzar una Safari Ball cuando quieras; bajar PS mejora la captura.'),message_thread_id=chat[1] or None,reply_markup=_battle_markup(bid)); await _store_battle_public_message_id(bid,msg.message_id); await _sync_single_battle_views(context,bid,state,chat[0],chat[1],msg.message_id,'🌿 Zona Safari · puedes lanzar una Safari Ball cuando quieras; bajar PS mejora la captura.')
+            msg=await context.bot.send_message(chat[0],_battle_text(state,'🌿 Zona Safari · tu equipo completo está disponible. Puedes cambiar Pokémon y lanzar una Safari Ball cuando quieras; bajar PS mejora la captura.'),message_thread_id=chat[1] or None,reply_markup=_battle_markup(bid)); await _store_battle_public_message_id(bid,msg.message_id); await _sync_single_battle_views(context,bid,state,chat[0],chat[1],msg.message_id,'🌿 Zona Safari · tu equipo completo está disponible. Puedes cambiar Pokémon y lanzar una Safari Ball cuando quieras; bajar PS mejora la captura.')
         except Exception as e:print('[PK safari battle send]',type(e).__name__,e)
-        try:await q.edit_message_text('⚔️ Batalla Safari iniciada. Tus movimientos se eligen por privado.')
+        try:await q.edit_message_text(f'⚔️ Batalla Safari iniciada con {len(state["players"][str(uid)]["mons"])} Pokémon disponibles. Puedes cambiar durante el combate; tus acciones se eligen por privado.')
         except Exception:pass
         return True
 
@@ -7248,7 +7293,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
     if action=='evolveitem':
         code=p[2]; pid=int(p[3]); conn=_get_connection(); note=None
         try:
-            c=conn.cursor(); c.execute("SELECT species_id,nickname,level FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s FOR UPDATE",(uid,pid)); r=c.fetchone()
+            c=conn.cursor(); c.execute("SELECT species_id,nickname,level,moves_json FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s FOR UPDATE",(uid,pid)); r=c.fetchone()
             if not r:conn.rollback(); return await q.answer('Pokémon no encontrado.',show_alert=True)
             sid=int(r[0]); current_level=int(r[2])
             if code in TM_ITEMS:
@@ -7289,9 +7334,19 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                 c.execute("UPDATE pokemon_items_tb SET qty=qty-1 WHERE owner_id=%s AND item_code=%s AND qty>0 RETURNING qty",(uid,code))
                 if not c.fetchone():conn.rollback(); return await q.answer('Ya no tienes ese objeto.',show_alert=True)
                 # Evolucionar no debe borrar movimientos elegidos ni MT aprendidas.
-                c.execute("UPDATE pokemon_instances_tb SET species_id=%s,updated_at=NOW() WHERE pokemon_id=%s",(target,pid))
+                try: current_moves=[str(x) for x in json.loads(r[3] or '[]') if str(x) in MOVES]
+                except Exception: current_moves=[]
+                evo_notes=[]
+                if len(current_moves)<4:
+                    for req,move_code in _species_level_learnset(int(target)):
+                        if int(req)>current_level:break
+                        if move_code in current_moves:continue
+                        _queue_level_move_cursor(c,uid,pid,int(target),r[1],current_moves,move_code,evo_notes)
+                        if len(current_moves)>=4:break
+                c.execute("UPDATE pokemon_instances_tb SET species_id=%s,moves_json=%s,updated_at=NOW() WHERE pokemon_id=%s",(target,json.dumps(current_moves[:4],ensure_ascii=False),pid))
                 c.execute("INSERT INTO pokemon_pokedex_tb(owner_id,species_id,obtained_count) VALUES(%s,%s,1) ON CONFLICT(owner_id,species_id) DO UPDATE SET last_obtained_at=NOW()",(uid,target))
                 conn.commit(); note=f'✨ {r[1] or NAMES[sid]} evolucionó a {NAMES[target]}.'
+                if evo_notes:note+='\n'+'\n'.join(evo_notes)
         except Exception as e:conn.rollback(); print('[PK evolve]',e)
         finally:_put_connection(conn)
         return await q.answer(note or 'No pude evolucionarlo.',show_alert=True)
@@ -7382,7 +7437,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             chat_id=int(tr[7]); thread_id=tr[8]; msgid=tr[9]
             if not (ca and cb):conn.commit(); result_text='✅ Confirmaste. Falta la otra persona.'
             else:
-                c.execute("SELECT pokemon_id,owner_id,species_id,nickname,level,shiny FROM pokemon_instances_tb WHERE pokemon_id IN (%s,%s) FOR UPDATE",(pa,pb)); rr={int(x[0]):x for x in c.fetchall()}
+                c.execute("SELECT pokemon_id,owner_id,species_id,nickname,level,shiny,moves_json FROM pokemon_instances_tb WHERE pokemon_id IN (%s,%s) FOR UPDATE",(pa,pb)); rr={int(x[0]):x for x in c.fetchall()}
                 if pa not in rr or pb not in rr or int(rr[pa][1])!=ua or int(rr[pb][1])!=ub:conn.rollback(); return await q.answer('Una de las ofertas ya no está disponible.',show_alert=True)
                 offered_a=rr[pa][3] or NAMES[int(rr[pa][2])]; offered_b=rr[pb][3] or NAMES[int(rr[pb][2])]
                 # Los sacamos de sus equipos viejos para no dejar referencias cruzadas.
@@ -7396,7 +7451,19 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                     oldsid=int(row[2]); target=TRADE_EVOLUTIONS.get(oldsid)
                     finalsid=oldsid
                     if target:
-                        finalsid=target; c.execute("UPDATE pokemon_instances_tb SET species_id=%s,updated_at=NOW() WHERE pokemon_id=%s",(target,pid)); evo_notes.append(f"✨ {row[3] or NAMES[oldsid]} evolucionó a {NAMES[target]} por intercambio.")
+                        finalsid=target
+                        try: trade_moves=[str(x) for x in json.loads(row[6] or '[]') if str(x) in MOVES]
+                        except Exception: trade_moves=[]
+                        fill_notes=[]
+                        if len(trade_moves)<4:
+                            for req,move_code in _species_level_learnset(int(target)):
+                                if int(req)>int(row[4]):break
+                                if move_code in trade_moves:continue
+                                _queue_level_move_cursor(c,new_owner,pid,int(target),row[3],trade_moves,move_code,fill_notes)
+                                if len(trade_moves)>=4:break
+                        c.execute("UPDATE pokemon_instances_tb SET species_id=%s,moves_json=%s,updated_at=NOW() WHERE pokemon_id=%s",(target,json.dumps(trade_moves[:4],ensure_ascii=False),pid))
+                        evo_notes.append(f"✨ {row[3] or NAMES[oldsid]} evolucionó a {NAMES[target]} por intercambio.")
+                        evo_notes.extend(fill_notes)
                     c.execute("""INSERT INTO pokemon_pokedex_tb(owner_id,species_id,obtained_count) VALUES(%s,%s,1)
                                  ON CONFLICT(owner_id,species_id) DO UPDATE SET obtained_count=pokemon_pokedex_tb.obtained_count+1,last_obtained_at=NOW()""",(new_owner,finalsid))
                 c.execute("UPDATE pokemon_trades_tb SET status='done',finished_at=NOW(),updated_at=NOW() WHERE trade_id=%s",(tid,)); conn.commit(); finished=True
