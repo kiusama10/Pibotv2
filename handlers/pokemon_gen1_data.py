@@ -317,7 +317,7 @@ TYPE_MOVESETS = {
 # Casos emblemáticos donde un set genérico no representa bien al Pokémon.
 SPECIAL_LEARNSETS = {
     10:[(1,"tackle")], 11:[(1,"harden")], 13:[(1,"poison_sting")], 14:[(1,"harden")],
-    25:[(1,"thunder_shock"),(9,"growl"),(16,"quick_attack"),(26,"swift"),(33,"agility"),(43,"thunder")],
+    25:[(1,"thunder_shock"),(1,"growl"),(9,"thunder_wave"),(16,"quick_attack"),(26,"swift"),(33,"agility"),(43,"thunder")],
     26:[(1,"thunder_shock"),(1,"growl"),(1,"quick_attack"),(1,"thunder")],
     63:[(1,"teleport")],
     92:[(1,"lick"),(1,"hypnosis"),(21,"night_shade"),(35,"dream_eater")],

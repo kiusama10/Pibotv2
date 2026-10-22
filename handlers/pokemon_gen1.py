@@ -16,7 +16,7 @@ from handlers.pokemon_gen1_data import (
     NAMES, TYPES, MOVES, ITEMS, TM_ITEMS, LEVEL_EVOLUTIONS, STONE_EVOLUTIONS,
     TRADE_EVOLUTIONS, LEGENDARY_IDS, EPIC_IDS, RARE_IDS, PHYSICAL_TYPES,
     available_moves, battle_base_stats, effectiveness, rarity_for, can_learn_tm,
-    rarity_emoji, type_emoji,
+    rarity_emoji, type_emoji, SPECIAL_LEARNSETS, TYPE_MOVESETS,
 )
 
 PAGE_SIZE = 8
@@ -121,6 +121,40 @@ TRAINING_WIN_PIPESOS = 1000
 TRAINING_LOSS_PIPESOS = 300
 TRAINING_HELD_DROP_CHANCE = 0.08
 
+
+# Expansión Pokémon: Safari, Team Rocket, Incursiones, Liga y progresión.
+SAFARI_PASS_COST = 10_000
+SAFARI_DURATION_SECONDS = 1800
+SAFARI_START_BALLS = 10
+SAFARI_SHINY_DENOMINATOR = 128
+SAFARI_IV_MIN = 10
+SAFARI_LEGENDARY_APPEAR_CHANCE = 0.005  # 0.5% por exploración
+# Probabilidad máxima con el Pokémon a 0 PS; a más PS, menor captura.
+SAFARI_CAPTURE_CHANCE = {'comun':0.82,'raro':0.68,'epico':0.52,'legendario':0.10}
+ROCKET_EVENT_SECONDS = 1800
+RAID_EVENT_SECONDS = 2700
+RAID_USER_ATTACKS = 5
+RAID_ATTACK_COOLDOWN_SECONDS = 60
+RAID_LEGENDARY_CHANCE = 0.10  # 10% de las incursiones pueden ser legendarias.
+RAID_LEGENDARY_BOSSES = (144,145,146,150,151)
+RAID_LEGENDARY_SHINY_DENOMINATOR = 256  # Se decide una sola vez por raid; nunca uno por participante.
+RAID_LEGENDARY_CAPTURE_ATTEMPTS = 3
+RAID_LEGENDARY_CAPTURE_SECONDS = 600  # 10 minutos para que el entrenador elegido haga sus 3 tiros.
+RAID_LEGENDARY_DICE_SUCCESS = 6  # Solo un 6 captura al legendario.
+WEATHER_KEYS = ('despejado','lluvia','tormenta','niebla','soleado','viento')
+WEATHER_NAMES = {
+    'despejado':'☀️ Despejado','lluvia':'🌧️ Lluvia','tormenta':'⛈️ Tormenta',
+    'niebla':'🌫️ Niebla','soleado':'🔥 Sol intenso','viento':'💨 Viento fuerte'
+}
+WEATHER_TYPES = {
+    'despejado':(), 'lluvia':('Water',), 'tormenta':('Electric','Water'),
+    'niebla':('Ghost','Psychic','Poison'), 'soleado':('Fire','Grass'),
+    'viento':('Flying','Dragon')
+}
+ROCKET_WAVES = ('rocket_grunt_event','rocket_exec_event','jessie_event','james_event')
+LEAGUE_ORDER = ('lorelei_e4','bruno_e4','agatha_e4','lance_e4','champion_e4')
+RAID_BOSSES = (94,131,143,142,149)
+
 # Objetos equipables reales. El inventario sigue siendo pokemon_items_tb; cuando
 # uno se equipa se descuenta del inventario y queda ligado al ejemplar mediante
 # pokemon_instances_tb.held_item_code. Así un objeto equipado no puede entregarse.
@@ -160,6 +194,7 @@ HELD_RARITY_EMOJI = {'comun':'⚪','raro':'🔵','epico':'🟣'}
 SPECIAL_POKEMON_ITEMS = {
     'object_box': {'name':'Caja de Objetos Pokémon','emoji':'🎁','description':'Contiene un objeto Pokémon aleatorio. Puede incluir una Master Ball extremadamente rara.'},
     'master_ball': {'name':'Master Ball','emoji':'🟣','description':'Captura garantizada en encuentros salvajes y legendarios especiales.'},
+    'safari_ticket': {'name':'Pase Safari','emoji':'🎟️','description':'Permite entrar una vez a la Zona Safari sin pagar los 10,000 PiPesos.'},
 }
 
 HELD_TYPE_BOOSTS = {
@@ -353,6 +388,144 @@ def _egg_progress_text(progress:int)->str:
     return f'{pct:.1f}%\n{bar}'
 
 
+def _species_level_learnset(species_id:int)->list[tuple[int,str]]:
+    """Learnset compacto de PiBot, pero sin recortar a los 4 movimientos actuales."""
+    sid=int(species_id)
+    rows=SPECIAL_LEARNSETS.get(sid)
+    if rows is None:
+        rows=[(1,'tackle'),(12,'quick_attack'),(28,'body_slam')]
+        for tp in TYPES.get(sid,('Normal',)):
+            rows.extend(TYPE_MOVESETS.get(tp,[]))
+    out=[]; seen=set()
+    for req,code in sorted(rows,key=lambda x:(int(x[0]),str(x[1]))):
+        req=int(req); code=str(code)
+        if code not in MOVES or (req,code) in seen:continue
+        seen.add((req,code)); out.append((req,code))
+    return out
+
+
+def _species_moves_at_level(species_id:int,level:int)->list[str]:
+    return [code for req,code in _species_level_learnset(species_id) if int(req)==int(level)]
+
+
+def _queue_level_move_cursor(c,owner_id:int,pokemon_id:int,species_id:int,nickname,current_moves:list[str],move_code:str,notes:list[str])->None:
+    """Aprende automáticamente con hueco; con 4 movimientos deja una decisión pendiente."""
+    code=str(move_code)
+    if code not in MOVES or code in current_moves:return
+    # Si esta enseñanza ya fue resuelta antes (aprendida u omitida), no vuelve a molestar.
+    c.execute("SELECT status FROM pokemon_move_learning_tb WHERE pokemon_id=%s AND move_code=%s ORDER BY request_id DESC LIMIT 1",(int(pokemon_id),code))
+    hist=c.fetchone()
+    if hist and str(hist[0]) in ('learned','skipped'):return
+    mon_name=nickname or NAMES.get(int(species_id),'Pokémon'); move_name=MOVES[code][0]
+    if len(current_moves)<4:
+        current_moves.append(code)
+        # Guardamos historial para no volver a proponérselo tras reinicios/migraciones.
+        c.execute("""INSERT INTO pokemon_move_learning_tb(owner_id,pokemon_id,move_code,status,resolved_at)
+                     VALUES(%s,%s,%s,'learned',NOW())""",(int(owner_id),int(pokemon_id),code))
+        notes.append(f'📚 {mon_name} aprendió {move_name}.')
+        return
+    c.execute("""INSERT INTO pokemon_move_learning_tb(owner_id,pokemon_id,move_code,status)
+                 SELECT %s,%s,%s,'pending'
+                 WHERE NOT EXISTS(SELECT 1 FROM pokemon_move_learning_tb WHERE pokemon_id=%s AND move_code=%s AND status='pending')""",
+              (int(owner_id),int(pokemon_id),code,int(pokemon_id),code))
+    if c.rowcount:
+        notes.append(f'🧠 {mon_name} quiere aprender {move_name}. Te mandaré el selector por privado.')
+
+
+def _level_path_and_moves_cursor(c,owner_id:int,pokemon_id:int,species_id:int,nickname,old_level:int,new_level:int,current_moves:list[str],notes:list[str])->int:
+    """Procesa niveles uno por uno: aprende movimientos y conserva el set elegido/MT."""
+    species=int(species_id)
+    for lv in range(int(old_level)+1,int(new_level)+1):
+        for code in _species_moves_at_level(species,lv):
+            _queue_level_move_cursor(c,owner_id,pokemon_id,species,nickname,current_moves,code,notes)
+        # Evolución por nivel después de aprender los movimientos de ese nivel.
+        while species in LEVEL_EVOLUTIONS and lv>=int(LEVEL_EVOLUTIONS[species][0]):
+            old_species=species; species=int(LEVEL_EVOLUTIONS[species][1])
+            c.execute("""INSERT INTO pokemon_pokedex_tb(owner_id,species_id,obtained_count) VALUES(%s,%s,1)
+                         ON CONFLICT(owner_id,species_id) DO UPDATE SET last_obtained_at=NOW()""",(int(owner_id),species))
+            notes.append(f'✨ {nickname or NAMES[old_species]} evolucionó a {NAMES[species]}.')
+            # Si la forma evolucionada aprende algo exactamente al mismo nivel, también se ofrece.
+            for code in _species_moves_at_level(species,lv):
+                _queue_level_move_cursor(c,owner_id,pokemon_id,species,nickname,current_moves,code,notes)
+    return species
+
+
+def _repair_incomplete_level_moves_cursor(c)->int:
+    """Repara colecciones viejas con <4 movimientos sin reescribir sets ya elegidos."""
+    c.execute("SELECT pokemon_id,owner_id,species_id,nickname,level,moves_json FROM pokemon_instances_tb ORDER BY pokemon_id")
+    rows=c.fetchall(); changed=0
+    for pid,owner,species,nick,level,moves_json in rows:
+        try:moves=[str(x) for x in json.loads(moves_json or '[]') if str(x) in MOVES]
+        except Exception:moves=[]
+        # No tocamos sets completos: pudieron contener MT o decisiones del jugador.
+        if len(moves)>=4:continue
+        before=list(moves)
+        eligible=[]
+        for req,code in _species_level_learnset(int(species)):
+            if int(req)<=int(level) and code not in eligible:eligible.append(code)
+        for code in eligible:
+            if len(moves)>=4:break
+            if code not in moves:moves.append(code)
+        if moves!=before:
+            c.execute("UPDATE pokemon_instances_tb SET moves_json=%s,updated_at=NOW() WHERE pokemon_id=%s",(json.dumps(moves,ensure_ascii=False),int(pid)))
+            changed+=1
+    return changed
+
+
+def _move_learning_markup(request_id:int,current_moves:list[str]):
+    rows=[]
+    for idx,code in enumerate(current_moves[:4]):
+        name=MOVES.get(code,(code,))[0]
+        rows.append([InlineKeyboardButton(f'↪️ Olvidar {name}',callback_data=f'pk:learnreplace:{int(request_id)}:{idx}')])
+    rows.append([InlineKeyboardButton('❌ No aprenderlo',callback_data=f'pk:learnskip:{int(request_id)}')])
+    return InlineKeyboardMarkup(rows)
+
+
+async def _notify_pending_move_learning(context:ContextTypes.DEFAULT_TYPE,owner_id:int|None=None):
+    conn=_get_connection(); pending=[]
+    try:
+        c=conn.cursor(); params=[]
+        where="ml.status='pending' AND ml.notified_at IS NULL"
+        if owner_id is not None:
+            where += ' AND ml.owner_id=%s'; params.append(int(owner_id))
+        c.execute(f"""SELECT ml.request_id,ml.owner_id,ml.pokemon_id,ml.move_code,p.species_id,p.nickname,p.moves_json
+                      FROM pokemon_move_learning_tb ml
+                      JOIN pokemon_instances_tb p ON p.pokemon_id=ml.pokemon_id AND p.owner_id=ml.owner_id
+                      WHERE {where} ORDER BY ml.request_id ASC LIMIT 30""",tuple(params))
+        pending=c.fetchall(); conn.rollback()
+    except Exception as e:
+        conn.rollback(); print('[PK move learn pending]',type(e).__name__,e)
+    finally:_put_connection(conn)
+    for req,owner,pid,code,species,nick,moves_json in pending:
+        try:moves=[str(x) for x in json.loads(moves_json or '[]') if str(x) in MOVES]
+        except Exception:moves=[]
+        if code in moves:
+            conn=_get_connection()
+            try:
+                c=conn.cursor(); c.execute("UPDATE pokemon_move_learning_tb SET status='learned',resolved_at=NOW() WHERE request_id=%s AND status='pending'",(int(req),)); conn.commit()
+            except Exception:conn.rollback()
+            finally:_put_connection(conn)
+            continue
+        if len(moves)<4:
+            moves.append(str(code)); conn=_get_connection()
+            try:
+                c=conn.cursor(); c.execute("UPDATE pokemon_instances_tb SET moves_json=%s,updated_at=NOW() WHERE owner_id=%s AND pokemon_id=%s",(json.dumps(moves,ensure_ascii=False),int(owner),int(pid)))
+                c.execute("UPDATE pokemon_move_learning_tb SET status='learned',resolved_at=NOW() WHERE request_id=%s AND status='pending'",(int(req),)); conn.commit()
+            except Exception:conn.rollback()
+            finally:_put_connection(conn)
+            continue
+        mon_name=nick or NAMES.get(int(species),'Pokémon'); move_name=MOVES.get(str(code),(str(code),))[0]
+        try:
+            await context.bot.send_message(int(owner),f'🧠 {mon_name} quiere aprender {move_name}.\n\nYa conoce 4 movimientos. ¿Cuál quieres olvidar?',reply_markup=_move_learning_markup(int(req),moves))
+        except Exception:
+            continue
+        conn=_get_connection()
+        try:
+            c=conn.cursor(); c.execute("UPDATE pokemon_move_learning_tb SET notified_at=NOW() WHERE request_id=%s AND status='pending' AND notified_at IS NULL",(int(req),)); conn.commit()
+        except Exception:conn.rollback()
+        finally:_put_connection(conn)
+
+
 def ensure_pokemon_tables():
     conn = _get_connection()
     try:
@@ -430,6 +603,22 @@ def ensure_pokemon_tables():
               PRIMARY KEY(owner_id,item_code)
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_move_learning_tb(
+              request_id BIGSERIAL PRIMARY KEY,
+              owner_id BIGINT NOT NULL,
+              pokemon_id BIGINT NOT NULL,
+              move_code TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending',
+              notified_at TIMESTAMPTZ,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              resolved_at TIMESTAMPTZ
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_pokemon_move_learning_owner ON pokemon_move_learning_tb(owner_id,status,request_id)")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_pokemon_move_learning_pending ON pokemon_move_learning_tb(pokemon_id,move_code) WHERE status='pending'")
+        # Corrige Pokémon viejos que tenían menos de 4 movimientos sin tocar sets completos/MT.
+        _repair_incomplete_level_moves_cursor(c)
         c.execute("""
             CREATE TABLE IF NOT EXISTS pokemon_rank_tb(
               user_id BIGINT PRIMARY KEY,
@@ -842,6 +1031,167 @@ def ensure_pokemon_tables():
               UNIQUE(chat_id,thread_id,event_date)
             )
         """)
+        # Expansión: Safari diario.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_safari_sessions_tb(
+              session_id BIGSERIAL PRIMARY KEY,
+              user_id BIGINT NOT NULL,
+              chat_id BIGINT NOT NULL,
+              thread_id BIGINT,
+              safari_date DATE NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active',
+              balls INT NOT NULL DEFAULT 10,
+              current_species SMALLINT,
+              current_level SMALLINT,
+              current_shiny BOOLEAN,
+              current_ivs_json TEXT,
+              current_defeated BOOLEAN NOT NULL DEFAULT FALSE,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW()+INTERVAL '30 minutes'),
+              finished_at TIMESTAMPTZ,
+              UNIQUE(user_id,safari_date)
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_safari_active ON pokemon_safari_sessions_tb(user_id,status,expires_at)")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_safari_battles_tb(
+              battle_id BIGINT PRIMARY KEY,
+              session_id BIGINT NOT NULL,
+              user_id BIGINT NOT NULL,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        # Team Rocket grupal.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_rocket_events_tb(
+              event_id BIGSERIAL PRIMARY KEY,
+              chat_id BIGINT NOT NULL,
+              thread_id BIGINT NOT NULL DEFAULT 0,
+              event_date DATE NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active',
+              stage INT NOT NULL DEFAULT 0,
+              message_id BIGINT,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW()+INTERVAL '30 minutes'),
+              finished_at TIMESTAMPTZ,
+              UNIQUE(chat_id,thread_id,event_date)
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_rocket_participants_tb(
+              event_id BIGINT NOT NULL,
+              user_id BIGINT NOT NULL,
+              wins INT NOT NULL DEFAULT 0,
+              PRIMARY KEY(event_id,user_id)
+            )
+        """)
+        c.execute("ALTER TABLE pokemon_npc_encounters_tb ADD COLUMN IF NOT EXISTS event_ref BIGINT")
+        # Incursiones grupales con PS compartidos.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_raids_tb(
+              raid_id BIGSERIAL PRIMARY KEY,
+              chat_id BIGINT NOT NULL,
+              thread_id BIGINT NOT NULL DEFAULT 0,
+              species_id SMALLINT NOT NULL,
+              level SMALLINT NOT NULL,
+              max_hp INT NOT NULL,
+              hp INT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active',
+              message_id BIGINT,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW()+INTERVAL '45 minutes'),
+              finished_at TIMESTAMPTZ
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_raid_participants_tb(
+              raid_id BIGINT NOT NULL,
+              user_id BIGINT NOT NULL,
+              damage INT NOT NULL DEFAULT 0,
+              attacks INT NOT NULL DEFAULT 0,
+              last_attack_at TIMESTAMPTZ,
+              PRIMARY KEY(raid_id,user_id)
+            )
+        """)
+        # Captura especial de incursiones legendarias. Se añaden con ALTER para actualizar instalaciones existentes.
+        c.execute("ALTER TABLE pokemon_raids_tb ADD COLUMN IF NOT EXISTS is_legendary BOOLEAN NOT NULL DEFAULT FALSE")
+        c.execute("ALTER TABLE pokemon_raids_tb ADD COLUMN IF NOT EXISTS shiny BOOLEAN NOT NULL DEFAULT FALSE")
+        c.execute("ALTER TABLE pokemon_raids_tb ADD COLUMN IF NOT EXISTS catcher_id BIGINT")
+        c.execute("ALTER TABLE pokemon_raids_tb ADD COLUMN IF NOT EXISTS capture_attempts INT NOT NULL DEFAULT 0")
+        c.execute("ALTER TABLE pokemon_raids_tb ADD COLUMN IF NOT EXISTS capture_status TEXT NOT NULL DEFAULT 'none'")
+        # Misiones, logros, Liga, Pokédex y clima.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_daily_missions_tb(
+              user_id BIGINT NOT NULL,
+              mission_date DATE NOT NULL,
+              captures INT NOT NULL DEFAULT 0,
+              wins INT NOT NULL DEFAULT 0,
+              trainings INT NOT NULL DEFAULT 0,
+              claimed BOOLEAN NOT NULL DEFAULT FALSE,
+              PRIMARY KEY(user_id,mission_date)
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_achievements_tb(
+              user_id BIGINT NOT NULL,
+              achievement_key TEXT NOT NULL,
+              claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              PRIMARY KEY(user_id,achievement_key)
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_dex_milestones_tb(
+              user_id BIGINT NOT NULL,
+              milestone INT NOT NULL,
+              claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              PRIMARY KEY(user_id,milestone)
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_dex_rewards_tb(
+              user_id BIGINT PRIMARY KEY,
+              claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              pokemon_id BIGINT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_league_progress_tb(
+              user_id BIGINT PRIMARY KEY,
+              stage INT NOT NULL DEFAULT 0,
+              champion_done BOOLEAN NOT NULL DEFAULT FALSE,
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_world_state_tb(
+              state_key TEXT PRIMARY KEY,
+              state_value TEXT,
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_fugitives_tb(
+              fugitive_id BIGSERIAL PRIMARY KEY,
+              chat_id BIGINT NOT NULL,
+              thread_id BIGINT NOT NULL DEFAULT 0,
+              species_id SMALLINT NOT NULL,
+              level SMALLINT NOT NULL,
+              shiny BOOLEAN NOT NULL DEFAULT FALSE,
+              status TEXT NOT NULL DEFAULT 'waiting',
+              last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        c.execute("ALTER TABLE pokemon_wild_spawns_tb ADD COLUMN IF NOT EXISTS returning BOOLEAN NOT NULL DEFAULT FALSE")
+        c.execute("ALTER TABLE pokemon_instances_tb ADD COLUMN IF NOT EXISTS friendship INT NOT NULL DEFAULT 0")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pokemon_streak_rewards_tb(
+              user_id BIGINT NOT NULL,
+              threshold INT NOT NULL,
+              season_key TEXT NOT NULL,
+              claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              PRIMARY KEY(user_id,threshold,season_key)
+            )
+        """)
         # Asigna sexo una sola vez a ejemplares anteriores. Después queda persistido.
         c.execute("SELECT pokemon_id,species_id FROM pokemon_instances_tb WHERE sex IS NULL")
         for _pid,_sid in c.fetchall():
@@ -955,7 +1305,13 @@ def _wild_species_cursor(c,chat_id:int,thread_id:int|None)->int:
     if not candidates:
         candidates=list(base)
     preferred=DAY_PREFERRED if _wild_period()=='day' else NIGHT_PREFERRED
-    weights=[4 if i in preferred else 1 for i in candidates]
+    weather=_current_weather_cursor(c) if 'pokemon_world_state_tb' else 'despejado'
+    boosted=set(WEATHER_TYPES.get(weather,()))
+    weights=[]
+    for i in candidates:
+        w=4 if i in preferred else 1
+        if boosted and any(tp in boosted for tp in TYPES.get(i,())):w*=3
+        weights.append(w)
     return random.choices(candidates,weights=weights,k=1)[0]
 
 
@@ -1536,12 +1892,40 @@ async def pokedex_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
         c=conn.cursor(); c.execute("SELECT species_id,obtained_count FROM pokemon_pokedex_tb WHERE owner_id=%s ORDER BY species_id",(uid,)); rows=c.fetchall()
     finally:_put_connection(conn)
     got={int(a):int(b) for a,b in rows}
+    # Premios automáticos por hitos; cada uno se entrega una sola vez.
+    milestone_notes=[]; connm=_get_connection()
+    try:
+        cm=connm.cursor(); rewards={25:'🍬 +1 Caramelo Raro',50:'💰 +3,000 PiPesos',75:'🎁 +1 Caja de Objetos',100:'💰 +5,000 PiPesos',125:'🍬 +2 Caramelos Raros'}
+        for m in (25,50,75,100,125):
+            if len(got)>=m:
+                cm.execute("INSERT INTO pokemon_dex_milestones_tb(user_id,milestone) VALUES(%s,%s) ON CONFLICT DO NOTHING RETURNING milestone",(uid,m)); fresh=cm.fetchone()
+                if fresh:
+                    if m==25:grant_item_with_cursor(cm,uid,'rare_candy',1)
+                    elif m==50:cm.execute("UPDATE usuarios_tb SET saldo=saldo+3000 WHERE id_user=%s",(uid,))
+                    elif m==75:grant_item_with_cursor(cm,uid,'object_box',1)
+                    elif m==100:cm.execute("UPDATE usuarios_tb SET saldo=saldo+5000 WHERE id_user=%s",(uid,))
+                    elif m==125:grant_item_with_cursor(cm,uid,'rare_candy',2)
+                    milestone_notes.append(f'🎁 Hito {m}/151: {rewards[m]}')
+        connm.commit()
+    except Exception as e:connm.rollback(); print('[PK dex milestone]',type(e).__name__,e)
+    finally:_put_connection(connm)
     lines=[f"📖 POKÉDEX DE KANTO · {len(got)}/151",""]
     for start in range(1,152,25):
         end=min(151,start+24); count=sum(1 for i in range(start,end+1) if i in got)
         lines.append(f"#{start:03d}-#{end:03d}: {count}/{end-start+1}")
+    if milestone_notes:lines += ['', *milestone_notes]
     lines += ["", "Usa /pokemon para ver tus ejemplares. Puedes tener más de uno de la misma especie."]
-    try: await context.bot.send_message(uid,'\n'.join(lines))
+    markup=None
+    if len(got)>=151:
+        conn2=_get_connection(); claimed=False
+        try:
+            c2=conn2.cursor(); c2.execute("SELECT 1 FROM pokemon_dex_rewards_tb WHERE user_id=%s",(uid,)); claimed=bool(c2.fetchone())
+        finally:_put_connection(conn2)
+        if claimed:lines += ['', '👑 151/151 · Caja Legendaria Shiny ya reclamada.']
+        else:
+            lines += ['', '🌟 ¡151/151 COMPLETADA!', '🎁 Recompensa: Caja Legendaria con un Pokémon LEGENDARIO SHINY garantizado.']
+            markup=InlineKeyboardMarkup([[InlineKeyboardButton('🎁 Abrir Caja Legendaria Shiny',callback_data='pk:dexclaim')]])
+    try: await context.bot.send_message(uid,'\n'.join(lines),reply_markup=markup)
     except Exception:
         return await update.effective_message.reply_text('📩 Abre primero el privado de PiBot con /start.')
     if update.effective_chat.type!='private': await update.effective_message.reply_text('📩 Te mandé tu Pokédex por privado.')
@@ -1923,7 +2307,13 @@ def _single_private_markup(bid:int,state:dict,uid:int,final:bool=False):
     if key in state.get('choices',{}):return None
     pl=state['players'][key]; mon=pl['mons'][pl['active']]
     if mon.get('hp',0)<=0:return None
-    return _move_menu(bid,mon)
+    base=_move_menu(bid,mon)
+    # En Safari la bola puede lanzarse en cualquier momento de la pelea.
+    if state.get('battle_kind')=='safari' and int(uid)==int(state.get('safari_user_id',-1)):
+        rows=[list(r) for r in base.inline_keyboard]
+        rows.insert(0,[InlineKeyboardButton('🔴 Lanzar Safari Ball',callback_data=f'pk:safbattleball:{bid}')])
+        return InlineKeyboardMarkup(rows)
+    return base
 
 
 async def _set_private_battle_view(context,bid:int,uid:int,text:str,markup=None,final:bool=False):
@@ -2182,19 +2572,19 @@ def _apply_item_action(player:dict,choice:dict,c,uid:int)->str:
 
 
 def _grant_pokemon_xp_cursor(c,pid:int,amount:int)->list[str]:
-    c.execute("SELECT owner_id,species_id,nickname,level,xp FROM pokemon_instances_tb WHERE pokemon_id=%s FOR UPDATE",(pid,)); r=c.fetchone()
+    c.execute("SELECT owner_id,species_id,nickname,level,xp,moves_json FROM pokemon_instances_tb WHERE pokemon_id=%s FOR UPDATE",(pid,)); r=c.fetchone()
     if not r:return []
     owner,species,nick,level,xp=int(r[0]),int(r[1]),r[2],int(r[3]),int(r[4]); oldlevel=level; xp=max(xp,_xp_floor(level))+int(amount); notes=[]
+    try:current_moves=[str(x) for x in json.loads(r[5] or '[]') if str(x) in MOVES]
+    except Exception:current_moves=[]
+    if not current_moves:current_moves=list(available_moves(species,level))
     while level<MAX_LEVEL and xp>=_xp_floor(level+1):level+=1
-    evolved=False
-    while species in LEVEL_EVOLUTIONS and level>=LEVEL_EVOLUTIONS[species][0]:
-        old=NAMES[species]; species=LEVEL_EVOLUTIONS[species][1]; evolved=True
-        c.execute("""INSERT INTO pokemon_pokedex_tb(owner_id,species_id,obtained_count) VALUES(%s,%s,1)
-                     ON CONFLICT(owner_id,species_id) DO UPDATE SET last_obtained_at=NOW()""",(owner,species))
-        notes.append(f'✨ {nick or old} evolucionó a {NAMES[species]}.')
-    moves=available_moves(species,level)
-    c.execute("UPDATE pokemon_instances_tb SET species_id=%s,level=%s,xp=%s,moves_json=%s,updated_at=NOW() WHERE pokemon_id=%s",(species,level,xp,json.dumps(moves,ensure_ascii=False),pid))
-    if level>oldlevel:notes.append(f'⭐ {nick or NAMES[species]} subió a Nv.{level}.')
+    final_species=species
+    if level>oldlevel:
+        final_species=_level_path_and_moves_cursor(c,owner,pid,species,nick,oldlevel,level,current_moves,notes)
+    c.execute("UPDATE pokemon_instances_tb SET species_id=%s,level=%s,xp=%s,moves_json=%s,friendship=LEAST(255,friendship+2),updated_at=NOW() WHERE pokemon_id=%s",
+              (final_species,level,xp,json.dumps(current_moves[:4],ensure_ascii=False),pid))
+    if level>oldlevel:notes.insert(0,f'⭐ {nick or NAMES[final_species]} subió a Nv.{level}.')
     return notes
 
 
@@ -2280,7 +2670,19 @@ def _finish_battle_cursor(c,bid:int,state:dict)->dict:
     c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(WIN_PIPESOS,winner))
     c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(LOSS_PIPESOS,loser))
     delta=_update_rank_cursor(c,winner,loser)
-    level_notes=[]; xp_rewards={}
+    _mission_progress_cursor(c,winner,'win',1)
+    # Recompensas por racha PvP: una vez por umbral y temporada.
+    c.execute("SELECT current_streak FROM pokemon_rank_tb WHERE user_id=%s",(winner,)); _sr=c.fetchone(); _streak=int(_sr[0]) if _sr else 0
+    _season=_pokemon_month_key(); streak_notes=[]
+    for _threshold in (3,5,10):
+        if _streak>=_threshold:
+            c.execute("INSERT INTO pokemon_streak_rewards_tb(user_id,threshold,season_key) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING RETURNING threshold",(winner,_threshold,_season)); _got=c.fetchone()
+            if _got:
+                if _threshold==3:grant_item_with_cursor(c,winner,'rare_candy',1); streak_notes.append('🔥 Racha 3: +1 Caramelo Raro')
+                elif _threshold==5:grant_item_with_cursor(c,winner,'object_box',1); streak_notes.append('🔥 Racha 5: +1 Caja de Objetos Pokémon')
+                else:
+                    _sk=f'streak10:{_season}:{winner}'; c.execute("INSERT INTO pokemon_season_boxes_tb(owner_id,season_key,placement) VALUES(%s,%s,1) ON CONFLICT(owner_id,season_key) DO NOTHING",(winner,_sk)); streak_notes.append('🔥 Racha 10: +1 Caja Pokémon SHINY garantizado')
+    level_notes=list(streak_notes); xp_rewards={}
     player_ids=list(state['players'].keys())
     for uid,p in state['players'].items():
         won=int(uid)==winner
@@ -2364,6 +2766,7 @@ def _finish_training_cursor(c,bid:int,state:dict)->dict:
     enemy=state.get('players',{}).get(str(TRAINING_BOT_ID),{})
     defeated_species=[int(m.get('species',0)) for m in enemy.get('mons',[]) if int(m.get('hp',0))<=0]
     halloween_candies=_halloween_award_species_cursor(c,uid,defeated_species)
+    _mission_progress_cursor(c,uid,'training',1)
     result='win' if won else 'loss'
     c.execute("""UPDATE pokemon_training_sessions_tb SET status='finished',result=%s,xp_per_pokemon=%s,pipesos_reward=%s,
                  held_item_drop=%s,finished_at=NOW() WHERE training_id=%s AND status='active'""",
@@ -2387,6 +2790,34 @@ def _training_result_lines(final:dict)->list[str]:
         lines.append(f"🎃🍬 +{int(final['halloween_candies'])} Dulces Halloween")
     lines += final.get('notes',[])[:6]
     lines.append(f"Entrenamientos de hoy: {int(final.get('used',0))}/{TRAINING_DAILY_LIMIT}")
+    return lines
+
+
+def _finish_safari_battle_cursor(c,bid:int,state:dict)->dict:
+    uid=int(state['safari_user_id']); sid=int(state['safari_session_id']); won=int(state['winner'])==uid
+    c.execute("SELECT current_species,current_level,current_shiny,status FROM pokemon_safari_sessions_tb WHERE session_id=%s AND user_id=%s FOR UPDATE",(sid,uid)); sr=c.fetchone()
+    if not sr:return {'safari':True,'duplicate':True,'won':False,'uid':uid,'session_id':sid,'notes':[]}
+    notes=[]; xp=0
+    user=state['players'].get(str(uid),{})
+    if user.get('mons'):
+        rival_level=int(sr[1] or 1); xp=_combat_xp_amount(rival_level,won,'npc')
+        for mon in user['mons']:notes += _grant_pokemon_xp_cursor(c,int(mon['pid']),xp)
+    if won:
+        c.execute("UPDATE pokemon_safari_sessions_tb SET current_defeated=TRUE WHERE session_id=%s",(sid,))
+        _mission_progress_cursor(c,uid,'win',1)
+    else:
+        # Si pierdes, el Pokémon se escapa y puedes volver a explorar dentro del tiempo restante.
+        c.execute("UPDATE pokemon_safari_sessions_tb SET current_species=NULL,current_level=NULL,current_shiny=NULL,current_ivs_json=NULL,current_defeated=FALSE WHERE session_id=%s",(sid,))
+    c.execute("UPDATE pokemon_battles_tb SET status='finished',winner_id=%s,state_json=%s,finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s",(int(state['winner']),json.dumps(state,ensure_ascii=False),bid))
+    return {'safari':True,'duplicate':False,'won':won,'uid':uid,'session_id':sid,'xp':xp,'notes':notes,'species':int(sr[0]) if sr[0] else None}
+
+
+def _safari_result_lines(final:dict)->list[str]:
+    if final.get('duplicate'):return ['🌿 Esta batalla Safari ya había terminado.']
+    if final.get('won'):
+        lines=['🌿 ¡Victoria en la Zona Safari!',f"⭐ +{int(final.get('xp',0))} XP",'💫 El Pokémon quedó debilitado. Ahora puedes intentar capturarlo con una Safari Ball.']
+    else:lines=['🌿 El Pokémon Safari ganó el combate y escapó.','🌾 Puedes volver a explorar mientras tu pase siga activo.']
+    lines += list(final.get('notes',[]))[:5]
     return lines
 
 
@@ -2991,6 +3422,10 @@ async def _expire_wild_spawn(context: ContextTypes.DEFAULT_TYPE):
             "WHERE spawn_id=%s",
             (spawn_id,),
         )
+        # A veces un Pokémon que escapó se convierte en fugitivo y puede regresar más adelante.
+        if random.random()<0.25:
+            c.execute("INSERT INTO pokemon_fugitives_tb(chat_id,thread_id,species_id,level,shiny) VALUES(%s,%s,%s,%s,%s)",
+                      (int(row[3]),int(row[4] or 0),int(row[0]),min(MAX_LEVEL,int(row[1])+random.randint(1,3)),bool(row[2])))
         conn.commit()
     except Exception as e:
         conn.rollback(); print('[PK wild expire]', type(e).__name__, e); return
@@ -3014,14 +3449,19 @@ async def _spawn_wild(context:ContextTypes.DEFAULT_TYPE, chat_id:int, thread_id:
     try:
         c=conn.cursor()
         c.execute("UPDATE pokemon_wild_spawns_tb SET status='expired',finished_at=NOW() WHERE chat_id=%s AND thread_id IS NOT DISTINCT FROM %s AND status='active'",(chat_id,thread_id))
-        species=_wild_species_cursor(c,chat_id,thread_id); level=min(MAX_LEVEL,_starting_level(species)+random.randint(0,5)); shiny=(random.randrange(WILD_SHINY_DENOMINATOR)==0)
-        c.execute("INSERT INTO pokemon_wild_spawns_tb(chat_id,thread_id,species_id,level,shiny) VALUES(%s,%s,%s,%s,%s) RETURNING spawn_id",(chat_id,thread_id,species,level,shiny)); spawn_id=int(c.fetchone()[0]); conn.commit()
+        returning=False
+        c.execute("SELECT fugitive_id,species_id,level,shiny FROM pokemon_fugitives_tb WHERE chat_id=%s AND thread_id=%s AND status='waiting' ORDER BY last_seen_at LIMIT 1",(chat_id,int(thread_id or 0))); fug=c.fetchone()
+        if fug and random.random()<0.20:
+            returning=True; species=int(fug[1]); level=int(fug[2]); shiny=bool(fug[3]); c.execute("UPDATE pokemon_fugitives_tb SET status='returned' WHERE fugitive_id=%s",(int(fug[0]),))
+        else:
+            species=_wild_species_cursor(c,chat_id,thread_id); level=min(MAX_LEVEL,_starting_level(species)+random.randint(0,5)); shiny=(random.randrange(WILD_SHINY_DENOMINATOR)==0)
+        c.execute("INSERT INTO pokemon_wild_spawns_tb(chat_id,thread_id,species_id,level,shiny,returning) VALUES(%s,%s,%s,%s,%s,%s) RETURNING spawn_id",(chat_id,thread_id,species,level,shiny,returning)); spawn_id=int(c.fetchone()[0]); conn.commit()
     except Exception as e:
         conn.rollback(); print('[PK wild spawn db]',type(e).__name__,e); return False
     finally:_put_connection(conn)
     kb=InlineKeyboardMarkup([[InlineKeyboardButton('🎯 Atrapar',callback_data=f'pk:wild:{spawn_id}')]])
     try:
-        msg=await context.bot.send_message(chat_id=chat_id,message_thread_id=thread_id,text=_wild_text(species,level,shiny),reply_markup=kb)
+        msg=await context.bot.send_message(chat_id=chat_id,message_thread_id=thread_id,text=_wild_text(species,level,shiny)+("\n\n👣 Hay huellas conocidas... parece que este Pokémon ya había escapado antes." if returning else ""),reply_markup=kb)
     except Exception as e:
         print('[PK wild spawn send]',type(e).__name__,e); return False
     conn=_get_connection()
@@ -3834,6 +4274,511 @@ async def pokemon_halloween_boss_job(context:ContextTypes.DEFAULT_TYPE):
         except Exception as e:print('[PK Halloween boss job]',type(e).__name__,e)
 
 
+# ==================== EXPANSIÓN POKÉMON · SAFARI / ROCKET / RAID / LIGA ====================
+
+def _world_state_cursor(c,key:str,default:str|None=None)->str|None:
+    c.execute("SELECT state_value FROM pokemon_world_state_tb WHERE state_key=%s",(str(key),))
+    r=c.fetchone(); return str(r[0]) if r and r[0] is not None else default
+
+
+def _set_world_state_cursor(c,key:str,value:str):
+    c.execute("""INSERT INTO pokemon_world_state_tb(state_key,state_value) VALUES(%s,%s)
+                 ON CONFLICT(state_key) DO UPDATE SET state_value=EXCLUDED.state_value,updated_at=NOW()""",(str(key),str(value)))
+
+
+def _current_weather_cursor(c)->str:
+    weather=_world_state_cursor(c,'weather','despejado') or 'despejado'
+    return weather if weather in WEATHER_KEYS else 'despejado'
+
+
+async def climapokemon_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    conn=_get_connection()
+    try:c=conn.cursor(); weather=_current_weather_cursor(c)
+    finally:_put_connection(conn)
+    boosted=WEATHER_TYPES.get(weather,())
+    bonus=(' · favorece '+', '.join(boosted)) if boosted else ''
+    await update.effective_message.reply_text(f"🌦️ CLIMA POKÉMON\n\n{WEATHER_NAMES.get(weather,weather)}{bonus}\n\nEl clima cambia aproximadamente cada 6 horas y modifica qué tipos tienen más probabilidad de aparecer.")
+
+
+async def pokemon_weather_job(context:ContextTypes.DEFAULT_TYPE):
+    conn=_get_connection(); weather=None
+    try:
+        c=conn.cursor(); old=_current_weather_cursor(c); choices=[x for x in WEATHER_KEYS if x!=old]; weather=random.choice(choices or list(WEATHER_KEYS)); _set_world_state_cursor(c,'weather',weather); conn.commit()
+    except Exception as e:conn.rollback(); print('[PK weather]',type(e).__name__,e); return
+    finally:_put_connection(conn)
+    for community in COMUNIDADES:
+        try:
+            chat_id=int(community.get('id_comunidad')); thread_id=_games_topic(chat_id)
+            if thread_id is not None:await context.bot.send_message(chat_id,f"🌦️ El clima Pokémon cambió: {WEATHER_NAMES.get(weather,weather)}",message_thread_id=thread_id)
+        except Exception:pass
+
+
+def _mission_reset_text()->str:
+    now=datetime.now(POKEMON_TZ)
+    nxt=(now+timedelta(days=1)).replace(hour=0,minute=0,second=0,microsecond=0)
+    secs=max(0,int((nxt-now).total_seconds()))
+    h,rem=divmod(secs,3600); m=rem//60
+    return f"{h} h {m} min"
+
+
+def _mission_progress_cursor(c,uid:int,key:str,amount:int=1)->bool:
+    """Las misiones están activas todo el día y se reinician automáticamente por fecha México.
+    Devuelve True si ESTA acción completó el set y entregó el premio automáticamente.
+    """
+    day=_today_pokemon_date()
+    c.execute("INSERT INTO pokemon_daily_missions_tb(user_id,mission_date) VALUES(%s,%s) ON CONFLICT DO NOTHING",(int(uid),day))
+    col={'capture':'captures','win':'wins','training':'trainings'}.get(str(key))
+    if col:
+        c.execute(f"UPDATE pokemon_daily_missions_tb SET {col}={col}+%s WHERE user_id=%s AND mission_date=%s",(max(1,int(amount)),int(uid),day))
+    c.execute("SELECT captures,wins,trainings,claimed FROM pokemon_daily_missions_tb WHERE user_id=%s AND mission_date=%s FOR UPDATE",(int(uid),day))
+    r=c.fetchone() or (0,0,0,False)
+    cap,wins,tr,claimed=int(r[0]),int(r[1]),int(r[2]),bool(r[3])
+    if cap>=1 and wins>=2 and tr>=1 and not claimed:
+        c.execute("UPDATE pokemon_daily_missions_tb SET claimed=TRUE WHERE user_id=%s AND mission_date=%s",(int(uid),day))
+        c.execute("UPDATE usuarios_tb SET saldo=saldo+3000 WHERE id_user=%s",(int(uid),))
+        grant_item_with_cursor(c,int(uid),'rare_candy',1)
+        return True
+    return False
+
+
+async def misionespokemon_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id; day=_today_pokemon_date(); migrated_reward=False
+    conn=_get_connection()
+    try:
+        c=conn.cursor()
+        c.execute("INSERT INTO pokemon_daily_missions_tb(user_id,mission_date) VALUES(%s,%s) ON CONFLICT DO NOTHING",(uid,day))
+        c.execute("SELECT captures,wins,trainings,claimed FROM pokemon_daily_missions_tb WHERE user_id=%s AND mission_date=%s FOR UPDATE",(uid,day)); r=c.fetchone() or (0,0,0,False)
+        cap,wins,tr,claimed=int(r[0]),int(r[1]),int(r[2]),bool(r[3])
+        # Compatibilidad con una misión ya completada antes de instalar este parche.
+        if cap>=1 and wins>=2 and tr>=1 and not claimed:
+            c.execute("UPDATE pokemon_daily_missions_tb SET claimed=TRUE WHERE user_id=%s AND mission_date=%s",(uid,day))
+            c.execute("UPDATE usuarios_tb SET saldo=saldo+3000 WHERE id_user=%s",(uid,)); grant_item_with_cursor(c,uid,'rare_candy',1)
+            claimed=True; migrated_reward=True
+        conn.commit()
+    except Exception as e:
+        conn.rollback(); print('[PK missions]',type(e).__name__,e); return await update.effective_message.reply_text('No pude consultar tus misiones Pokémon.')
+    finally:_put_connection(conn)
+    lines=['📜 MISIONES POKÉMON · AUTOMÁTICAS','',
+           f"{'✅' if cap>=1 else '⬜'} Captura 1 Pokémon · {min(cap,1)}/1",
+           f"{'✅' if wins>=2 else '⬜'} Gana 2 combates Pokémon · {min(wins,2)}/2",
+           f"{'✅' if tr>=1 else '⬜'} Completa 1 entrenamiento · {min(tr,1)}/1",'',
+           '🎁 Completar las 3: 3,000 PiPesos + 1 Caramelo Raro.',
+           '⚙️ No tienes que activarlas: PiBot registra el progreso automáticamente.',
+           f'🔄 Se renuevan automáticamente en {_mission_reset_text()} (00:00 México).']
+    if migrated_reward:lines += ['', '🎉 ¡Ya las habías completado! Premio entregado automáticamente.']
+    elif claimed:lines += ['', '✅ Premio de hoy ya entregado automáticamente.']
+    await update.effective_message.reply_text('\n'.join(lines))
+
+
+async def pokemon_daily_missions_job(context:ContextTypes.DEFAULT_TYPE):
+    """Anuncio diario; el progreso se crea/renueva solo por mission_date al primer avance de cada usuario."""
+    for community in COMUNIDADES:
+        try:
+            chat_id=int(community.get('id_comunidad')); thread_id=_games_topic(chat_id)
+            if thread_id is not None:
+                await context.bot.send_message(chat_id,
+                    '📜 NUEVAS MISIONES POKÉMON\n\n'
+                    '🎯 Captura 1 Pokémon\n⚔️ Gana 2 combates Pokémon\n🏋️ Completa 1 entrenamiento\n\n'
+                    '🎁 3,000 PiPesos + 1 Caramelo Raro al completar las 3.\n'
+                    '⚙️ Son automáticas y estarán activas durante las próximas 24 horas.\nUsa /misionespokemon para ver tu progreso.',
+                    message_thread_id=thread_id)
+        except Exception as e:print('[PK daily missions job]',type(e).__name__,e)
+
+def _achievement_stats_cursor(c,uid:int)->dict:
+    c.execute("SELECT wild_catches FROM pokemon_trainer_tb WHERE user_id=%s",(uid,)); r=c.fetchone(); catches=int(r[0]) if r else 0
+    c.execute("SELECT COUNT(*) FROM pokemon_instances_tb WHERE owner_id=%s AND shiny=TRUE",(uid,)); shinies=int(c.fetchone()[0])
+    c.execute("SELECT COUNT(*) FROM pokemon_badges_tb WHERE user_id=%s",(uid,)); badges=int(c.fetchone()[0])
+    c.execute("SELECT COUNT(*) FROM pokemon_pokedex_tb WHERE owner_id=%s",(uid,)); dex=int(c.fetchone()[0])
+    c.execute("SELECT wins,best_streak FROM pokemon_rank_tb WHERE user_id=%s",(uid,)); rr=c.fetchone() or (0,0)
+    c.execute("SELECT COALESCE(SUM(wins),0),COALESCE(MAX(best_streak),0) FROM pokemon_rank_history_tb WHERE user_id=%s",(uid,)); hist=c.fetchone() or (0,0)
+    total_wins=int(rr[0])+int(hist[0]); best_streak=max(int(rr[1]),int(hist[1]))
+    c.execute("SELECT COUNT(*) FROM pokemon_eggs_tb WHERE owner_id=%s AND status='hatched'",(uid,)); hatched=int(c.fetchone()[0])
+    return {'catches':catches,'shinies':shinies,'badges':badges,'dex':dex,'wins':total_wins,'streak':best_streak,'hatched':hatched}
+
+
+async def logrospokemon_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id; conn=_get_connection(); newly=[]; stats={}
+    achievements=[
+        ('capturador10','🎯 Capturador',lambda s:s['catches']>=10,'10 capturas'),
+        ('capturador50','🏹 Cazador experto',lambda s:s['catches']>=50,'50 capturas'),
+        ('primer_shiny','✨ Cazador Shiny',lambda s:s['shinies']>=1,'1 Shiny'),
+        ('ocho_medallas','🏅 Maestro de Kanto',lambda s:s['badges']>=8,'8 medallas'),
+        ('pokedex151','📖 Pokédex completa',lambda s:s['dex']>=151,'151 especies'),
+        ('pvp10','⚔️ Combatiente',lambda s:s['wins']>=10,'10 victorias PvP'),
+        ('racha5','🔥 En racha',lambda s:s['streak']>=5,'racha de 5'),
+        ('criador5','🥚 Criador',lambda s:s['hatched']>=5,'5 huevos eclosionados'),
+    ]
+    try:
+        c=conn.cursor(); stats=_achievement_stats_cursor(c,uid); c.execute("SELECT achievement_key FROM pokemon_achievements_tb WHERE user_id=%s",(uid,)); owned={str(x[0]) for x in c.fetchall()}
+        for key,name,cond,_ in achievements:
+            if cond(stats) and key not in owned:
+                c.execute("INSERT INTO pokemon_achievements_tb(user_id,achievement_key) VALUES(%s,%s) ON CONFLICT DO NOTHING",(uid,key)); newly.append(name); c.execute("UPDATE usuarios_tb SET saldo=saldo+2500 WHERE id_user=%s",(uid,)); grant_item_with_cursor(c,uid,'rare_candy',1); owned.add(key)
+        conn.commit()
+    except Exception as e:conn.rollback(); print('[PK achievements]',type(e).__name__,e); return await update.effective_message.reply_text('No pude revisar tus logros.')
+    finally:_put_connection(conn)
+    lines=['🏆 LOGROS POKÉMON','']
+    for key,name,cond,req in achievements:lines.append(f"{'✅' if cond(stats) else '⬜'} {name} · {req}")
+    lines += ['', '🎁 Cada logro nuevo entrega 2,500 PiPesos + 1 Caramelo Raro.']
+    if newly:lines += ['', '🎉 Nuevos: '+', '.join(newly)]
+    await update.effective_message.reply_text('\n'.join(lines))
+
+
+def _friendship_name(value:int)->str:
+    v=int(value)
+    if v>=220:return '💖 Inseparables'
+    if v>=150:return '❤️ Gran amistad'
+    if v>=80:return '💛 Confianza'
+    if v>=30:return '💚 Compañeros'
+    return '🤍 Recién conocidos'
+
+
+async def amistadpokemon_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id; conn=_get_connection(); lines=['❤️ AMISTAD POKÉMON','']
+    try:
+        c=conn.cursor(); _ensure_team_row_cursor(c,uid); c.execute("SELECT slot1,slot2,slot3,slot4 FROM pokemon_team_tb WHERE owner_id=%s",(uid,)); slots=c.fetchone() or (None,None,None,None)
+        for i,pid in enumerate(slots,1):
+            if pid is None:lines.append(f'{i}. — Vacío —'); continue
+            c.execute("SELECT species_id,nickname,friendship FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); r=c.fetchone()
+            if r:lines.append(f"{i}. {r[1] or NAMES[int(r[0])]} · {int(r[2])}/255 · {_friendship_name(int(r[2]))}")
+    finally:_put_connection(conn)
+    lines += ['', 'La amistad aumenta al entrenar y combatir con ese ejemplar.']
+    await update.effective_message.reply_text('\n'.join(lines))
+
+
+# ---------- Zona Safari ----------
+def _safari_session_cursor(c,uid:int,lock:bool=False):
+    sql="SELECT session_id,user_id,chat_id,thread_id,safari_date,status,balls,current_species,current_level,current_shiny,current_ivs_json,current_defeated,created_at,expires_at FROM pokemon_safari_sessions_tb WHERE user_id=%s AND safari_date=%s ORDER BY session_id DESC LIMIT 1"
+    if lock:sql+=' FOR UPDATE'
+    c.execute(sql,(int(uid),_today_pokemon_date())); r=c.fetchone()
+    if r and str(r[5])=='active' and r[13] is not None and r[13]<=datetime.now(timezone.utc):
+        c.execute("UPDATE pokemon_safari_sessions_tb SET status='expired',finished_at=NOW() WHERE session_id=%s",(int(r[0]),)); return None
+    return r
+
+
+def _safari_pool_species()->int:
+    legendary=[int(x) for x in LEGENDARY_IDS]
+    # Muy rara vez el Safari puede esconder un legendario de Kanto.
+    if legendary and random.random()<SAFARI_LEGENDARY_APPEAR_CHANCE:
+        return random.choice(legendary)
+    legendary_set=set(legendary); epic=[int(x) for x in EPIC_IDS if int(x) not in legendary_set]; rare=[int(x) for x in RARE_IDS if int(x) not in legendary_set]
+    special=[1,4,7,25,37,58,63,92,113,115,123,127,128,131,133,137,138,140,142,143,147]
+    tier=random.choices(('rare','epic','special'),weights=(45,35,20),k=1)[0]
+    pool=rare if tier=='rare' else epic if tier=='epic' else special
+    return random.choice(pool or special)
+
+
+def _safari_capture_probability(species:int,hp_ratio:float=1.0)->float:
+    """Safari Ball: se puede lanzar siempre; bajar PS mejora mucho la captura."""
+    rarity=rarity_for(int(species)); maximum=float(SAFARI_CAPTURE_CHANCE.get(rarity,0.45))
+    hp=max(0.0,min(1.0,float(hp_ratio)))
+    # A PS completos se conserva 30% de la probabilidad máxima; a 0 PS se usa el máximo.
+    factor=0.30 + (1.0-hp)*0.70
+    return max(0.005,min(0.95,maximum*factor))
+
+
+def _safari_text(row)->str:
+    sid=int(row[0]); status=str(row[5]); balls=int(row[6]); sp=row[7]
+    left=max(0,int((row[13]-datetime.now(timezone.utc)).total_seconds())) if row[13] else 0
+    lines=[f'🌿 ZONA SAFARI · Sesión #{sid}',f'🎟️ Pase diario · ⏳ {(left+59)//60} min',f'🔴 Safari Balls: {balls}']
+    if status!='active' or balls<=0:
+        lines += ['', '🏁 Safari terminado.', '🔴 Te quedaste sin Safari Balls. Vuelve mañana para una nueva entrada.']
+        return '\n'.join(lines)
+    if sp is None:lines += ['', '🌾 No tienes un encuentro activo. Explora para buscar un Pokémon raro.']
+    else:
+        rarity=rarity_for(int(sp)); shiny='✨ SHINY · ' if bool(row[9]) else ''
+        lines += ['',f"👀 {shiny}#{int(sp):03d} {NAMES[int(sp)]} · Nv.{int(row[8])}",f"⭐ Rareza: {rarity.upper()}", '💪 En Safari salen más fuertes y con mejores IV.']
+        if int(sp) in set(int(x) for x in LEGENDARY_IDS):lines.append('🌟 ¡Es un encuentro legendario extremadamente raro!')
+        if bool(row[11]):lines.append('💫 Está debilitado: ahora será mucho más fácil capturarlo.')
+        else:lines.append('🔴 Puedes lanzar una Safari Ball ahora o pelear para bajar sus PS y mejorar la captura.')
+    return '\n'.join(lines)
+
+
+def _safari_markup(row):
+    sid=int(row[0]); rows=[]
+    if str(row[5])!='active' or int(row[6])<=0:return None
+    if row[7] is None:rows.append([InlineKeyboardButton('🌾 Explorar',callback_data=f'pk:safexplore:{sid}')])
+    elif bool(row[11]):rows.append([InlineKeyboardButton('🔴 Lanzar Safari Ball',callback_data=f'pk:safball:{sid}'),InlineKeyboardButton('💨 Dejarlo ir',callback_data=f'pk:safskip:{sid}')])
+    else:
+        rows.append([InlineKeyboardButton('🔴 Lanzar Safari Ball',callback_data=f'pk:safball:{sid}')])
+        rows.append([InlineKeyboardButton('⚔️ Pelear',callback_data=f'pk:saffight:{sid}'),InlineKeyboardButton('💨 Huir',callback_data=f'pk:safskip:{sid}')])
+    return InlineKeyboardMarkup(rows)
+
+
+def _safari_team_markup_cursor(c,uid:int,sid:int):
+    rows=[]
+    for pid in _npc_team_slot_ids_cursor(c,uid):
+        c.execute("SELECT species_id,nickname,level,shiny FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); r=c.fetchone()
+        if not r:continue
+        rows.append([InlineKeyboardButton(f"⚔️ {'✨ ' if r[3] else ''}{r[1] or NAMES[int(r[0])]} · Nv.{int(r[2])}",callback_data=f'pk:safpick:{sid}:{pid}')])
+    rows.append([InlineKeyboardButton('⬅️ Volver',callback_data=f'pk:safback:{sid}')])
+    return InlineKeyboardMarkup(rows)
+
+
+async def safari_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type=='private' or not _is_games_topic(update):return await update.effective_message.reply_text('🌿 La Zona Safari se usa en Juegos y Casino.')
+    uid=update.effective_user.id; conn=_get_connection(); row=None; used=False
+    try:
+        c=conn.cursor(); row=_safari_session_cursor(c,uid)
+        if row is None:
+            c.execute("SELECT status FROM pokemon_safari_sessions_tb WHERE user_id=%s AND safari_date=%s",(uid,_today_pokemon_date())); old=c.fetchone(); used=bool(old)
+        conn.commit()
+    except Exception:conn.rollback()
+    finally:_put_connection(conn)
+    if row and str(row[5])=='active':return await update.effective_message.reply_text(_safari_text(row),reply_markup=_safari_markup(row))
+    if row:used=True
+    if used:return await update.effective_message.reply_text('🌿 Ya usaste tu entrada a la Zona Safari de hoy. Vuelve mañana.')
+    kb=InlineKeyboardMarkup([[InlineKeyboardButton(f'🎟️ Entrar · {SAFARI_PASS_COST:,} PiPesos',callback_data='pk:safbuy')]])
+    await update.effective_message.reply_text(f'🌿 ZONA SAFARI\n\n🎟️ Entrada diaria: {SAFARI_PASS_COST:,} PiPesos\n⏳ Duración: 30 minutos\n🔴 Recibes {SAFARI_START_BALLS} Safari Balls fijas; cuando se acaban, termina tu Safari.\n✨ Shiny: 1/{SAFARI_SHINY_DENOMINATOR}\n🧬 IV más altos que las apariciones normales\n🔴 Puedes lanzar una Safari Ball en cualquier momento. Bajar los PS mejora la captura.\n🌟 Existe una posibilidad extremadamente rara de encontrar un legendario de Kanto.\n\n🎟️ Si encuentras un Pase Safari como drop secreto, la entrada te sale gratis.',reply_markup=kb)
+
+
+# ---------- Team Rocket ----------
+def _rocket_active_cursor(c,chat_id:int,thread_id:int|None,lock:bool=False):
+    sql="SELECT event_id,chat_id,thread_id,status,stage,message_id,created_at,expires_at FROM pokemon_rocket_events_tb WHERE chat_id=%s AND thread_id=%s AND status='active' ORDER BY event_id DESC LIMIT 1"
+    if lock:sql+=' FOR UPDATE'
+    c.execute(sql,(int(chat_id),int(thread_id or 0))); return c.fetchone()
+
+
+def _rocket_stage_label(stage:int)->str:
+    names=['🚀 Recluta Rocket','🧪 Ejecutivo Rocket','❤️ Jessie','💙 James']
+    return names[min(max(0,int(stage)),3)]
+
+
+def _rocket_event_text(row)->str:
+    stage=int(row[4]); left=max(0,int((row[7]-datetime.now(timezone.utc)).total_seconds())) if row[7] else 0
+    mins=(left+59)//60
+    lines=['🚀 INVASIÓN TEAM ROCKET','',f'⏳ Tiempo restante: {mins} min',f'📍 Progreso: {stage}/4 enemigos derrotados','']
+    for i in range(4):lines.append(f"{'✅' if i<stage else '➡️' if i==stage else '🔒'} {_rocket_stage_label(i)}")
+    lines += ['', '🎁 Pueden soltar PiPesos, Caja de Objetos y premios de las cajas normales de PiBot.', '⚠️ Jessie y James son los combates más difíciles.']
+    return '\n'.join(lines)
+
+
+def _rocket_markup(row):
+    if str(row[3])!='active' or int(row[4])>=4:return None
+    return InlineKeyboardMarkup([[InlineKeyboardButton(f'⚔️ Enfrentar a {_rocket_stage_label(int(row[4]))}',callback_data=f'pk:rocketfight:{int(row[0])}')]])
+
+
+async def _refresh_rocket_event_message(context,event_id:int):
+    conn=_get_connection(); row=None
+    try:c=conn.cursor(); c.execute("SELECT event_id,chat_id,thread_id,status,stage,message_id,created_at,expires_at FROM pokemon_rocket_events_tb WHERE event_id=%s",(event_id,)); row=c.fetchone()
+    finally:_put_connection(conn)
+    if not row:return
+    text=_rocket_event_text(row) if str(row[3])=='active' else ('🏆 ¡TEAM ROCKET FUE DERROTADO!\n\nJessie y James huyeron prometiendo volver...') if str(row[3])=='finished' else '⌛ Team Rocket escapó antes de que el grupo pudiera detenerlo.'
+    try:await context.bot.edit_message_text(chat_id=int(row[1]),message_id=int(row[5]),text=text,reply_markup=_rocket_markup(row))
+    except Exception:pass
+
+
+async def _spawn_rocket_event(context,chat_id:int,thread_id:int|None,manual:bool=False)->bool:
+    conn=_get_connection(); row=None
+    try:
+        c=conn.cursor(); day=_today_pokemon_date(); c.execute("SELECT event_id,status FROM pokemon_rocket_events_tb WHERE chat_id=%s AND thread_id=%s AND event_date=%s FOR UPDATE",(chat_id,int(thread_id or 0),day)); old=c.fetchone()
+        if old:
+            if not manual:conn.rollback(); return False
+            c.execute("DELETE FROM pokemon_rocket_participants_tb WHERE event_id=%s",(int(old[0]),))
+            c.execute("UPDATE pokemon_npc_encounters_tb SET status='expired',finished_at=NOW() WHERE event_ref=%s AND status IN ('active','selecting')",(int(old[0]),))
+            c.execute("UPDATE pokemon_rocket_events_tb SET status='active',stage=0,message_id=NULL,created_at=NOW(),expires_at=NOW()+INTERVAL '30 minutes',finished_at=NULL WHERE event_id=%s RETURNING event_id,chat_id,thread_id,status,stage,message_id,created_at,expires_at",(int(old[0]),)); row=c.fetchone()
+        else:
+            c.execute("INSERT INTO pokemon_rocket_events_tb(chat_id,thread_id,event_date) VALUES(%s,%s,%s) RETURNING event_id,chat_id,thread_id,status,stage,message_id,created_at,expires_at",(chat_id,int(thread_id or 0),day)); row=c.fetchone()
+        conn.commit()
+    except Exception as e:conn.rollback(); print('[PK rocket spawn]',type(e).__name__,e); return False
+    finally:_put_connection(conn)
+    try:
+        msg=await context.bot.send_message(chat_id,_rocket_event_text(row),message_thread_id=thread_id,reply_markup=_rocket_markup(row)); conn=_get_connection(); c=conn.cursor(); c.execute("UPDATE pokemon_rocket_events_tb SET message_id=%s WHERE event_id=%s",(msg.message_id,int(row[0]))); conn.commit(); _put_connection(conn); return True
+    except Exception as e:print('[PK rocket send]',type(e).__name__,e); return False
+
+
+async def pokemon_rocket_job(context:ContextTypes.DEFAULT_TYPE):
+    for community in COMUNIDADES:
+        try:
+            chat_id=int(community.get('id_comunidad')); thread_id=_games_topic(chat_id)
+            if thread_id is not None:await _spawn_rocket_event(context,chat_id,thread_id,False)
+        except Exception as e:print('[PK rocket job]',type(e).__name__,e)
+
+
+async def rocketpokemon_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type=='private' or not _is_games_topic(update):return await update.effective_message.reply_text('🚀 Team Rocket aparece en Juegos y Casino.')
+    conn=_get_connection(); row=None
+    try:c=conn.cursor(); row=_rocket_active_cursor(c,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None))
+    finally:_put_connection(conn)
+    await update.effective_message.reply_text(_rocket_event_text(row),reply_markup=_rocket_markup(row)) if row else await update.effective_message.reply_text('🚀 No hay una invasión Team Rocket activa ahora mismo.')
+
+
+async def rocketahora_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    try:
+        if not is_botmaster(update.effective_user.id):return await update.effective_message.reply_text('Solo BotMaster puede forzar Team Rocket.')
+    except Exception:return await update.effective_message.reply_text('Solo BotMaster puede forzar Team Rocket.')
+    if not _is_games_topic(update):return await update.effective_message.reply_text('Usa /rocketahora en Juegos y Casino.')
+    ok=await _spawn_rocket_event(context,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),True)
+    if not ok:await update.effective_message.reply_text('No pude iniciar la invasión Rocket.')
+
+
+# ---------- Incursiones ----------
+RAID_SELECT = "raid_id,chat_id,thread_id,species_id,level,max_hp,hp,status,message_id,created_at,expires_at,is_legendary,shiny,catcher_id,capture_attempts,capture_status"
+
+
+def _raid_active_cursor(c,chat_id:int,thread_id:int|None,lock:bool=False):
+    # Una captura legendaria pendiente también bloquea otra incursión en el mismo tema.
+    sql=f"SELECT {RAID_SELECT} FROM pokemon_raids_tb WHERE chat_id=%s AND thread_id=%s AND status IN ('active','capture') ORDER BY raid_id DESC LIMIT 1"
+    if lock:sql+=' FOR UPDATE'
+    c.execute(sql,(int(chat_id),int(thread_id or 0))); return c.fetchone()
+
+
+def _raid_capture_markup(row):
+    if not row or str(row[7])!='capture' or str(row[15]) not in ('pending','none'):return None
+    return InlineKeyboardMarkup([[InlineKeyboardButton(f"🎲 Lanzar Poké Ball · {int(row[14])}/{RAID_LEGENDARY_CAPTURE_ATTEMPTS}",callback_data=f'pk:raidcatch:{int(row[0])}')]])
+
+
+def _raid_text(row,catcher_name:str|None=None)->str:
+    hp,maxhp=int(row[6]),int(row[5]); pct=max(0,min(100,round(hp/max(1,maxhp)*100))); bars=max(0,min(10,round(pct/10))); bar='█'*bars+'░'*(10-bars)
+    left=max(0,int((row[10]-datetime.now(timezone.utc)).total_seconds())) if row[10] else 0
+    legendary=bool(row[11])
+    if str(row[7])=='capture':
+        who=catcher_name or 'el entrenador elegido'
+        return (f"🌟 INCURSIÓN LEGENDARIA DERROTADA\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} · Nv.{int(row[4])}\n"
+                f"🎯 {who} obtuvo la oportunidad de captura.\n🎲 Intentos usados: {int(row[14])}/{RAID_LEGENDARY_CAPTURE_ATTEMPTS}\n"
+                f"⏳ {(left+59)//60} min para completar la captura.\n\nSolo un 6 en el dado consigue atraparlo.")
+    title='🌟 INCURSIÓN LEGENDARIA' if legendary else '💥 INCURSIÓN POKÉMON'
+    power='\n⚠️ Los legendarios tienen MUCHOS más PS y nivel.' if legendary else ''
+    return (f"{title}\n\n👹 #{int(row[3]):03d} {NAMES[int(row[3])]} · Nv.{int(row[4])}\n"
+            f"❤️ {hp:,}/{maxhp:,} · {bar} {pct}%\n⏳ {(left+59)//60} min restantes\n\n"
+            f"⚔️ Cada entrenador puede atacar hasta {RAID_USER_ATTACKS} veces.\n🏆 Todos los participantes reciben premio si el grupo lo derrota.{power}")
+
+
+def _raid_markup(row):
+    if not row:return None
+    if str(row[7])=='active':return InlineKeyboardMarkup([[InlineKeyboardButton('⚔️ Atacar incursión',callback_data=f'pk:raidattack:{int(row[0])}')]])
+    if str(row[7])=='capture':return _raid_capture_markup(row)
+    return None
+
+
+def _raid_weighted_catcher(parts)->int|None:
+    if not parts:return None
+    users=[int(r[0]) for r in parts]; weights=[max(1,int(r[1])) for r in parts]
+    return int(random.choices(users,weights=weights,k=1)[0])
+
+
+async def _refresh_raid_message(context,raid_id:int):
+    conn=_get_connection(); row=None; catcher_name=None
+    try:
+        c=conn.cursor(); c.execute(f"SELECT {RAID_SELECT} FROM pokemon_raids_tb WHERE raid_id=%s",(raid_id,)); row=c.fetchone()
+        if row and row[13] is not None:catcher_name=_display_name_cursor(c,int(row[13]))
+    finally:_put_connection(conn)
+    if not row:return
+    status=str(row[7]); capstatus=str(row[15] or 'none')
+    if status=='capture':text=_raid_text(row,catcher_name)
+    elif status=='finished' and bool(row[11]) and capstatus=='caught':
+        text=(f"🏆 INCURSIÓN LEGENDARIA COMPLETADA\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} fue derrotado.\n"
+              f"🎉 {catcher_name or 'El entrenador elegido'} logró capturarlo en {int(row[14])}/{RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros."
+              + ("\n✨ ¡Y resultó ser SHINY!" if bool(row[12]) else ''))
+    elif status=='finished' and bool(row[11]) and capstatus=='escaped':
+        text=(f"💨 EL LEGENDARIO ESCAPÓ\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} fue derrotado en la incursión, "
+              f"pero escapó durante la captura.\n🎲 Se usaron {int(row[14])}/{RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros.")
+    elif status=='finished':text=f"🏆 INCURSIÓN COMPLETADA\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} fue derrotado por el grupo.\n🎁 Premios entregados a los participantes."
+    elif status=='expired':text=f"💨 INCURSIÓN FALLIDA\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} escapó."
+    else:text=_raid_text(row,catcher_name)
+    try:await context.bot.edit_message_text(chat_id=int(row[1]),message_id=int(row[8]),text=text,reply_markup=_raid_markup(row))
+    except Exception:pass
+
+
+async def _spawn_raid(context,chat_id:int,thread_id:int|None,manual:bool=False,forced_legendary:bool|None=None)->bool:
+    conn=_get_connection(); row=None
+    try:
+        c=conn.cursor(); c.execute("SELECT created_at FROM pokemon_raids_tb WHERE chat_id=%s AND thread_id=%s ORDER BY raid_id DESC LIMIT 1",(chat_id,int(thread_id or 0))); last=c.fetchone()
+        if last and not manual and (datetime.now(timezone.utc)-last[0]).total_seconds()<47*3600:conn.rollback(); return False
+        if _raid_active_cursor(c,chat_id,thread_id):conn.rollback(); return False
+        legendary=(bool(forced_legendary) if forced_legendary is not None else random.random()<RAID_LEGENDARY_CHANCE)
+        if legendary:
+            sp=random.choice(RAID_LEGENDARY_BOSSES); level=random.randint(78,92); maxhp=22_000+level*180
+            shiny=(random.randrange(RAID_LEGENDARY_SHINY_DENOMINATOR)==0)
+        else:
+            sp=random.choice(RAID_BOSSES); level=random.randint(50,75); maxhp=9000+level*90; shiny=False
+        c.execute("""INSERT INTO pokemon_raids_tb(chat_id,thread_id,species_id,level,max_hp,hp,is_legendary,shiny)
+                     VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
+                     RETURNING """+RAID_SELECT,(chat_id,int(thread_id or 0),sp,level,maxhp,maxhp,legendary,shiny)); row=c.fetchone(); conn.commit()
+    except Exception as e:conn.rollback(); print('[PK raid spawn]',type(e).__name__,e); return False
+    finally:_put_connection(conn)
+    try:
+        msg=await context.bot.send_message(chat_id,_raid_text(row),message_thread_id=thread_id,reply_markup=_raid_markup(row)); conn=_get_connection(); c=conn.cursor(); c.execute("UPDATE pokemon_raids_tb SET message_id=%s WHERE raid_id=%s",(msg.message_id,int(row[0]))); conn.commit(); _put_connection(conn); return True
+    except Exception as e:print('[PK raid send]',type(e).__name__,e); return False
+
+
+async def pokemon_raid_job(context:ContextTypes.DEFAULT_TYPE):
+    for community in COMUNIDADES:
+        try:
+            chat_id=int(community.get('id_comunidad')); thread_id=_games_topic(chat_id)
+            if thread_id is not None:await _spawn_raid(context,chat_id,thread_id,False)
+        except Exception as e:print('[PK raid job]',type(e).__name__,e)
+
+
+async def raidpokemon_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type=='private' or not _is_games_topic(update):return await update.effective_message.reply_text('💥 Las incursiones aparecen en Juegos y Casino.')
+    conn=_get_connection(); row=None; catcher_name=None
+    try:
+        c=conn.cursor(); row=_raid_active_cursor(c,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None))
+        if row and row[13] is not None:catcher_name=_display_name_cursor(c,int(row[13]))
+    finally:_put_connection(conn)
+    await update.effective_message.reply_text(_raid_text(row,catcher_name),reply_markup=_raid_markup(row)) if row else await update.effective_message.reply_text('💥 No hay una incursión activa. Aparece aproximadamente una cada 2 días.')
+
+
+async def raidahora_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    try:
+        if not is_botmaster(update.effective_user.id):return await update.effective_message.reply_text('Solo BotMaster puede forzar una incursión.')
+    except Exception:return await update.effective_message.reply_text('Solo BotMaster puede forzar una incursión.')
+    if not _is_games_topic(update):return await update.effective_message.reply_text('Usa /raidahora en Juegos y Casino.')
+    forced=None
+    if context.args:
+        arg=str(context.args[0]).lower()
+        if arg in ('legendario','legendaria','legend'):forced=True
+        elif arg in ('normal','comun'):forced=False
+    ok=await _spawn_raid(context,update.effective_chat.id,getattr(update.effective_message,'message_thread_id',None),True,forced)
+    if not ok:await update.effective_message.reply_text('No pude iniciar la incursión.')
+
+
+async def pokemon_adventure_maintenance_job(context:ContextTypes.DEFAULT_TYPE):
+    rocket_ids=[]; raid_ids=[]
+    conn=_get_connection()
+    try:
+        c=conn.cursor()
+        c.execute("UPDATE pokemon_safari_sessions_tb SET status='expired',finished_at=NOW() WHERE status='active' AND expires_at<=NOW()")
+        c.execute("SELECT event_id FROM pokemon_rocket_events_tb WHERE status='active' AND expires_at<=NOW() FOR UPDATE"); rocket_ids=[int(r[0]) for r in c.fetchall()]
+        if rocket_ids:c.execute("UPDATE pokemon_rocket_events_tb SET status='expired',finished_at=NOW() WHERE event_id=ANY(%s)",(rocket_ids,))
+        c.execute("SELECT raid_id FROM pokemon_raids_tb WHERE status='active' AND expires_at<=NOW() FOR UPDATE"); active_raid_ids=[int(r[0]) for r in c.fetchall()]
+        if active_raid_ids:c.execute("UPDATE pokemon_raids_tb SET status='expired',finished_at=NOW() WHERE raid_id=ANY(%s)",(active_raid_ids,))
+        c.execute("SELECT raid_id FROM pokemon_raids_tb WHERE status='capture' AND expires_at<=NOW() FOR UPDATE"); capture_raid_ids=[int(r[0]) for r in c.fetchall()]
+        if capture_raid_ids:c.execute("UPDATE pokemon_raids_tb SET status='finished',capture_status='escaped',finished_at=NOW() WHERE raid_id=ANY(%s)",(capture_raid_ids,))
+        raid_ids=active_raid_ids+capture_raid_ids
+        c.execute("DELETE FROM pokemon_fugitives_tb WHERE last_seen_at<NOW()-INTERVAL '7 days'")
+        conn.commit()
+    except Exception as e:conn.rollback(); print('[PK adventure maintenance]',type(e).__name__,e)
+    finally:_put_connection(conn)
+    for eid in rocket_ids:
+        try:await _refresh_rocket_event_message(context,eid)
+        except Exception:pass
+    for rid in raid_ids:
+        try:await _refresh_raid_message(context,rid)
+        except Exception:pass
+    # Enseñanza de movimientos pendiente: el selector llega automáticamente por privado.
+    await _notify_pending_move_learning(context)
+
+
+# ---------- Liga Pokémon ----------
+async def ligapokemon_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type=='private' or not _is_games_topic(update):return await update.effective_message.reply_text('👑 La Liga Pokémon se desafía en Juegos y Casino.')
+    uid=update.effective_user.id; conn=_get_connection(); stage=0; done=False; badges=0; eid=None
+    try:
+        c=conn.cursor(); c.execute("SELECT COUNT(*) FROM pokemon_badges_tb WHERE user_id=%s",(uid,)); badges=int(c.fetchone()[0])
+        if badges<8:conn.rollback(); return await update.effective_message.reply_text(f'🏅 Necesitas las 8 medallas de Kanto. Llevas {badges}/8.')
+        c.execute("INSERT INTO pokemon_league_progress_tb(user_id) VALUES(%s) ON CONFLICT DO NOTHING",(uid,)); c.execute("SELECT stage,champion_done FROM pokemon_league_progress_tb WHERE user_id=%s FOR UPDATE",(uid,)); r=c.fetchone(); stage=int(r[0]); done=bool(r[1])
+        if done:conn.rollback(); return await update.effective_message.reply_text('👑 Ya derrotaste al Alto Mando y al Campeón de Kanto. Eres Campeón Pokémon.')
+        if _battle_busy_cursor(c,uid):conn.rollback(); return await update.effective_message.reply_text('⚔️ Termina tu batalla actual antes de entrar a la Liga.')
+        key=LEAGUE_ORDER[min(stage,len(LEAGUE_ORDER)-1)]
+        c.execute("INSERT INTO pokemon_npc_encounters_tb(chat_id,thread_id,npc_key,encounter_type,mode,expires_at) VALUES(%s,%s,%s,'normal',3,NOW()+INTERVAL '30 minutes') RETURNING encounter_id",(update.effective_chat.id,int(getattr(update.effective_message,'message_thread_id',None) or 0),key)); eid=int(c.fetchone()[0]); conn.commit()
+    except Exception as e:conn.rollback(); print('[PK league]',type(e).__name__,e); return await update.effective_message.reply_text('No pude abrir tu desafío de Liga.')
+    finally:_put_connection(conn)
+    await _send_npc_encounter(context,eid)
+
+
+
+
 # ==================== NPC / LÍDERES / MEDALLAS / DOBLES ====================
 # Subsistema aislado: usa las tablas Pokémon existentes y añade solo sus propias tablas/callbacks.
 
@@ -3876,7 +4821,22 @@ HALLOWEEN_NPCS = {
     'halloween_boss': {'name':'Gengar · Señor de la Noche','emoji':'💀','pool':[92,93,105,94],'event_mode':3},
 }
 
-NPC_ALL = {**NPC_NORMALS, **KANTO_LEADERS, **HALLOWEEN_NPCS}
+ROCKET_EVENT_NPCS = {
+    'rocket_grunt_event': {'name':'Recluta Rocket','emoji':'🚀','pool':[20,24,42,89,110],'event_mode':2},
+    'rocket_exec_event': {'name':'Ejecutivo Rocket','emoji':'🧪','pool':[53,89,110,112,101],'event_mode':2},
+    'jessie_event': {'name':'Jessie','emoji':'❤️','pool':[24,89,110],'event_mode':3},
+    'james_event': {'name':'James','emoji':'💙','pool':[71,110,89],'event_mode':3},
+}
+
+LEAGUE_NPCS = {
+    'lorelei_e4': {'name':'Lorelei · Alto Mando','emoji':'❄️','pool':[87,91,80],'event_mode':3},
+    'bruno_e4': {'name':'Bruno · Alto Mando','emoji':'🥊','pool':[95,107,68],'event_mode':3},
+    'agatha_e4': {'name':'Agatha · Alto Mando','emoji':'👻','pool':[94,42,94],'event_mode':3},
+    'lance_e4': {'name':'Lance · Alto Mando','emoji':'🐉','pool':[130,148,149],'event_mode':3},
+    'champion_e4': {'name':'Campeón de Kanto','emoji':'👑','pool':[65,130,149],'event_mode':3},
+}
+
+NPC_ALL = {**NPC_NORMALS, **KANTO_LEADERS, **HALLOWEEN_NPCS, **ROCKET_EVENT_NPCS, **LEAGUE_NPCS}
 
 
 def _npc_media_cursor(c,key:str):
@@ -3899,11 +4859,17 @@ def _npc_media_home_markup():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton('👤 NPC normales',callback_data='pk:npcmediacat:normal:0')],
         [InlineKeyboardButton('🏟️ Líderes de gimnasio',callback_data='pk:npcmediacat:leader:0')],
+        [InlineKeyboardButton('🚀 Team Rocket',callback_data='pk:npcmediacat:rocket:0')],
+        [InlineKeyboardButton('👑 Liga Pokémon',callback_data='pk:npcmediacat:league:0')],
     ])
 
 
 def _npc_media_category_markup(kind:str,page:int=0):
-    keys=list(NPC_NORMALS) if kind=='normal' else list(KANTO_LEADERS)
+    if kind=='normal':keys=list(NPC_NORMALS)
+    elif kind=='leader':keys=list(KANTO_LEADERS)
+    elif kind=='rocket':keys=list(ROCKET_EVENT_NPCS)
+    elif kind=='league':keys=list(LEAGUE_NPCS)
+    else:keys=[]
     per=10; pages=max(1,math.ceil(len(keys)/per)); page=max(0,min(page,pages-1)); chunk=keys[page*per:(page+1)*per]
     rows=[]
     for i in range(0,len(chunk),2):
@@ -3922,7 +4888,7 @@ async def imagenesnpc_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
     try:
         if not is_botmaster(uid):return await update.effective_message.reply_text('Solo BotMaster puede configurar imágenes de NPC.')
     except Exception:return await update.effective_message.reply_text('Solo BotMaster puede configurar imágenes de NPC.')
-    text='🎭 MULTIMEDIA POKÉMON\n\nElige NPC normales o líderes. Después selecciona uno y envíame por privado una foto o GIF.'
+    text='🎭 MULTIMEDIA POKÉMON\n\nElige NPC normales, líderes, Team Rocket o Liga. Después selecciona uno y envíame por privado una foto o GIF.'
     try:
         await context.bot.send_message(uid,text,reply_markup=_npc_media_home_markup())
         if update.effective_chat.type!='private':await update.effective_message.reply_text('📩 Te mandé el panel de NPC por privado.')
@@ -3937,7 +4903,9 @@ async def npcpokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
         '🏟️ Una vez al día aparece un líder de Kanto durante 10 minutos. Su combate es 3v3.\n'
         '📈 Los rivales escalan al nivel medio de tus elegidos: mismo nivel, +1 o +2.\n'
         '🎖️ La primera victoria contra cada líder entrega su medalla. Usa /medallas.\n'
-        '🎁 Los líderes dan MT, Caramelos Raros, Caja de Objetos, PiPesos y mucha XP.'
+        '🎁 Los líderes dan MT, Caramelos Raros, Caja de Objetos, PiPesos y mucha XP.\n'
+        '🚀 Team Rocket puede invadir el grupo durante 30 minutos; Jessie y James cierran la invasión.\n'
+        '👑 Con 8/8 medallas desbloqueas /ligapokemon para desafiar al Alto Mando.'
     )
 
 
@@ -3948,7 +4916,7 @@ def _badges_text_cursor(c,uid:int)->str:
         mark=d['badge_emoji'] if key in owned else '⬜'
         lines.append(f"{mark} {d['badge']} · {d['name']}")
     lines += ['',f'Progreso: {len(owned)}/8']
-    if len(owned)==8:lines.append('🏆 Kanto completado.')
+    if len(owned)==8:lines += ['🏆 Kanto completado.', '👑 Liga Pokémon desbloqueada: usa /ligapokemon en Juegos y Casino.']
     else:lines.append('🎁 8/8: Caja Pokémon Shiny + 10,000 PiPesos + 10 Caramelos Raros + encuentro legendario.')
     return '\n'.join(lines)
 
@@ -4021,8 +4989,8 @@ def _leader_completion_rewards_cursor(c,uid:int,chat_id:int,thread_id:int|None,s
 
 def _finish_npc_battle_cursor(c,bid:int,state:dict)->dict:
     uid=int(state['human_user_id']); won=int(state['winner'])==uid; mode=int(state['mode']); kind=state.get('battle_kind','npc'); eid=int(state['npc_encounter_id'])
-    c.execute("SELECT chat_id,thread_id,npc_key FROM pokemon_npc_encounters_tb WHERE encounter_id=%s FOR UPDATE",(eid,)); er=c.fetchone()
-    chat_id=int(er[0]) if er else int(state.get('chat_id',0)); thread_id=er[1] if er else None; npc_key=str(er[2]) if er else str(state.get('npc_key',''))
+    c.execute("SELECT chat_id,thread_id,npc_key,event_ref,encounter_type FROM pokemon_npc_encounters_tb WHERE encounter_id=%s FOR UPDATE",(eid,)); er=c.fetchone()
+    chat_id=int(er[0]) if er else int(state.get('chat_id',0)); thread_id=er[1] if er else None; npc_key=str(er[2]) if er else str(state.get('npc_key','')); event_ref=int(er[3]) if er and er[3] is not None else None; encounter_type=str(er[4]) if er and er[4] is not None else ''
     bot_levels=[int(m.get('level',1)) for m in state.get('players',{}).get(str(state.get('bot_player_id')),{}).get('mons',[])]; rival_avg=max(1,round(sum(bot_levels)/len(bot_levels))) if bot_levels else 1; xp=_combat_xp_amount(rival_avg,won,'leader' if kind=='leader' else 'npc')
     pipes=(LEADER_WIN_PIPESOS if kind=='leader' else NPC_NORMAL_WIN_PIPESOS.get(mode,1500)) if won else (LEADER_LOSS_PIPESOS if kind=='leader' else NPC_NORMAL_LOSS_PIPESOS)
     notes=[]; selected=[]; selected_levels=[]
@@ -4047,7 +5015,47 @@ def _finish_npc_battle_cursor(c,bid:int,state:dict)->dict:
         # Pikachu Halloween es exclusivo de la tienda; el jefe nunca lo regala.
         if random.random()<0.22:
             halloween_box=_grant_halloween_box_cursor(c,uid)
+    rocket_event=None; rocket_drop=None; league_stage=None; league_champion=False
+    if won and npc_key in ROCKET_EVENT_NPCS and event_ref is not None:
+        c.execute("SELECT stage,status,expires_at FROM pokemon_rocket_events_tb WHERE event_id=%s FOR UPDATE",(event_ref,)); rr=c.fetchone()
+        if rr and str(rr[1])=='active' and rr[2]>datetime.now(timezone.utc):
+            expected=ROCKET_WAVES[min(int(rr[0]),len(ROCKET_WAVES)-1)]
+            if expected==npc_key:
+                newstage=int(rr[0])+1; finished=newstage>=len(ROCKET_WAVES)
+                c.execute("UPDATE pokemon_rocket_events_tb SET stage=%s,status=%s,finished_at=CASE WHEN %s THEN NOW() ELSE finished_at END WHERE event_id=%s",(newstage,'finished' if finished else 'active',finished,event_ref))
+                c.execute("INSERT INTO pokemon_rocket_participants_tb(event_id,user_id,wins) VALUES(%s,%s,1) ON CONFLICT(event_id,user_id) DO UPDATE SET wins=pokemon_rocket_participants_tb.wins+1",(event_ref,uid))
+                # Drops Rocket: cajas/objetos y bonus de PiPesos. Jessie/James dan más.
+                bonus=3500 if npc_key in ('jessie_event','james_event') else 2000
+                c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(bonus,uid)); pipes += bonus
+                roll=random.random()
+                if roll<0.04:
+                    rocket_drop=_grant_normal_pibot_box_cursor(c,uid,'legendary')
+                elif roll<0.18:
+                    rocket_drop=_grant_normal_pibot_box_cursor(c,uid,'epic')
+                elif roll<0.45:
+                    grant_item_with_cursor(c,uid,'object_box',1); rocket_drop={'label':'🎁 Caja de Objetos Pokémon'}
+                if finished:
+                    # Bonus final a todos los que ayudaron en la invasión.
+                    c.execute("SELECT user_id FROM pokemon_rocket_participants_tb WHERE event_id=%s",(event_ref,))
+                    for (part_uid,) in c.fetchall():
+                        c.execute("UPDATE usuarios_tb SET saldo=saldo+5000 WHERE id_user=%s",(int(part_uid),)); grant_item_with_cursor(c,int(part_uid),'rare_candy',1)
+                rocket_event={'event_id':event_ref,'stage':newstage,'finished':finished}
+        _mission_progress_cursor(c,uid,'win',1)
+    if won and npc_key in LEAGUE_NPCS:
+        c.execute("INSERT INTO pokemon_league_progress_tb(user_id) VALUES(%s) ON CONFLICT DO NOTHING",(uid,)); c.execute("SELECT stage,champion_done FROM pokemon_league_progress_tb WHERE user_id=%s FOR UPDATE",(uid,)); lr=c.fetchone() or (0,False)
+        current=int(lr[0]); expected=LEAGUE_ORDER[min(current,len(LEAGUE_ORDER)-1)]
+        if not bool(lr[1]) and expected==npc_key:
+            nxt=current+1; league_champion=nxt>=len(LEAGUE_ORDER)
+            c.execute("UPDATE pokemon_league_progress_tb SET stage=%s,champion_done=%s,updated_at=NOW() WHERE user_id=%s",(nxt,league_champion,uid))
+            bonus=30000 if league_champion else 7500; c.execute("UPDATE usuarios_tb SET saldo=saldo+%s WHERE id_user=%s",(bonus,uid)); pipes += bonus
+            grant_item_with_cursor(c,uid,'rare_candy',5 if league_champion else 2)
+            if league_champion:
+                season_key=f'league_champion:{uid}'
+                c.execute("INSERT INTO pokemon_season_boxes_tb(owner_id,season_key,placement) VALUES(%s,%s,1) ON CONFLICT(owner_id,season_key) DO NOTHING",(uid,season_key))
+            league_stage=nxt
+        _mission_progress_cursor(c,uid,'win',1)
     badge_new=False; tm=None; candies=0; completion=None
+    if won and npc_key not in ROCKET_EVENT_NPCS and npc_key not in LEAGUE_NPCS:_mission_progress_cursor(c,uid,'win',1)
     if won and kind=='leader':
         tm=random.choice(list(TM_ITEMS.keys())) if TM_ITEMS else None
         if tm:grant_item_with_cursor(c,uid,tm,1)
@@ -4061,7 +5069,8 @@ def _finish_npc_battle_cursor(c,bid:int,state:dict)->dict:
             'notes':notes,'npc_key':npc_key,'badge_new':badge_new,'tm':tm,'candies':candies,'object_box':bool(won and kind=='leader'),
             'bonus_pids':selected if won and kind=='leader' else [],'completion':completion,'chat_id':chat_id,'thread_id':thread_id,
             'halloween_candies':halloween_candies,'halloween_bonus':halloween_bonus,'halloween_object_box':halloween_object_box,
-            'halloween_box':halloween_box}
+            'halloween_box':halloween_box,'rocket_event':rocket_event,'rocket_drop':rocket_drop,
+            'league_stage':league_stage,'league_champion':league_champion}
 
 
 def _npc_result_lines(final:dict)->list[str]:
@@ -4077,6 +5086,18 @@ def _npc_result_lines(final:dict)->list[str]:
         hb=final['halloween_box']; lines.append(f"🎃📦 Premio del jefe: {'✨ SHINY ' if hb.get('shiny') else ''}{hb.get('name','Pokémon')}")
     elif final.get('halloween_box')=='cursed_egg':
         lines.append('🎃🥚 ¡Encontraste un Huevo Maldito!')
+    if final.get('rocket_event'):
+        re=final['rocket_event']; lines.append(f"🚀 Invasión Rocket: {int(re.get('stage',0))}/4 derrotados")
+        if final.get('rocket_drop'):
+            rd=final['rocket_drop']
+            if isinstance(rd,dict) and rd.get('code') in ('epic','legendary'):
+                boxname='💜 Caja Épica de PiBot' if rd.get('code')=='epic' else '🌟 Caja Legendaria de PiBot'
+                lines.append(f"🎁 Drop Rocket: {boxname} → {rd.get('label','premio')}")
+            else:lines.append(f"🎁 Drop Rocket: {rd.get('label','Premio especial') if isinstance(rd,dict) else rd}")
+        if re.get('finished'):lines += ['🏆 ¡Team Rocket fue derrotado!', '🎁 Todos los participantes: +5,000 PiPesos + 1 Caramelo Raro']
+    if final.get('league_stage') is not None:
+        if final.get('league_champion'):lines += ['👑 ¡DERROTASTE AL CAMPEÓN DE KANTO!', '💰 Bonus Liga incluido: +30,000 PiPesos', '📦 +1 Caja Pokémon Shiny garantizada', '🍬 +5 Caramelos Raros']
+        else:lines.append(f"👑 Liga Kanto: fase {int(final['league_stage'])}/5 superada · +7,500 PiPesos +2 Caramelos Raros")
     if final.get('leader') and final.get('won'):
         if final.get('tm') in ITEMS:
             n,e,_,_=ITEMS[final['tm']]; lines.append(f'💿 MT: {e} {n}')
@@ -4121,6 +5142,12 @@ async def _send_npc_encounter(context:ContextTypes.DEFAULT_TYPE,eid:int)->bool:
     elif kind=='leader':
         text=(f"🏟️ ¡UN LÍDER DE GIMNASIO HA APARECIDO!\n\n{d['emoji']} {d['name']} · {d['city']}\n"
               f"⚔️ Combate {mode}v{mode}\n⏳ Disponible durante 10 minutos\n\n🎁 Victoria: PiPesos, mucha XP, MT, Caramelos Raros y Caja de Objetos.")
+    elif key in ROCKET_EVENT_NPCS:
+        text=(f"🚀 INVASIÓN TEAM ROCKET\n\n{d['emoji']} {d['name']}\n⚔️ Combate {mode}v{mode}\n"
+              "⏳ Forma parte del evento grupal de 30 minutos.\n🎁 Puede soltar Caja de Objetos o premios de las cajas normales de PiBot.")
+    elif key in LEAGUE_NPCS:
+        text=(f"👑 LIGA POKÉMON DE KANTO\n\n{d['emoji']} {d['name']}\n⚔️ Combate {mode}v{mode}\n"
+              "🔥 Sus Pokémon salen por encima del nivel de tu equipo.\n🏆 Vence para avanzar al siguiente miembro de la Liga.")
     else:
         text=(f"👤 ¡UN ENTRENADOR HA APARECIDO!\n\n{d['emoji']} {d['name']}\n⚔️ Combate {mode}v{mode}\n"
               f"⏳ Disponible durante 10 minutos\n📈 Sus Pokémon estarán a tu nivel, +1 o +2.")
@@ -4137,7 +5164,7 @@ async def _send_npc_encounter(context:ContextTypes.DEFAULT_TYPE,eid:int)->bool:
     except Exception:conn.rollback()
     finally:_put_connection(conn)
     try:
-        if context.job_queue:context.job_queue.run_once(_expire_npc_encounter,NPC_LIFETIME_SECONDS,data={'encounter_id':eid},name=f'pk_npc_expire:{eid}')
+        if context.job_queue:context.job_queue.run_once(_expire_npc_encounter,(ROCKET_EVENT_SECONDS if key in ROCKET_EVENT_NPCS or key in LEAGUE_NPCS else NPC_LIFETIME_SECONDS),data={'encounter_id':eid},name=f'pk_npc_expire:{eid}')
     except Exception as e:print('[PK NPC expiry schedule]',type(e).__name__,e)
     return True
 
@@ -4514,6 +5541,288 @@ async def batalladoblepokemon_command(update:Update, context:ContextTypes.DEFAUL
 
 async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_TYPE,p:list[str],action:str,uid:int)->bool:
     q=update.callback_query
+    # ---- Pokédex 151/151 ----
+    if action=='dexclaim':
+        conn=_get_connection(); data=None
+        try:
+            c=conn.cursor(); c.execute("SELECT COUNT(*) FROM pokemon_pokedex_tb WHERE owner_id=%s",(uid,)); dex=int(c.fetchone()[0])
+            if dex<151:conn.rollback(); return await q.answer('Todavía no completas 151/151.',show_alert=True) or True
+            c.execute("SELECT 1 FROM pokemon_dex_rewards_tb WHERE user_id=%s FOR UPDATE",(uid,))
+            if c.fetchone():conn.rollback(); return await q.answer('Ya reclamaste esta recompensa.',show_alert=True) or True
+            species=random.choice([144,145,146,150,151]); data=grant_pokemon_with_cursor(c,uid,species,'pokedex_151_legendary_shiny',force_shiny=True)
+            c.execute("INSERT INTO pokemon_dex_rewards_tb(user_id,pokemon_id) VALUES(%s,%s)",(uid,int(data['pokemon_id']))); conn.commit()
+        except Exception as e:conn.rollback(); print('[PK dex reward]',type(e).__name__,e); return await q.answer('No pude abrir la caja.',show_alert=True) or True
+        finally:_put_connection(conn)
+        await q.answer('✨ ¡LEGENDARIO SHINY!',show_alert=True)
+        try:await q.edit_message_text(f"🎁 CAJA LEGENDARIA SHINY · POKÉDEX 151/151\n\n✨ #{int(data['species_id']):03d} SHINY {data['name']} {_sex_symbol(data.get('sex'))}\n⭐ Nv.{int(data['level'])} · 🧬 IV {int(data['iv_percent'])}% · {data['iv_grade']}\n\n👑 Recompensa única por completar Kanto.")
+        except Exception:pass
+        return True
+
+    # ---- Zona Safari ----
+    if action=='safbuy':
+        if q.message.chat.type=='private':return await q.answer('La Zona Safari se usa en Juegos y Casino.',show_alert=True) or True
+        conn=_get_connection(); row=None; paid=''
+        try:
+            c=conn.cursor(); old=_safari_session_cursor(c,uid,True)
+            if old:conn.rollback(); await q.answer('Ya tienes tu Safari activo.',show_alert=True); return True
+            c.execute("SELECT status FROM pokemon_safari_sessions_tb WHERE user_id=%s AND safari_date=%s",(uid,_today_pokemon_date()))
+            if c.fetchone():conn.rollback(); await q.answer('Ya usaste tu entrada Safari de hoy.',show_alert=True); return True
+            c.execute("SELECT qty FROM pokemon_items_tb WHERE owner_id=%s AND item_code='safari_ticket' FOR UPDATE",(uid,)); ticket=c.fetchone()
+            if ticket and int(ticket[0])>0:
+                c.execute("UPDATE pokemon_items_tb SET qty=qty-1 WHERE owner_id=%s AND item_code='safari_ticket'",(uid,)); paid='🎟️ Usaste un Pase Safari.'
+            else:
+                c.execute("UPDATE usuarios_tb SET saldo=saldo-%s WHERE id_user=%s AND saldo>=%s RETURNING saldo",(SAFARI_PASS_COST,uid,SAFARI_PASS_COST))
+                if not c.fetchone():conn.rollback(); await q.answer('No tienes 10,000 PiPesos ni un Pase Safari.',show_alert=True); return True
+                paid=f'💰 Pagaste {SAFARI_PASS_COST:,} PiPesos.'
+            c.execute("INSERT INTO pokemon_safari_sessions_tb(user_id,chat_id,thread_id,safari_date,balls) VALUES(%s,%s,%s,%s,%s) RETURNING session_id,user_id,chat_id,thread_id,safari_date,status,balls,current_species,current_level,current_shiny,current_ivs_json,current_defeated,created_at,expires_at",(uid,q.message.chat_id,int(getattr(q.message,'message_thread_id',None) or 0),_today_pokemon_date(),SAFARI_START_BALLS)); row=c.fetchone(); conn.commit()
+        except Exception as e:conn.rollback(); print('[PK safari buy]',type(e).__name__,e); return await q.answer('No pude abrir el Safari.',show_alert=True) or True
+        finally:_put_connection(conn)
+        await q.answer('🌿 ¡Entraste al Safari!')
+        try:await q.edit_message_text(_safari_text(row)+'\n\n'+paid,reply_markup=_safari_markup(row))
+        except Exception:pass
+        return True
+    if action in ('safexplore','safback','saffight','safskip','safbuyballs','safball'):
+        sid=int(p[2]); conn=_get_connection(); row=None; result=None
+        try:
+            c=conn.cursor(); c.execute("SELECT session_id,user_id,chat_id,thread_id,safari_date,status,balls,current_species,current_level,current_shiny,current_ivs_json,current_defeated,created_at,expires_at FROM pokemon_safari_sessions_tb WHERE session_id=%s FOR UPDATE",(sid,)); row=c.fetchone()
+            if not row or int(row[1])!=uid:conn.rollback(); return await q.answer('Ese Safari no es tuyo.',show_alert=True) or True
+            if str(row[5])!='active' or row[13]<=datetime.now(timezone.utc):
+                c.execute("UPDATE pokemon_safari_sessions_tb SET status='expired',finished_at=NOW() WHERE session_id=%s",(sid,)); conn.commit(); return await q.answer('Tu pase Safari ya terminó.',show_alert=True) or True
+            if action=='safexplore':
+                if row[7] is not None:conn.rollback(); return await q.answer('Ya tienes un Pokémon enfrente.',show_alert=True) or True
+                sp=_safari_pool_species(); slots=_npc_team_slot_ids_cursor(c,uid); levels=[]
+                for pid in slots:
+                    c.execute("SELECT level FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); rr=c.fetchone()
+                    if rr:levels.append(int(rr[0]))
+                avg=round(sum(levels)/len(levels)) if levels else _starting_level(sp); bonus=random.randint(6,10) if int(sp) in set(int(x) for x in LEGENDARY_IDS) else random.randint(2,6); level=max(5,min(MAX_LEVEL,avg+bonus)); shiny=(random.randrange(SAFARI_SHINY_DENOMINATOR)==0)
+                ivs=None
+                for _ in range(20):
+                    cand={k:random.randint(SAFARI_IV_MIN,15) for k in ('atk','def','spd','spc')}; cand['hp']=((cand['atk']&1)*8)+((cand['def']&1)*4)+((cand['spd']&1)*2)+(cand['spc']&1)
+                    ivs=cand
+                    if _iv_percent(cand)>=75:break
+                if _iv_percent(ivs)<75:ivs={'atk':15,'def':15,'spd':15,'spc':15,'hp':15}
+                c.execute("UPDATE pokemon_safari_sessions_tb SET current_species=%s,current_level=%s,current_shiny=%s,current_ivs_json=%s,current_defeated=FALSE WHERE session_id=%s",(sp,level,shiny,json.dumps(ivs),sid)); conn.commit(); row=list(row); row[7],row[8],row[9],row[10],row[11]=sp,level,shiny,json.dumps(ivs),False; row=tuple(row)
+            elif action=='safskip':
+                c.execute("UPDATE pokemon_safari_sessions_tb SET current_species=NULL,current_level=NULL,current_shiny=NULL,current_ivs_json=NULL,current_defeated=FALSE WHERE session_id=%s",(sid,)); conn.commit(); row=list(row); row[7]=row[8]=row[9]=row[10]=None; row[11]=False; row=tuple(row)
+            elif action=='safbuyballs':
+                conn.rollback(); return await q.answer('🔴 Las Safari Balls son limitadas. Cuando se acaban, termina la sesión.',show_alert=True) or True
+            elif action=='saffight':
+                if row[7] is None or bool(row[11]):conn.rollback(); return await q.answer('No necesitas pelear ahora.',show_alert=True) or True
+                markup=_safari_team_markup_cursor(c,uid,sid); conn.rollback(); await q.answer();
+                try:await q.edit_message_text(_safari_text(row)+'\n\nElige quién peleará:',reply_markup=markup)
+                except Exception:pass
+                return True
+            elif action=='safball':
+                if row[7] is None:conn.rollback(); return await q.answer('No tienes un Pokémon enfrente.',show_alert=True) or True
+                if int(row[6])<=0:
+                    c.execute("UPDATE pokemon_safari_sessions_tb SET status='exhausted',finished_at=NOW() WHERE session_id=%s",(sid,)); conn.commit(); return await q.answer('🔴 Se acabaron tus Safari Balls. Safari terminado.',show_alert=True) or True
+                balls=int(row[6])-1; sp=int(row[7]); hp_ratio=0.0 if bool(row[11]) else 1.0; chance=_safari_capture_probability(sp,hp_ratio); caught=random.random()<chance
+                end_session=(balls<=0)
+                if caught:
+                    ivs=json.loads(row[10] or '{}'); data=grant_pokemon_with_cursor(c,uid,sp,f'safari:{sid}',level_override=int(row[8]),shiny_override=bool(row[9]),ivs_override=ivs); _mission_progress_cursor(c,uid,'capture',1)
+                    c.execute("UPDATE pokemon_safari_sessions_tb SET balls=%s,current_species=NULL,current_level=NULL,current_shiny=NULL,current_ivs_json=NULL,current_defeated=FALSE,status=%s,finished_at=CASE WHEN %s THEN NOW() ELSE finished_at END WHERE session_id=%s",(balls,'exhausted' if end_session else 'active',end_session,sid)); result=('caught',data,balls,chance,end_session)
+                else:
+                    if end_session:
+                        c.execute("UPDATE pokemon_safari_sessions_tb SET balls=0,status='exhausted',current_species=NULL,current_level=NULL,current_shiny=NULL,current_ivs_json=NULL,current_defeated=FALSE,finished_at=NOW() WHERE session_id=%s",(sid,))
+                    else:c.execute("UPDATE pokemon_safari_sessions_tb SET balls=%s WHERE session_id=%s",(balls,sid))
+                    result=('escaped_ball',sp,balls,chance,end_session)
+                conn.commit(); row=list(row); row[5]='exhausted' if end_session else 'active'; row[6]=balls
+                if caught or end_session:row[7]=row[8]=row[9]=row[10]=None; row[11]=False
+                row=tuple(row)
+            else:conn.rollback()
+        except Exception as e:conn.rollback(); print('[PK safari action]',type(e).__name__,e); return await q.answer('No pude actualizar tu Safari.',show_alert=True) or True
+        finally:_put_connection(conn)
+        if action=='safback':
+            await q.answer();
+        elif action=='safball' and isinstance(result,tuple) and result[0]=='caught':
+            data=result[1]; await q.answer('🎉 ¡Capturado!',show_alert=True)
+            try:await q.edit_message_text(f"🌿 SAFARI · ¡CAPTURA!\n\n{'✨ SHINY · ' if data.get('shiny') else ''}#{int(data['species_id']):03d} {data['name']} {_sex_symbol(data.get('sex'))} · Nv.{int(data['level'])}\n🧬 IV {int(data['iv_percent'])}% · {data['iv_grade']}\n🔴 Safari Balls restantes: {int(result[2])}",reply_markup=_safari_markup(row))
+            except Exception:pass
+            return True
+        elif action=='safball' and isinstance(result,tuple):await q.answer('💨 ¡Se salió de la Safari Ball!',show_alert=True)
+        else:await q.answer(result if isinstance(result,str) else 'Listo.')
+        try:await q.edit_message_text(_safari_text(row),reply_markup=_safari_markup(row))
+        except Exception:pass
+        return True
+    if action=='safpick':
+        sid,pid=int(p[2]),int(p[3]); conn=_get_connection(); state=None; bid=None; chat=None
+        try:
+            c=conn.cursor(); c.execute("SELECT session_id,user_id,chat_id,thread_id,status,current_species,current_level,current_shiny,current_ivs_json,current_defeated,expires_at FROM pokemon_safari_sessions_tb WHERE session_id=%s FOR UPDATE",(sid,)); sr=c.fetchone()
+            if not sr or int(sr[1])!=uid:conn.rollback(); return await q.answer('Ese Safari no es tuyo.',show_alert=True) or True
+            if str(sr[4])!='active' or sr[10]<=datetime.now(timezone.utc):conn.rollback(); return await q.answer('Tu Safari terminó.',show_alert=True) or True
+            if sr[5] is None or bool(sr[9]):conn.rollback(); return await q.answer('Ese encuentro ya cambió.',show_alert=True) or True
+            if _battle_busy_cursor(c,uid):conn.rollback(); return await q.answer('Ya tienes una batalla Pokémon pendiente o activa.',show_alert=True) or True
+            c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code,sex FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); rr=c.fetchone()
+            if not rr or pid not in _npc_team_slot_ids_cursor(c,uid):conn.rollback(); return await q.answer('Ese Pokémon ya no está en tus 4 espacios.',show_alert=True) or True
+            user_mon=_battle_mon(rr); sp=int(sr[5]); level=int(sr[6]); ivs=json.loads(sr[8] or '{}'); moves=available_moves(sp,level); hp=_stat_value(sp,level,'hp',int(ivs.get('hp',0)))
+            bot_mon={'pid':-2_000_000_000-sid,'species':sp,'nickname':None,'level':level,'hp':hp,'max_hp':hp,'moves':moves,'pp':{m:MOVES[m][4] for m in moves if m in MOVES},'status':None,'sleep':0,'stages':{'atk':0,'def':0,'spd':0},'shiny':bool(sr[7]),'ivs':ivs,'held_item':None,'choice_lock':None}
+            botid=-2_000_000-sid; state={'status':'active','battle_kind':'safari','safari_session_id':sid,'safari_user_id':uid,'bot_player_id':botid,'mode':1,'round':1,'choices':{},'players':{str(uid):{'name':_display_name_cursor(c,uid),'mons':[user_mon],'active':0},str(botid):{'name':'Pokémon Safari','mons':[bot_mon],'active':0}}}
+            c.execute("INSERT INTO pokemon_battles_tb(chat_id,thread_id,challenger_id,opponent_id,mode,status,state_json) VALUES(%s,%s,%s,%s,1,'active',%s) RETURNING battle_id",(int(sr[2]),int(sr[3] or 0),uid,botid,json.dumps(state,ensure_ascii=False))); bid=int(c.fetchone()[0]); c.execute("INSERT INTO pokemon_safari_battles_tb(battle_id,session_id,user_id) VALUES(%s,%s,%s)",(bid,sid,uid)); conn.commit(); chat=(int(sr[2]),int(sr[3] or 0))
+        except Exception as e:conn.rollback(); print('[PK safari battle]',type(e).__name__,e); return await q.answer('No pude iniciar la pelea Safari.',show_alert=True) or True
+        finally:_put_connection(conn)
+        await q.answer('⚔️ ¡Comienza la pelea!')
+        try:
+            msg=await context.bot.send_message(chat[0],_battle_text(state,'🌿 Zona Safari · puedes lanzar una Safari Ball cuando quieras; bajar PS mejora la captura.'),message_thread_id=chat[1] or None,reply_markup=_battle_markup(bid)); await _store_battle_public_message_id(bid,msg.message_id); await _sync_single_battle_views(context,bid,state,chat[0],chat[1],msg.message_id,'🌿 Zona Safari · puedes lanzar una Safari Ball cuando quieras; bajar PS mejora la captura.')
+        except Exception as e:print('[PK safari battle send]',type(e).__name__,e)
+        try:await q.edit_message_text('⚔️ Batalla Safari iniciada. Tus movimientos se eligen por privado.')
+        except Exception:pass
+        return True
+
+    # ---- Team Rocket ----
+    if action=='rocketfight':
+        event_id=int(p[2]); conn=_get_connection(); key=None; mode=2; eid=None; media=(None,None)
+        try:
+            c=conn.cursor(); c.execute("SELECT chat_id,thread_id,status,stage,expires_at FROM pokemon_rocket_events_tb WHERE event_id=%s FOR UPDATE",(event_id,)); er=c.fetchone()
+            if not er or str(er[2])!='active':conn.rollback(); return await q.answer('La invasión ya terminó.',show_alert=True) or True
+            if er[4]<=datetime.now(timezone.utc):c.execute("UPDATE pokemon_rocket_events_tb SET status='expired',finished_at=NOW() WHERE event_id=%s",(event_id,)); conn.commit(); return await q.answer('Team Rocket escapó.',show_alert=True) or True
+            stage=int(er[3]); key=ROCKET_WAVES[min(stage,3)]; mode=3 if stage>=2 else 2
+            if len(_npc_team_slot_ids_cursor(c,uid))<mode:conn.rollback(); return await q.answer(f'Necesitas al menos {mode} Pokémon en /equipo.',show_alert=True) or True
+            if _battle_busy_cursor(c,uid):conn.rollback(); return await q.answer('Ya tienes una batalla pendiente.',show_alert=True) or True
+            c.execute("INSERT INTO pokemon_npc_encounters_tb(chat_id,thread_id,npc_key,encounter_type,mode,status,claimed_by,selected_json,expires_at,event_ref) VALUES(%s,%s,%s,'normal',%s,'selecting',%s,'[]',%s,%s) RETURNING encounter_id",(int(er[0]),int(er[1] or 0),key,mode,uid,er[4],event_id)); eid=int(c.fetchone()[0]); media=_npc_media_for_key_cursor(c,key); conn.commit()
+        except Exception as e:conn.rollback(); print('[PK rocket fight]',type(e).__name__,e); return await q.answer('No pude abrir el combate Rocket.',show_alert=True) or True
+        finally:_put_connection(conn)
+        conn=_get_connection()
+        try:c=conn.cursor(); markup=_npc_selection_markup_cursor(c,uid,eid,mode,[])
+        finally:_put_connection(conn)
+        try:
+            text=f"🚀 INVASIÓN ROCKET · {_npc_label(key)}\nElige {mode} Pokémon de tus 4 y en qué orden saldrán:"
+            mt,fid=media
+            if mt=='animation' and fid:await context.bot.send_animation(uid,animation=fid,caption=text,reply_markup=markup)
+            elif mt=='photo' and fid:await context.bot.send_photo(uid,photo=fid,caption=text,reply_markup=markup)
+            else:await context.bot.send_message(uid,text,reply_markup=markup)
+            await q.answer('Te mandé la selección por privado.')
+        except Exception:await q.answer('Abre primero el privado de PiBot con /start.',show_alert=True)
+        return True
+
+    # ---- Incursiones ----
+    if action=='raidattack':
+        raid_id=int(p[2]); conn=_get_connection(); row=None; markup=None
+        try:
+            c=conn.cursor(); c.execute(f"SELECT {RAID_SELECT} FROM pokemon_raids_tb WHERE raid_id=%s",(raid_id,)); row=c.fetchone()
+            if not row or str(row[7])!='active' or row[10]<=datetime.now(timezone.utc):return await q.answer('La incursión ya no está activa.',show_alert=True) or True
+            slots=_npc_team_slot_ids_cursor(c,uid); rows=[]
+            for pid in slots:
+                c.execute("SELECT species_id,nickname,level,shiny FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); rr=c.fetchone()
+                if rr:rows.append([InlineKeyboardButton(f"⚔️ {'✨ ' if rr[3] else ''}{rr[1] or NAMES[int(rr[0])]} · Nv.{int(rr[2])}",callback_data=f'pk:raidmon:{raid_id}:{pid}')])
+            markup=InlineKeyboardMarkup(rows) if rows else None
+        finally:_put_connection(conn)
+        if not markup:return await q.answer('Necesitas Pokémon en /equipo.',show_alert=True) or True
+        await q.answer()
+        try:await context.bot.send_message(uid,'💥 INCURSIÓN · Elige el Pokémon que atacará:',reply_markup=markup)
+        except Exception:return await q.answer('Abre primero el privado de PiBot.',show_alert=True) or True
+        return True
+    if action=='raidmon':
+        raid_id,pid=int(p[2]),int(p[3]); conn=_get_connection(); damage=0; defeated=False; hp=0; top=None; catcher=None; legendary=False; best_eff=1.0
+        try:
+            c=conn.cursor(); c.execute(f"SELECT {RAID_SELECT} FROM pokemon_raids_tb WHERE raid_id=%s FOR UPDATE",(raid_id,)); raid=c.fetchone()
+            if not raid or str(raid[7])!='active' or raid[10]<=datetime.now(timezone.utc):conn.rollback(); return await q.answer('La incursión terminó.',show_alert=True) or True
+            legendary=bool(raid[11])
+            if pid not in _npc_team_slot_ids_cursor(c,uid):conn.rollback(); return await q.answer('Ese Pokémon no está en tu equipo.',show_alert=True) or True
+            c.execute("SELECT species_id,level,iv_atk,iv_def,iv_spd,iv_spc,iv_hp FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s FOR UPDATE",(uid,pid)); mon=c.fetchone()
+            if not mon:conn.rollback(); return await q.answer('Pokémon no disponible.',show_alert=True) or True
+            c.execute("SELECT damage,attacks,last_attack_at FROM pokemon_raid_participants_tb WHERE raid_id=%s AND user_id=%s FOR UPDATE",(raid_id,uid)); part=c.fetchone()
+            attacks=int(part[1]) if part else 0; last=part[2] if part else None
+            if attacks>=RAID_USER_ATTACKS:conn.rollback(); return await q.answer('Ya usaste tus 5 ataques en esta incursión.',show_alert=True) or True
+            if last and (datetime.now(timezone.utc)-last).total_seconds()<RAID_ATTACK_COOLDOWN_SECONDS:conn.rollback(); return await q.answer('Espera un minuto antes de volver a atacar.',show_alert=True) or True
+            ivpct=round(sum(int(x or 0) for x in mon[2:7])/75*100)
+            move_effs=[effectiveness(MOVES[m][1],TYPES.get(int(raid[3]),('Normal',))) for m in available_moves(int(mon[0]),int(mon[1])) if m in MOVES]
+            best_eff=max(move_effs) if move_effs else 1.0
+            eff_mult=1.25 if best_eff>=2 else (0.90 if best_eff<1 else 1.0)
+            damage=max(80,int((int(mon[1])*9+ivpct*2+random.randint(40,160))*eff_mult)); hp=max(0,int(raid[6])-damage); defeated=hp<=0
+            # Primero registra ataque/daño para que la selección ponderada incluya el golpe final.
+            c.execute("INSERT INTO pokemon_raid_participants_tb(raid_id,user_id,damage,attacks,last_attack_at) VALUES(%s,%s,%s,1,NOW()) ON CONFLICT(raid_id,user_id) DO UPDATE SET damage=pokemon_raid_participants_tb.damage+EXCLUDED.damage,attacks=pokemon_raid_participants_tb.attacks+1,last_attack_at=NOW()",(raid_id,uid,damage))
+            c.execute("UPDATE pokemon_instances_tb SET friendship=LEAST(255,friendship+1) WHERE pokemon_id=%s",(pid,))
+            if defeated:
+                c.execute("SELECT user_id,damage FROM pokemon_raid_participants_tb WHERE raid_id=%s ORDER BY damage DESC",(raid_id,)); parts=c.fetchall(); top=int(parts[0][0]) if parts else None
+                for puid,_dmg in parts:
+                    puid=int(puid); c.execute("UPDATE usuarios_tb SET saldo=saldo+2500 WHERE id_user=%s",(puid,)); grant_item_with_cursor(c,puid,'rare_candy',1)
+                    if random.random()<0.10:grant_item_with_cursor(c,puid,'safari_ticket',1)
+                if top is not None:grant_item_with_cursor(c,top,'object_box',1)
+                if legendary:
+                    catcher=_raid_weighted_catcher(parts)
+                    c.execute("""UPDATE pokemon_raids_tb SET hp=0,status='capture',catcher_id=%s,capture_attempts=0,capture_status='pending',
+                                 expires_at=NOW()+(%s * INTERVAL '1 second'),finished_at=NULL WHERE raid_id=%s""",(catcher,RAID_LEGENDARY_CAPTURE_SECONDS,raid_id))
+                else:
+                    c.execute("UPDATE pokemon_raids_tb SET hp=0,status='finished',finished_at=NOW() WHERE raid_id=%s",(raid_id,))
+            else:
+                c.execute("UPDATE pokemon_raids_tb SET hp=%s WHERE raid_id=%s",(hp,raid_id))
+            conn.commit()
+        except Exception as e:conn.rollback(); print('[PK raid attack]',type(e).__name__,e); return await q.answer('No pude aplicar tu ataque.',show_alert=True) or True
+        finally:_put_connection(conn)
+        await q.answer(f"💥 -{damage} PS{' · súper eficaz' if best_eff>=2 else ''}",show_alert=True)
+        await _refresh_raid_message(context,raid_id)
+        if defeated:
+            if legendary and catcher is not None:
+                conn=_get_connection(); cname=f'Entrenador {catcher}'
+                try:c=conn.cursor(); cname=_display_name_cursor(c,catcher)
+                finally:_put_connection(conn)
+                text=(f"🌟 ¡INCURSIÓN LEGENDARIA COMPLETADA!\n\nTodos los participantes: +2,500 PiPesos +1 Caramelo Raro.\n"
+                      f"🥇 Mayor daño: Caja de Objetos Pokémon.\n\n🎯 {cname} fue elegido para intentar capturar a {NAMES[int(raid[3])]}.\n"
+                      f"🎲 Tiene {RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros. Solo un 6 lo captura.")
+                try:await context.bot.send_message(int(raid[1]),text,message_thread_id=(raid[2] or None))
+                except Exception:pass
+                try:await context.bot.send_message(catcher,f"🌟 Te tocó la oportunidad de capturar a {NAMES[int(raid[3])]} de la incursión.\nTienes {RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros. Usa el botón de la incursión en Juegos y Casino.")
+                except Exception:pass
+            else:
+                try:await context.bot.send_message(int(raid[1]),'🏆 ¡INCURSIÓN COMPLETADA!\nTodos los participantes: +2,500 PiPesos +1 Caramelo Raro.\n🥇 Mayor daño: Caja de Objetos Pokémon.',message_thread_id=(raid[2] or None))
+                except Exception:pass
+        return True
+    if action=='raidcatch':
+        raid_id=int(p[2]); conn=_get_connection(); raid=None
+        try:
+            c=conn.cursor(); c.execute(f"SELECT {RAID_SELECT} FROM pokemon_raids_tb WHERE raid_id=%s FOR UPDATE",(raid_id,)); raid=c.fetchone()
+            if not raid or not bool(raid[11]) or str(raid[7])!='capture':conn.rollback(); return await q.answer('Esta captura legendaria ya terminó.',show_alert=True) or True
+            if int(raid[13] or 0)!=uid:conn.rollback(); return await q.answer('Solo el entrenador elegido puede hacer estos tiros.',show_alert=True) or True
+            if raid[10] and raid[10]<=datetime.now(timezone.utc):
+                c.execute("UPDATE pokemon_raids_tb SET status='finished',capture_status='escaped',finished_at=NOW() WHERE raid_id=%s",(raid_id,)); conn.commit(); await _refresh_raid_message(context,raid_id); return await q.answer('Se acabó el tiempo de captura.',show_alert=True) or True
+            if int(raid[14])>=RAID_LEGENDARY_CAPTURE_ATTEMPTS:conn.rollback(); return await q.answer('Ya usaste tus 3 tiros.',show_alert=True) or True
+            if str(raid[15])=='rolling':conn.rollback(); return await q.answer('Ya hay un dado en movimiento.',show_alert=True) or True
+            c.execute("UPDATE pokemon_raids_tb SET capture_status='rolling' WHERE raid_id=%s",(raid_id,)); conn.commit()
+        except Exception as e:conn.rollback(); print('[PK raid catch prep]',type(e).__name__,e); return await q.answer('No pude preparar el tiro.',show_alert=True) or True
+        finally:_put_connection(conn)
+        await q.answer('🎲 ¡Lanzando!',show_alert=False)
+        try:
+            dice=await context.bot.send_dice(chat_id=int(raid[1]),message_thread_id=(raid[2] or None))
+            await asyncio.sleep(WILD_DICE_ANIMATION_SECONDS)
+            value=int(dice.dice.value)
+        except Exception as e:
+            conn=_get_connection()
+            try:c=conn.cursor(); c.execute("UPDATE pokemon_raids_tb SET capture_status='pending' WHERE raid_id=%s AND status='capture'",(raid_id,)); conn.commit()
+            except Exception:conn.rollback()
+            finally:_put_connection(conn)
+            return True
+        caught=False; escaped=False; attempts=0; data=None
+        conn=_get_connection()
+        try:
+            c=conn.cursor(); c.execute(f"SELECT {RAID_SELECT} FROM pokemon_raids_tb WHERE raid_id=%s FOR UPDATE",(raid_id,)); cur=c.fetchone()
+            if not cur or str(cur[7])!='capture' or int(cur[13] or 0)!=uid:conn.rollback(); return True
+            attempts=int(cur[14])+1; caught=(value==RAID_LEGENDARY_DICE_SUCCESS)
+            if caught:
+                data=grant_pokemon_with_cursor(c,uid,int(cur[3]),f'raid_legendary:{raid_id}',level_override=int(cur[4]),shiny_override=bool(cur[12]))
+                c.execute("UPDATE pokemon_raids_tb SET status='finished',capture_attempts=%s,capture_status='caught',finished_at=NOW() WHERE raid_id=%s",(attempts,raid_id))
+            elif attempts>=RAID_LEGENDARY_CAPTURE_ATTEMPTS:
+                escaped=True; c.execute("UPDATE pokemon_raids_tb SET status='finished',capture_attempts=%s,capture_status='escaped',finished_at=NOW() WHERE raid_id=%s",(attempts,raid_id))
+            else:
+                c.execute("UPDATE pokemon_raids_tb SET capture_attempts=%s,capture_status='pending' WHERE raid_id=%s",(attempts,raid_id))
+            conn.commit()
+        except Exception as e:conn.rollback(); print('[PK raid catch result]',type(e).__name__,e); return True
+        finally:_put_connection(conn)
+        await _refresh_raid_message(context,raid_id)
+        if caught and data:
+            text=(f"🎉 ¡CAPTURA LEGENDARIA!\n\n🎲 {value}/6\n"
+                  f"{'✨ SHINY · ' if data.get('shiny') else ''}#{int(data['species_id']):03d} {data['name']} {_sex_symbol(data.get('sex'))} · Nv.{int(data['level'])}\n"
+                  f"🧬 IV {int(data.get('iv_percent',0))}% · {data.get('iv_grade','')}\n🎮 Ejemplar #{int(data['pokemon_id'])}")
+            try:await context.bot.send_message(int(raid[1]),text,message_thread_id=(raid[2] or None))
+            except Exception:pass
+            try:await context.bot.send_message(uid,text)
+            except Exception:pass
+        elif escaped:
+            try:await context.bot.send_message(int(raid[1]),f"💨 {NAMES[int(raid[3])]} escapó después de los 3 tiros.",message_thread_id=(raid[2] or None))
+            except Exception:pass
+        else:
+            try:await context.bot.send_message(int(raid[1]),f"💨 {NAMES[int(raid[3])]} salió de la Poké Ball.\n🎲 {attempts}/{RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros usados.",message_thread_id=(raid[2] or None))
+            except Exception:pass
+        return True
     if action=='egghatch':
         egg_id=int(p[2]); conn=_get_connection(); row=None
         try:
@@ -4909,12 +6218,19 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
                 chosen=[92,105,94][:mode]  # Gastly → Marowak → Gengar; Gengar siempre cierra el jefe.
             elif key=='halloween_trainer':
                 chosen=[92,93,105][:mode]
+            elif key in ROCKET_EVENT_NPCS or key in LEAGUE_NPCS:
+                chosen=list(pool[:mode])
             else:
                 while len(chosen)<mode:
                     chosen.append(pool[len(chosen)%len(pool)] if kind=='leader' else random.choice(pool))
-            # Cada rival escala contra el Pokémon correspondiente elegido por el jugador.
-            # Los NPC normales/líderes conservan +0/+1/+2. Halloween usa un pequeño bonus de dificultad.
-            level_offsets=[2,3,4] if key=='halloween_boss' else ([1,2,3] if key=='halloween_trainer' else [0,1,2])
+            # Escalado por Pokémon correspondiente. Rocket/Liga son deliberadamente más difíciles.
+            if key=='halloween_boss':level_offsets=[2,3,4]
+            elif key=='halloween_trainer':level_offsets=[1,2,3]
+            elif key in ('jessie_event','james_event'):level_offsets=[3,4,5]
+            elif key=='rocket_exec_event':level_offsets=[2,3,4]
+            elif key=='rocket_grunt_event':level_offsets=[1,2,3]
+            elif key in LEAGUE_NPCS:level_offsets=[4,5,6]
+            else:level_offsets=[0,1,2]
             bot_mons=[_make_npc_mon(sp,max(1,min(MAX_LEVEL,int(user_mons[i]['level'])+random.choice(level_offsets)))) for i,sp in enumerate(chosen)]
             bot_id=-1_000_000-eid
             state={'status':'active','battle_kind':'leader' if kind=='leader' else 'npc','human_user_id':uid,'bot_player_id':bot_id,'npc_encounter_id':eid,'npc_key':key,'mode':mode,'round':1,'choices':{},
@@ -5218,6 +6534,37 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; p=q.data.split(':'); uid=q.from_user.id
     action=p[1]
     if action=='noop':return await q.answer()
+    if action in ('learnreplace','learnskip'):
+        req=int(p[2]); conn=_get_connection(); result=None
+        try:
+            c=conn.cursor(); c.execute("""SELECT ml.owner_id,ml.pokemon_id,ml.move_code,ml.status,p.species_id,p.nickname,p.moves_json
+                                         FROM pokemon_move_learning_tb ml JOIN pokemon_instances_tb p ON p.pokemon_id=ml.pokemon_id
+                                         WHERE ml.request_id=%s FOR UPDATE""",(req,)); row=c.fetchone()
+            if not row or int(row[0])!=uid:conn.rollback(); return await q.answer('Ese aprendizaje no es tuyo.',show_alert=True)
+            if str(row[3])!='pending':conn.rollback(); return await q.answer('Ese aprendizaje ya fue resuelto.',show_alert=True)
+            pid,code,species,nick=int(row[1]),str(row[2]),int(row[4]),row[5]
+            try:moves=[str(x) for x in json.loads(row[6] or '[]') if str(x) in MOVES]
+            except Exception:moves=[]
+            mon_name=nick or NAMES.get(species,'Pokémon'); move_name=MOVES.get(code,(code,))[0]
+            if action=='learnskip':
+                c.execute("UPDATE pokemon_move_learning_tb SET status='skipped',resolved_at=NOW() WHERE request_id=%s",(req,)); conn.commit(); result=f'❌ {mon_name} no aprendió {move_name}.'
+            else:
+                idx=int(p[3])
+                if not (0<=idx<len(moves)):conn.rollback(); return await q.answer('Ese movimiento ya no está disponible para reemplazar.',show_alert=True)
+                if code in moves:
+                    c.execute("UPDATE pokemon_move_learning_tb SET status='learned',resolved_at=NOW() WHERE request_id=%s",(req,)); conn.commit(); result=f'📚 {mon_name} ya conocía {move_name}.'
+                else:
+                    old=moves[idx]; moves[idx]=code
+                    c.execute("UPDATE pokemon_instances_tb SET moves_json=%s,updated_at=NOW() WHERE owner_id=%s AND pokemon_id=%s",(json.dumps(moves[:4],ensure_ascii=False),uid,pid))
+                    c.execute("UPDATE pokemon_move_learning_tb SET status='learned',resolved_at=NOW() WHERE request_id=%s",(req,)); conn.commit(); result=f'📚 {mon_name} olvidó {MOVES.get(old,(old,))[0]} y aprendió {move_name}.'
+        except Exception as e:
+            conn.rollback(); print('[PK level move replace]',type(e).__name__,e); return await q.answer('No pude guardar el movimiento.',show_alert=True)
+        finally:_put_connection(conn)
+        await q.answer('Movimiento actualizado ✅',show_alert=True)
+        try:await q.edit_message_text(result,reply_markup=None)
+        except Exception:pass
+        await _notify_pending_move_learning(context,uid)
+        return
     if await _pokemon_extended_callback(update,context,p,action,uid):return
     if action=='seasonbox':
         box_id=int(p[2]); _ensure_pokemon_season(); conn=_get_connection(); data=None
@@ -5439,7 +6786,8 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                         if drop:grant_item_with_cursor(c,uid,drop[0],drop[1])
                         held_drop=_roll_wild_held_item(species,shiny)
                         if held_drop:grant_item_with_cursor(c,uid,held_drop,1)
-                        _ensure_trainer_row_cursor(c,uid); c.execute("UPDATE pokemon_trainer_tb SET wild_catches=wild_catches+1,updated_at=NOW() WHERE user_id=%s",(uid,))
+                        _ensure_trainer_row_cursor(c,uid); c.execute("UPDATE pokemon_trainer_tb SET wild_catches=wild_catches+1,updated_at=NOW() WHERE user_id=%s",(uid,)); _mission_progress_cursor(c,uid,'capture',1)
+                        if random.random()<0.015:grant_item_with_cursor(c,uid,'safari_ticket',1); caught['secret_drop']='safari_ticket'
                         halloween_candies=_halloween_award_species_cursor(c,uid,[species])
                         c.execute("UPDATE pokemon_wild_spawns_tb SET status='caught',finished_at=NOW() WHERE spawn_id=%s",(spawn_id,)); conn.commit()
             except Exception as e:
@@ -5457,6 +6805,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             if drop:result += f"\n🎁 Soltó: {_drop_label(drop)}"
             if held_drop in HELD_ITEMS:
                 x=HELD_ITEMS[held_drop]; result += f"\n🎒 Objeto equipable: {x['emoji']} {x['name']}"
+            if caught.get('secret_drop')=='safari_ticket':result += "\n🎟️ ¡Drop secreto! Encontraste un Pase Safari."
             if halloween_candies>0:result += f"\n🎃🍬 +{halloween_candies} Dulces Halloween"
             await q.answer('🟣 ¡Captura garantizada!',show_alert=True)
             try:await q.edit_message_text(f'🏆 CAPTURADO POR {trainer_name}\n\n{identity}',reply_markup=None)
@@ -5503,7 +6852,8 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                     if drop:grant_item_with_cursor(c,uid,drop[0],drop[1])
                     held_drop=_roll_wild_held_item(species,shiny)
                     if held_drop:grant_item_with_cursor(c,uid,held_drop,1)
-                    _ensure_trainer_row_cursor(c,uid); c.execute("UPDATE pokemon_trainer_tb SET wild_catches=wild_catches+1,updated_at=NOW() WHERE user_id=%s",(uid,))
+                    _ensure_trainer_row_cursor(c,uid); c.execute("UPDATE pokemon_trainer_tb SET wild_catches=wild_catches+1,updated_at=NOW() WHERE user_id=%s",(uid,)); _mission_progress_cursor(c,uid,'capture',1)
+                    if random.random()<0.015:grant_item_with_cursor(c,uid,'safari_ticket',1); caught['secret_drop']='safari_ticket'
                     halloween_candies=_halloween_award_species_cursor(c,uid,[species])
                     c.execute("UPDATE pokemon_wild_spawns_tb SET status='caught',finished_at=NOW() WHERE spawn_id=%s",(spawn_id,)); conn.commit()
             except Exception as e:
@@ -5529,6 +6879,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             if drop:result += f"\n🎁 Soltó: {_drop_label(drop)}"
             if held_drop in HELD_ITEMS:
                 x=HELD_ITEMS[held_drop]; result += f"\n🎒 Objeto equipable: {x['emoji']} {x['name']}"
+            if caught.get('secret_drop')=='safari_ticket':result += "\n🎟️ ¡Drop secreto! Encontraste un Pase Safari."
             if halloween_candies>0:result += f"\n🎃🍬 +{halloween_candies} Dulces Halloween"
             try:
                 await context.bot.edit_message_text(chat_id=q.message.chat_id,message_id=q.message.message_id,text=f'🏆 CAPTURADO POR {trainer_name}\n\n{identity}',reply_markup=None)
@@ -5541,6 +6892,8 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             c=conn.cursor()
             if remaining<=0:
                 c.execute("UPDATE pokemon_wild_spawns_tb SET status='escaped',finished_at=NOW() WHERE spawn_id=%s AND status='throwing' AND caught_by=%s",(spawn_id,uid))
+                if random.random()<0.25:
+                    c.execute("INSERT INTO pokemon_fugitives_tb(chat_id,thread_id,species_id,level,shiny) VALUES(%s,%s,%s,%s,%s)",(q.message.chat_id,int(getattr(q.message,'message_thread_id',None) or 0),species,min(MAX_LEVEL,level+random.randint(1,3)),shiny))
             else:
                 c.execute("UPDATE pokemon_wild_spawns_tb SET status='active' WHERE spawn_id=%s AND status='throwing' AND caught_by=%s",(spawn_id,uid))
             conn.commit()
@@ -5924,20 +7277,18 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                 if current_level>=MAX_LEVEL:conn.rollback(); return await q.answer('Ese Pokémon ya está en nivel 100.',show_alert=True)
                 c.execute("UPDATE pokemon_items_tb SET qty=qty-1 WHERE owner_id=%s AND item_code=%s AND qty>0 RETURNING qty",(uid,code))
                 if not c.fetchone():conn.rollback(); return await q.answer('Ya no tienes ese objeto.',show_alert=True)
-                new_level=current_level+1; target=sid
-                while target in LEVEL_EVOLUTIONS and new_level>=LEVEL_EVOLUTIONS[target][0]:
-                    target=LEVEL_EVOLUTIONS[target][1]
-                moves=available_moves(target,new_level)
-                c.execute("UPDATE pokemon_instances_tb SET species_id=%s,level=%s,xp=GREATEST(xp,%s),moves_json=%s,updated_at=NOW() WHERE pokemon_id=%s",(target,new_level,_xp_floor(new_level),json.dumps(moves,ensure_ascii=False),pid))
-                c.execute("INSERT INTO pokemon_pokedex_tb(owner_id,species_id,obtained_count) VALUES(%s,%s,1) ON CONFLICT(owner_id,species_id) DO UPDATE SET last_obtained_at=NOW()",(uid,target))
-                conn.commit(); note=f"🍬 {r[1] or NAMES[sid]} subió a Nv.{new_level}." + (f" ✨ Evolucionó a {NAMES[target]}." if target!=sid else '')
+                c.execute("SELECT xp FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); xr=c.fetchone(); current_xp=int(xr[0] if xr else _xp_floor(current_level))
+                needed=max(0,_xp_floor(current_level+1)-max(current_xp,_xp_floor(current_level)))
+                learn_notes=_grant_pokemon_xp_cursor(c,pid,max(1,needed))
+                conn.commit(); note='🍬 '+(learn_notes[0] if learn_notes else f'{r[1] or NAMES[sid]} subió de nivel.')
+                if len(learn_notes)>1:note+='\n'+'\n'.join(learn_notes[1:])
             else:
                 target=_stone_evolution_target(sid,code) if code!='link_cable' else TRADE_EVOLUTIONS.get(sid)
                 if not target:conn.rollback(); return await q.answer('Ese objeto no sirve para este Pokémon.',show_alert=True)
                 c.execute("UPDATE pokemon_items_tb SET qty=qty-1 WHERE owner_id=%s AND item_code=%s AND qty>0 RETURNING qty",(uid,code))
                 if not c.fetchone():conn.rollback(); return await q.answer('Ya no tienes ese objeto.',show_alert=True)
-                moves=available_moves(target,current_level)
-                c.execute("UPDATE pokemon_instances_tb SET species_id=%s,moves_json=%s,updated_at=NOW() WHERE pokemon_id=%s",(target,json.dumps(moves,ensure_ascii=False),pid))
+                # Evolucionar no debe borrar movimientos elegidos ni MT aprendidas.
+                c.execute("UPDATE pokemon_instances_tb SET species_id=%s,updated_at=NOW() WHERE pokemon_id=%s",(target,pid))
                 c.execute("INSERT INTO pokemon_pokedex_tb(owner_id,species_id,obtained_count) VALUES(%s,%s,1) ON CONFLICT(owner_id,species_id) DO UPDATE SET last_obtained_at=NOW()",(uid,target))
                 conn.commit(); note=f'✨ {r[1] or NAMES[sid]} evolucionó a {NAMES[target]}.'
         except Exception as e:conn.rollback(); print('[PK evolve]',e)
@@ -6044,7 +7395,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                     oldsid=int(row[2]); target=TRADE_EVOLUTIONS.get(oldsid)
                     finalsid=oldsid
                     if target:
-                        finalsid=target; moves=available_moves(target,int(row[4])); c.execute("UPDATE pokemon_instances_tb SET species_id=%s,moves_json=%s,updated_at=NOW() WHERE pokemon_id=%s",(target,json.dumps(moves,ensure_ascii=False),pid)); evo_notes.append(f"✨ {row[3] or NAMES[oldsid]} evolucionó a {NAMES[target]} por intercambio.")
+                        finalsid=target; c.execute("UPDATE pokemon_instances_tb SET species_id=%s,updated_at=NOW() WHERE pokemon_id=%s",(target,pid)); evo_notes.append(f"✨ {row[3] or NAMES[oldsid]} evolucionó a {NAMES[target]} por intercambio.")
                     c.execute("""INSERT INTO pokemon_pokedex_tb(owner_id,species_id,obtained_count) VALUES(%s,%s,1)
                                  ON CONFLICT(owner_id,species_id) DO UPDATE SET obtained_count=pokemon_pokedex_tb.obtained_count+1,last_obtained_at=NOW()""",(new_owner,finalsid))
                 c.execute("UPDATE pokemon_trades_tb SET status='done',finished_at=NOW(),updated_at=NOW() WHERE trade_id=%s",(tid,)); conn.commit(); finished=True
@@ -6154,6 +7505,53 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             finally:_put_connection(conn2)
             await q.answer(); await q.edit_message_text(f"⚔️ Elige {int(state['mode'])} Pokémon\nElegidos: {len(selected)}/{int(state['mode'])}\nEl orden de selección será el orden de salida.",reply_markup=markup)
         return
+    if action=='safbattleball':
+        bid=int(p[2]); conn=_get_connection(); state=None; chat=None; result_text=None; session_row=None
+        try:
+            c=conn.cursor(); c.execute("SELECT state_json,status,chat_id,thread_id,message_id FROM pokemon_battles_tb WHERE battle_id=%s FOR UPDATE",(bid,)); br=c.fetchone()
+            if not br or br[1]!='active':conn.rollback(); return await q.answer('La pelea Safari ya terminó.',show_alert=True)
+            state=json.loads(br[0]); key=str(uid)
+            if state.get('battle_kind')!='safari' or int(state.get('safari_user_id',-1))!=uid or key not in state.get('players',{}):conn.rollback(); return await q.answer('Esta pelea Safari no es tuya.',show_alert=True)
+            sid=int(state['safari_session_id']); botkey=str(state.get('bot_player_id')); bot=state['players'].get(botkey)
+            if not bot or not bot.get('mons'):conn.rollback(); return await q.answer('El Pokémon Safari ya no está disponible.',show_alert=True)
+            target=bot['mons'][bot['active']]
+            c.execute("SELECT session_id,user_id,chat_id,thread_id,safari_date,status,balls,current_species,current_level,current_shiny,current_ivs_json,current_defeated,created_at,expires_at FROM pokemon_safari_sessions_tb WHERE session_id=%s FOR UPDATE",(sid,)); sr=c.fetchone()
+            if not sr or int(sr[1])!=uid or str(sr[5])!='active' or sr[13]<=datetime.now(timezone.utc):conn.rollback(); return await q.answer('Tu Safari ya terminó.',show_alert=True)
+            balls=int(sr[6])
+            if balls<=0:
+                c.execute("UPDATE pokemon_safari_sessions_tb SET status='exhausted',finished_at=NOW() WHERE session_id=%s",(sid,)); c.execute("UPDATE pokemon_battles_tb SET status='cancelled',finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s",(bid,)); conn.commit(); return await q.answer('🔴 Se acabaron tus Safari Balls.',show_alert=True)
+            balls-=1; hp_ratio=float(target.get('hp',0))/max(1,float(target.get('max_hp',1))); chance=_safari_capture_probability(int(target['species']),hp_ratio); caught=random.random()<chance; end_session=(balls<=0)
+            if caught:
+                data=grant_pokemon_with_cursor(c,uid,int(target['species']),f'safari:{sid}',level_override=int(target['level']),shiny_override=bool(target.get('shiny')),ivs_override=dict(target.get('ivs') or {})); _mission_progress_cursor(c,uid,'capture',1)
+                c.execute("UPDATE pokemon_safari_sessions_tb SET balls=%s,current_species=NULL,current_level=NULL,current_shiny=NULL,current_ivs_json=NULL,current_defeated=FALSE,status=%s,finished_at=CASE WHEN %s THEN NOW() ELSE finished_at END WHERE session_id=%s",(balls,'exhausted' if end_session else 'active',end_session,sid))
+                state['status']='finished'; state['winner']=uid; state['loser']=int(state.get('bot_player_id'))
+                c.execute("UPDATE pokemon_battles_tb SET status='finished',winner_id=%s,state_json=%s,finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s",(uid,json.dumps(state,ensure_ascii=False),bid))
+                result_text=(f"🔴 ¡Safari Ball lanzada!\n🎉 ¡CAPTURADO!\n\n{'✨ SHINY · ' if data.get('shiny') else ''}#{int(data['species_id']):03d} {data['name']} {_sex_symbol(data.get('sex'))} · Nv.{int(data['level'])}\n🧬 IV {int(data['iv_percent'])}% · {data['iv_grade']}\n🔴 Safari Balls restantes: {balls}" + ('\n🏁 Se acabaron tus Safari Balls. Safari terminado.' if end_session else ''))
+            else:
+                if end_session:
+                    c.execute("UPDATE pokemon_safari_sessions_tb SET balls=0,status='exhausted',current_species=NULL,current_level=NULL,current_shiny=NULL,current_ivs_json=NULL,current_defeated=FALSE,finished_at=NOW() WHERE session_id=%s",(sid,))
+                    state['status']='finished'; c.execute("UPDATE pokemon_battles_tb SET status='cancelled',state_json=%s,finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s",(json.dumps(state,ensure_ascii=False),bid))
+                    result_text='🔴 La Safari Ball falló.\n🏁 Era tu última Safari Ball: la sesión terminó.'
+                else:
+                    c.execute("UPDATE pokemon_safari_sessions_tb SET balls=%s WHERE session_id=%s",(balls,sid)); c.execute("UPDATE pokemon_battles_tb SET state_json=%s,updated_at=NOW() WHERE battle_id=%s",(json.dumps(state,ensure_ascii=False),bid)); result_text=f'🔴 La Safari Ball falló. El Pokémon sigue en combate.\n🔴 Safari Balls restantes: {balls}'
+            conn.commit(); chat=(int(br[2]),br[3],br[4])
+            c2=conn.cursor(); c2.execute("SELECT session_id,user_id,chat_id,thread_id,safari_date,status,balls,current_species,current_level,current_shiny,current_ivs_json,current_defeated,created_at,expires_at FROM pokemon_safari_sessions_tb WHERE session_id=%s",(sid,)); session_row=c2.fetchone()
+        except Exception as e:
+            conn.rollback(); print('[PK safari battle ball]',type(e).__name__,e); return await q.answer('No pude lanzar la Safari Ball.',show_alert=True)
+        finally:_put_connection(conn)
+        await q.answer('🎉 ¡Capturado!' if state.get('winner')==uid else ('🏁 Safari terminado.' if state.get('status')=='finished' else '💨 ¡Se salió de la Safari Ball!'),show_alert=bool(state.get('status')=='finished'))
+        await _delete_battle_transients(context,bid,uid)
+        if state.get('status')=='finished':
+            await _sync_single_battle_views(context,bid,state,chat[0],chat[1],chat[2],result_text,final=True)
+            await _update_single_public_final(context,bid,state,chat[0],chat[1],chat[2],None,result_text)
+            await _send_private_battle_result(context,state,result_text,skip_chat_id=chat[0])
+            if session_row:
+                try:await context.bot.send_message(int(session_row[2]),_safari_text(session_row),message_thread_id=int(session_row[3] or 0) or None,reply_markup=_safari_markup(session_row))
+                except Exception:pass
+        else:
+            await _sync_single_battle_views(context,bid,state,chat[0],chat[1],chat[2],result_text,final=False)
+        return
+
     if action=='action':
         bid=int(p[2]); br=_get_battle(bid)
         if not br or br[6]!='active':return await q.answer('La batalla ya terminó.',show_alert=True)
@@ -6191,7 +7589,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                 state.setdefault('choices',{})[key]={'type':'item','item':code}
             if state.get('battle_kind')=='training' and str(TRAINING_BOT_ID) in state['players'] and str(TRAINING_BOT_ID) not in state.get('choices',{}):
                 state.setdefault('choices',{})[str(TRAINING_BOT_ID)]=_training_bot_choice(state)
-            elif state.get('battle_kind') in ('npc','leader'):
+            elif state.get('battle_kind') in ('npc','leader','safari'):
                 bot_key=str(state.get('bot_player_id'))
                 if bot_key in state['players'] and bot_key not in state.get('choices',{}):
                     state.setdefault('choices',{})[bot_key]=_npc_bot_choice(state)
@@ -6199,6 +7597,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             if winner is not None:
                 if state.get('battle_kind')=='training':final=_finish_training_cursor(c,bid,state)
                 elif state.get('battle_kind') in ('npc','leader'):final=_finish_npc_battle_cursor(c,bid,state)
+                elif state.get('battle_kind')=='safari':final=_finish_safari_battle_cursor(c,bid,state)
                 else:final=_finish_battle_cursor(c,bid,state)
             else:
                 c.execute("UPDATE pokemon_battles_tb SET state_json=%s,updated_at=NOW() WHERE battle_id=%s",(json.dumps(state,ensure_ascii=False),bid))
@@ -6215,6 +7614,17 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         note='\n'.join(logs[-8:]) if logs else 'Esperando la elección del rival…'
         await _sync_single_battle_views(context,bid,state,chat_id,thread_id,msgid,note,final=bool(final))
         if final:
+            if final.get('safari'):
+                result_text='\n'.join(_safari_result_lines(final))
+                await _update_single_public_final(context,bid,state,chat_id,thread_id,msgid,note,result_text)
+                await _send_private_battle_result(context,state,result_text,skip_chat_id=chat_id)
+                conn2=_get_connection(); srow=None
+                try:c2=conn2.cursor(); c2.execute("SELECT session_id,user_id,chat_id,thread_id,safari_date,status,balls,current_species,current_level,current_shiny,current_ivs_json,current_defeated,created_at,expires_at FROM pokemon_safari_sessions_tb WHERE session_id=%s",(int(final['session_id']),)); srow=c2.fetchone()
+                finally:_put_connection(conn2)
+                if srow:
+                    try:await context.bot.send_message(int(srow[2]),_safari_text(srow),message_thread_id=int(srow[3] or 0) or None,reply_markup=_safari_markup(srow))
+                    except Exception:pass
+                return
             if final.get('training'):
                 result_text='\n'.join(_training_result_lines(final))
                 await _update_single_public_final(context,bid,state,chat_id,thread_id,msgid,note,result_text)
@@ -6230,6 +7640,9 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                 if final.get('completion'):
                     try:await _announce_legendary_encounter(context,int(final['completion']['encounter_id']))
                     except Exception as e:print('[PK legendary completion announce]',type(e).__name__,e)
+                if final.get('rocket_event'):
+                    try:await _refresh_rocket_event_message(context,int(final['rocket_event']['event_id']))
+                    except Exception as e:print('[PK rocket refresh]',type(e).__name__,e)
                 return
             try:
                 from handlers.season_pass import grant_season_xp
@@ -6285,6 +7698,7 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             ids=list(state['players'].keys()); other=int(ids[1] if key==ids[0] else ids[0]); state['status']='finished'; state['winner']=other; state['loser']=uid
             if state.get('battle_kind')=='training':final=_finish_training_cursor(c,bid,state)
             elif state.get('battle_kind') in ('npc','leader'):final=_finish_npc_battle_cursor(c,bid,state)
+            elif state.get('battle_kind')=='safari':final=_finish_safari_battle_cursor(c,bid,state)
             else:final=_finish_battle_cursor(c,bid,state)
             conn.commit(); chat_id=int(br[2]); thread_id=br[3]
         except Exception:conn.rollback(); return await q.answer('No pude rendirte.',show_alert=True)
@@ -6293,7 +7707,8 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         await _delete_all_battle_transients(context,bid,state)
         br2=_get_battle(bid); msgid=br2[8] if br2 else None
         await _sync_single_battle_views(context,bid,state,chat_id,thread_id,msgid,f"🏳 {state['players'][str(uid)]['name']} se rindió.",final=True)
-        if final.get('training'):result_text='\n'.join(_training_result_lines(final))
+        if final.get('safari'):result_text='\n'.join(_safari_result_lines(final))
+        elif final.get('training'):result_text='\n'.join(_training_result_lines(final))
         elif final.get('npc'):result_text='\n'.join(_npc_result_lines(final))
         else:result_text=f"🏳 {state['players'][str(uid)]['name']} se rindió.\n🏆 Gana {state['players'][str(final['winner'])]['name']}."
         await _update_single_public_final(context,bid,state,chat_id,thread_id,msgid,f"🏳 {state['players'][str(uid)]['name']} se rindió.",result_text)
