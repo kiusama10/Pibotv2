@@ -134,7 +134,8 @@ SAFARI_CAPTURE_CHANCE = {'comun':0.82,'raro':0.68,'epico':0.52,'legendario':0.10
 ROCKET_EVENT_SECONDS = 1800
 RAID_EVENT_SECONDS = 2700
 RAID_USER_ATTACKS = 5
-RAID_ATTACK_COOLDOWN_SECONDS = 60
+RAID_ATTACK_COOLDOWN_SECONDS = 60  # Compatibilidad con incursiones anteriores.
+RAID_BOSS_DAMAGE_MULTIPLIER = 25  # El jefe tiene PS compartidos muy superiores a los de un Pokémon normal.
 RAID_LEGENDARY_CHANCE = 0.10  # 10% de las incursiones pueden ser legendarias.
 RAID_LEGENDARY_BOSSES = (144,145,146,150,151)
 RAID_LEGENDARY_SHINY_DENOMINATOR = 256  # Se decide una sola vez por raid; nunca uno por participante.
@@ -1152,6 +1153,12 @@ def ensure_pokemon_tables():
               PRIMARY KEY(raid_id,user_id)
             )
         """)
+        # Estado persistente del combate por turnos de cada participante y del jefe compartido.
+        # ALTER permite actualizar instalaciones existentes sin borrar datos de las incursiones.
+        c.execute("ALTER TABLE pokemon_raids_tb ADD COLUMN IF NOT EXISTS boss_state_json TEXT NOT NULL DEFAULT '{}'")
+        c.execute("ALTER TABLE pokemon_raid_participants_tb ADD COLUMN IF NOT EXISTS battle_state_json TEXT NOT NULL DEFAULT '{}'")
+        c.execute("ALTER TABLE pokemon_raid_participants_tb ADD COLUMN IF NOT EXISTS battle_status TEXT NOT NULL DEFAULT 'idle'")
+        c.execute("ALTER TABLE pokemon_raid_participants_tb ADD COLUMN IF NOT EXISTS battle_message_id BIGINT")
         # Captura especial de incursiones legendarias. Se añaden con ALTER para actualizar instalaciones existentes.
         c.execute("ALTER TABLE pokemon_raids_tb ADD COLUMN IF NOT EXISTS is_legendary BOOLEAN NOT NULL DEFAULT FALSE")
         c.execute("ALTER TABLE pokemon_raids_tb ADD COLUMN IF NOT EXISTS shiny BOOLEAN NOT NULL DEFAULT FALSE")
@@ -4680,14 +4687,108 @@ def _raid_text(row,catcher_name:str|None=None)->str:
     power='\n⚠️ Los legendarios tienen MUCHOS más PS y nivel.' if legendary else ''
     return (f"{title}\n\n👹 #{int(row[3]):03d} {NAMES[int(row[3])]} · Nv.{int(row[4])}\n"
             f"❤️ {hp:,}/{maxhp:,} · {bar} {pct}%\n⏳ {(left+59)//60} min restantes\n\n"
-            f"⚔️ Cada entrenador puede atacar hasta {RAID_USER_ATTACKS} veces.\n🏆 Todos los participantes reciben premio si el grupo lo derrota.{power}")
+            f"⚔️ Entra al combate por privado, elige movimientos y lucha con hasta 4 Pokémon.\n"
+            f"🔁 Si uno cae, entra el siguiente automáticamente. El jefe ataca en cada turno y sus PS son compartidos.\n"
+            f"🏆 Todos los participantes que aporten daño reciben premio.{power}")
 
 
 def _raid_markup(row):
     if not row:return None
-    if str(row[7])=='active':return InlineKeyboardMarkup([[InlineKeyboardButton('⚔️ Atacar incursión',callback_data=f'pk:raidattack:{int(row[0])}')]])
+    if str(row[7])=='active':return InlineKeyboardMarkup([[InlineKeyboardButton('⚔️ Entrar al combate',callback_data=f'pk:raidattack:{int(row[0])}')]])
     if str(row[7])=='capture':return _raid_capture_markup(row)
     return None
+
+
+def _raid_team_state_cursor(c,uid:int)->dict|None:
+    """Construye un equipo de incursión usando los Pokémon actuales de /equipo."""
+    slots=_npc_team_slot_ids_cursor(c,int(uid)); mons=[]
+    for pid in slots[:TEAM_MAX_SIZE]:
+        c.execute("SELECT pokemon_id,species_id,nickname,level,xp,moves_json,media_type,media_file_id,wins,losses,shiny,iv_atk,iv_def,iv_spd,iv_spc,iv_hp,held_item_code,sex FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(int(uid),int(pid)))
+        r=c.fetchone()
+        if r:
+            mon=_battle_mon(r)
+            mon['sex']=r[17] if len(r)>17 else None
+            mons.append(mon)
+    if not mons:return None
+    return {'status':'active','active':0,'round':1,'damage':0,'mons':mons}
+
+
+def _raid_bar(hp:int,maxhp:int)->str:
+    pct=max(0,min(100,round(int(hp)/max(1,int(maxhp))*100)))
+    full=max(0,min(10,round(pct/10)))
+    return '█'*full+'░'*(10-full)
+
+
+def _raid_battle_text(raid,state:dict,note:str|None=None)->str:
+    rid=int(raid[0]); species=int(raid[3]); boss_hp=max(0,int(raid[6])); boss_max=max(1,int(raid[5]))
+    active_index=int(state.get('active',0)); mons=state.get('mons') or []
+    active=mons[active_index] if 0<=active_index<len(mons) else (mons[0] if mons else None)
+    alive=sum(1 for m in mons if int(m.get('hp',0))>0)
+    title='🌟 INCURSIÓN LEGENDARIA' if bool(raid[11]) else '💥 INCURSIÓN POKÉMON'
+    boss_pct=max(0,min(100,round(boss_hp/boss_max*100)))
+    lines=[f'{title} · COMBATE POR TURNOS', '',
+           f'👹 JEFE · #{species:03d} {NAMES.get(species,"Pokémon")} · Nv.{int(raid[4])}',
+           f'❤️ {boss_hp:,}/{boss_max:,} PS · {_raid_bar(boss_hp,boss_max)} {boss_pct}%', '']
+    if active:
+        mon_name=active.get('nickname') or NAMES.get(int(active.get('species',1)),'Pokémon')
+        base=NAMES.get(int(active.get('species',1)),'Pokémon')
+        shown=f'{mon_name} ({base})' if active.get('nickname') else base
+        lines += [f'🧢 TU POKÉMON · #{int(active.get("species",1)):03d} {"✨ " if active.get("shiny") else ""}{shown} · Nv.{int(active.get("level",1))}',
+                  f'❤️ {max(0,int(active.get("hp",0))):,}/{int(active.get("max_hp",1)):,} PS · {_raid_bar(int(active.get("hp",0)),int(active.get("max_hp",1)))}',
+                  f'👥 Pokémon disponibles: {alive}/{len(mons)} · 🔥 Daño aportado: {int(state.get("damage",0)):,}',
+                  f'🔁 Turno {int(state.get("round",1))}']
+    else:
+        lines.append('No se pudo cargar tu equipo.')
+    if note:lines += ['', note]
+    status=str(state.get('status','active'))
+    if status=='defeated':lines += ['', '💫 Todo tu equipo cayó. Ya no puedes seguir esta incursión.']
+    elif status in ('boss_defeated','completed'):lines += ['', '🏆 ¡El jefe fue derrotado!']
+    elif boss_hp<=0:lines += ['', '🏆 ¡El jefe fue derrotado!']
+    else:lines += ['', 'Elige un movimiento. El jefe responderá y, si tu Pokémon cae, entrará el siguiente.']
+    return '\n'.join(lines)
+
+
+def _raid_battle_markup(raid_id:int,state:dict):
+    if str(state.get('status'))!='active':return None
+    mons=state.get('mons') or []; idx=int(state.get('active',0))
+    if idx<0 or idx>=len(mons):return None
+    mon=mons[idx]
+    if int(mon.get('hp',0))<=0:return None
+    rows=[]
+    for move_idx,code in enumerate(mon.get('moves',[])[:4]):
+        if code not in MOVES:continue
+        pp=int(mon.get('pp',{}).get(code,0)); maxpp=int(MOVES[code][4])
+        if pp<=0:continue
+        name,tp=MOVES[code][0],MOVES[code][1]
+        rows.append([InlineKeyboardButton(f'{type_emoji(tp)} {name} · PP {pp}/{maxpp}',callback_data=f'pk:raidmove:{int(raid_id)}:{int(state.get("round",1))}:{move_idx}')])
+    living=[(i,m) for i,m in enumerate(mons) if i!=idx and int(m.get('hp',0))>0]
+    if living:rows.append([InlineKeyboardButton('🔄 Cambiar Pokémon',callback_data=f'pk:raidmovemenu:{int(raid_id)}:{int(state.get("round",1))}')])
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
+def _raid_boss_state_cursor(c,raid)->dict:
+    c.execute("SELECT boss_state_json FROM pokemon_raids_tb WHERE raid_id=%s",(int(raid[0]),)); r=c.fetchone()
+    try:boss=json.loads((r[0] if r else '{}') or '{}')
+    except Exception:boss={}
+    if not isinstance(boss,dict) or not boss.get('moves'):
+        boss=_make_npc_mon(int(raid[3]),int(raid[4]))
+    boss['species']=int(raid[3]); boss['level']=int(raid[4])
+    boss['hp']=max(0,int(raid[6])); boss['max_hp']=max(1,int(raid[5]))
+    boss.setdefault('status',None); boss.setdefault('sleep',0); boss.setdefault('stages',{'atk':0,'def':0,'spd':0})
+    boss.setdefault('ivs',_roll_ivs(False)); boss.setdefault('held_item',None); boss.setdefault('choice_lock',None)
+    boss['moves']=[str(m) for m in boss.get('moves',[]) if str(m) in MOVES][:4]
+    if not boss['moves']:boss['moves']=available_moves(int(raid[3]),int(raid[4]))[:4]
+    boss['pp']={str(k):int(v) for k,v in (boss.get('pp') or {}).items() if str(k) in boss['moves']}
+    for code in boss['moves']:boss['pp'].setdefault(code,int(MOVES[code][4]))
+    return boss
+
+
+def _raid_restore_pp_if_empty(mon:dict)->bool:
+    moves=[str(m) for m in mon.get('moves',[]) if str(m) in MOVES]
+    if not moves or any(int(mon.get('pp',{}).get(code,0))>0 for code in moves):return False
+    mon.setdefault('pp',{})
+    for code in moves:mon['pp'][code]=int(MOVES[code][4])
+    return True
 
 
 def _raid_weighted_catcher(parts)->int|None:
@@ -4717,8 +4818,11 @@ async def _refresh_raid_message(context,raid_id:int):
     elif status=='finished':text=f"🏆 INCURSIÓN COMPLETADA\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} fue derrotado por el grupo.\n🎁 Premios entregados a los participantes."
     elif status=='expired':text=f"💨 INCURSIÓN FALLIDA\n\n#{int(row[3]):03d} {NAMES[int(row[3])]} escapó."
     else:text=_raid_text(row,catcher_name)
-    try:await context.bot.edit_message_text(chat_id=int(row[1]),message_id=int(row[8]),text=text,reply_markup=_raid_markup(row))
-    except Exception:pass
+    try:
+        await context.bot.edit_message_caption(chat_id=int(row[1]),message_id=int(row[8]),caption=text,reply_markup=_raid_markup(row))
+    except Exception:
+        try:await context.bot.edit_message_text(chat_id=int(row[1]),message_id=int(row[8]),text=text,reply_markup=_raid_markup(row))
+        except Exception:pass
 
 
 def _raid_reference_level_cursor(c)->int:
@@ -4761,11 +4865,23 @@ async def _spawn_raid(context,chat_id:int,thread_id:int|None,manual:bool=False,f
             sp=random.choice(RAID_BOSSES); level=max(3,min(MAX_LEVEL,reference_level+random.randint(2,5))); maxhp=9000+level*90; shiny=(random.randrange(RAID_NORMAL_SHINY_DENOMINATOR)==0)
         c.execute("""INSERT INTO pokemon_raids_tb(chat_id,thread_id,species_id,level,max_hp,hp,is_legendary,shiny)
                      VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
-                     RETURNING """+RAID_SELECT,(chat_id,int(thread_id or 0),sp,level,maxhp,maxhp,legendary,shiny)); row=c.fetchone(); conn.commit()
+                     RETURNING """+RAID_SELECT,(chat_id,int(thread_id or 0),sp,level,maxhp,maxhp,legendary,shiny)); row=c.fetchone()
+        boss_state=_make_npc_mon(sp,level); boss_state['max_hp']=int(maxhp); boss_state['hp']=int(maxhp)
+        boss_state['moves']=[str(m) for m in boss_state.get('moves',[]) if str(m) in MOVES][:4]
+        boss_state['pp']={m:int(MOVES[m][4]) for m in boss_state['moves'] if m in MOVES}
+        c.execute("UPDATE pokemon_raids_tb SET boss_state_json=%s WHERE raid_id=%s",(json.dumps(boss_state,ensure_ascii=False),int(row[0])))
+        conn.commit()
     except Exception as e:conn.rollback(); print('[PK raid spawn]',type(e).__name__,e); return False
     finally:_put_connection(conn)
     try:
-        msg=await context.bot.send_message(chat_id,_raid_text(row),message_thread_id=thread_id,reply_markup=_raid_markup(row)); conn=_get_connection(); c=conn.cursor(); c.execute("UPDATE pokemon_raids_tb SET message_id=%s WHERE raid_id=%s",(msg.message_id,int(row[0]))); conn.commit(); _put_connection(conn); return True
+        sprite_variant="shiny/" if bool(row[12]) else ""
+        sprite_url=f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{sprite_variant}{int(row[3])}.png"
+        try:
+            msg=await context.bot.send_photo(chat_id,photo=sprite_url,caption=_raid_text(row),message_thread_id=thread_id or None,reply_markup=_raid_markup(row))
+        except Exception:
+            # Si Telegram no puede descargar el sprite, la incursión sigue apareciendo como texto.
+            msg=await context.bot.send_message(chat_id,_raid_text(row),message_thread_id=thread_id or None,reply_markup=_raid_markup(row))
+        conn=_get_connection(); c=conn.cursor(); c.execute("UPDATE pokemon_raids_tb SET message_id=%s WHERE raid_id=%s",(msg.message_id,int(row[0]))); conn.commit(); _put_connection(conn); return True
     except Exception as e:print('[PK raid send]',type(e).__name__,e); return False
 
 
@@ -5770,92 +5886,236 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         except Exception:await q.answer('Abre primero el privado de PiBot con /start.',show_alert=True)
         return True
 
-    # ---- Incursiones ----
+    # ---- Incursiones: combate por turnos con hasta 4 Pokémon ----
     if action=='raidattack':
-        raid_id=int(p[2]); conn=_get_connection(); row=None; markup=None
-        try:
-            c=conn.cursor(); c.execute(f"SELECT {RAID_SELECT} FROM pokemon_raids_tb WHERE raid_id=%s",(raid_id,)); row=c.fetchone()
-            if not row or str(row[7])!='active' or row[10]<=datetime.now(timezone.utc):return await q.answer('La incursión ya no está activa.',show_alert=True) or True
-            slots=_npc_team_slot_ids_cursor(c,uid); rows=[]
-            for pid in slots:
-                c.execute("SELECT species_id,nickname,level,shiny FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s",(uid,pid)); rr=c.fetchone()
-                if rr:rows.append([InlineKeyboardButton(f"⚔️ {'✨ ' if rr[3] else ''}{rr[1] or NAMES[int(rr[0])]} · Nv.{int(rr[2])}",callback_data=f'pk:raidmon:{raid_id}:{pid}')])
-            markup=InlineKeyboardMarkup(rows) if rows else None
-        finally:_put_connection(conn)
-        if not markup:return await q.answer('Necesitas Pokémon en /equipo.',show_alert=True) or True
-        await q.answer()
-        try:await context.bot.send_message(uid,'💥 INCURSIÓN · Elige el Pokémon que atacará:',reply_markup=markup)
-        except Exception:return await q.answer('Abre primero el privado de PiBot.',show_alert=True) or True
-        return True
-    if action=='raidmon':
-        raid_id,pid=int(p[2]),int(p[3]); conn=_get_connection(); damage=0; defeated=False; hp=0; top=None; catcher=None; legendary=False; best_eff=1.0; total_damage=0; attacks_now=0; trainer_name=f'Entrenador {uid}'
+        raid_id=int(p[2]); conn=_get_connection(); raid=None; state=None; old_message_id=None
         try:
             c=conn.cursor(); c.execute(f"SELECT {RAID_SELECT} FROM pokemon_raids_tb WHERE raid_id=%s FOR UPDATE",(raid_id,)); raid=c.fetchone()
-            if not raid or str(raid[7])!='active' or raid[10]<=datetime.now(timezone.utc):conn.rollback(); return await q.answer('La incursión terminó.',show_alert=True) or True
-            legendary=bool(raid[11])
-            if pid not in _npc_team_slot_ids_cursor(c,uid):conn.rollback(); return await q.answer('Ese Pokémon no está en tu equipo.',show_alert=True) or True
-            c.execute("SELECT species_id,level,iv_atk,iv_def,iv_spd,iv_spc,iv_hp FROM pokemon_instances_tb WHERE owner_id=%s AND pokemon_id=%s FOR UPDATE",(uid,pid)); mon=c.fetchone()
-            if not mon:conn.rollback(); return await q.answer('Pokémon no disponible.',show_alert=True) or True
-            c.execute("SELECT damage,attacks,last_attack_at FROM pokemon_raid_participants_tb WHERE raid_id=%s AND user_id=%s FOR UPDATE",(raid_id,uid)); part=c.fetchone()
-            attacks=int(part[1]) if part else 0; last=part[2] if part else None
-            if attacks>=RAID_USER_ATTACKS:conn.rollback(); return await q.answer('Ya usaste tus 5 ataques en esta incursión.',show_alert=True) or True
-            if last and (datetime.now(timezone.utc)-last).total_seconds()<RAID_ATTACK_COOLDOWN_SECONDS:conn.rollback(); return await q.answer('Espera un minuto antes de volver a atacar.',show_alert=True) or True
-            ivpct=round(sum(int(x or 0) for x in mon[2:7])/75*100)
-            move_effs=[effectiveness(MOVES[m][1],TYPES.get(int(raid[3]),('Normal',))) for m in available_moves(int(mon[0]),int(mon[1])) if m in MOVES]
-            best_eff=max(move_effs) if move_effs else 1.0
-            eff_mult=1.25 if best_eff>=2 else (0.90 if best_eff<1 else 1.0)
-            damage=max(80,int((int(mon[1])*9+ivpct*2+random.randint(40,160))*eff_mult)); hp=max(0,int(raid[6])-damage); defeated=hp<=0
-            # Primero registra ataque/daño para que la selección ponderada incluya el golpe final.
-            c.execute("INSERT INTO pokemon_raid_participants_tb(raid_id,user_id,damage,attacks,last_attack_at) VALUES(%s,%s,%s,1,NOW()) ON CONFLICT(raid_id,user_id) DO UPDATE SET damage=pokemon_raid_participants_tb.damage+EXCLUDED.damage,attacks=pokemon_raid_participants_tb.attacks+1,last_attack_at=NOW() RETURNING damage,attacks",(raid_id,uid,damage))
-            pr=c.fetchone() or (damage,1); total_damage=int(pr[0]); attacks_now=int(pr[1]); trainer_name=_display_name_cursor(c,uid)
-            c.execute("UPDATE pokemon_instances_tb SET friendship=LEAST(255,friendship+1) WHERE pokemon_id=%s",(pid,))
+            if not raid or str(raid[7])!='active' or (raid[10] and raid[10]<=datetime.now(timezone.utc)):
+                conn.rollback(); return await q.answer('La incursión ya terminó o el jefe fue derrotado.',show_alert=True) or True
+            c.execute("SELECT battle_state_json,battle_status,battle_message_id FROM pokemon_raid_participants_tb WHERE raid_id=%s AND user_id=%s FOR UPDATE",(raid_id,uid)); part=c.fetchone()
+            if part and str(part[1])=='defeated':
+                conn.rollback(); return await q.answer('Tu equipo ya cayó en esta incursión. Puedes seguir apoyando desde el grupo.',show_alert=True) or True
+            if part and str(part[1])=='active':
+                try:state=json.loads(part[0] or '{}')
+                except Exception:state={}
+                if isinstance(state,dict) and state.get('mons') and str(state.get('status'))=='active':old_message_id=int(part[2]) if part[2] is not None else None
+                else:state=None
+            else:state=None
+            if state is None:
+                state=_raid_team_state_cursor(c,uid)
+                if not state:
+                    conn.rollback(); return await q.answer('Necesitas al menos un Pokémon en /equipo.',show_alert=True) or True
+                c.execute("""INSERT INTO pokemon_raid_participants_tb(raid_id,user_id,damage,attacks,last_attack_at,battle_state_json,battle_status)
+                             VALUES(%s,%s,0,0,NULL,%s,'active')
+                             ON CONFLICT(raid_id,user_id) DO UPDATE SET battle_state_json=EXCLUDED.battle_state_json,battle_status='active',battle_message_id=NULL""",
+                          (raid_id,uid,json.dumps(state,ensure_ascii=False)))
+                old_message_id=None
+            boss=_raid_boss_state_cursor(c,raid)
+            c.execute("UPDATE pokemon_raids_tb SET boss_state_json=%s WHERE raid_id=%s",(json.dumps(boss,ensure_ascii=False),raid_id))
+            conn.commit()
+        except Exception as e:
+            conn.rollback(); print('[PK raid start]',type(e).__name__,e); return await q.answer('No pude iniciar el combate de incursión.',show_alert=True) or True
+        finally:_put_connection(conn)
+        await q.answer('⚔️ Abriendo combate por turnos…')
+        text=_raid_battle_text(raid,state)
+        markup=_raid_battle_markup(raid_id,state)
+        msg=None
+        if old_message_id:
+            try:
+                await context.bot.edit_message_text(chat_id=uid,message_id=old_message_id,text=text,reply_markup=markup)
+                return True
+            except Exception:pass
+        try:
+            msg=await context.bot.send_message(chat_id=uid,text=text,reply_markup=markup)
+        except Exception:
+            try:await context.bot.send_message(int(raid[1]),'📩 Abre primero el privado de PiBot con /start y vuelve a tocar «Entrar al combate».',message_thread_id=(raid[2] or None))
+            except Exception:pass
+            return True
+        conn=_get_connection()
+        try:
+            c=conn.cursor(); c.execute("UPDATE pokemon_raid_participants_tb SET battle_message_id=%s WHERE raid_id=%s AND user_id=%s AND battle_status='active'",(int(msg.message_id),raid_id,uid)); conn.commit()
+        except Exception:conn.rollback()
+        finally:_put_connection(conn)
+        return True
+
+    if action=='raidmovemenu':
+        raid_id,round_no=int(p[2]),int(p[3]); conn=_get_connection(); state=None; raid=None
+        try:
+            c=conn.cursor(); c.execute(f"SELECT {RAID_SELECT} FROM pokemon_raids_tb WHERE raid_id=%s",(raid_id,)); raid=c.fetchone()
+            c.execute("SELECT battle_state_json,battle_status FROM pokemon_raid_participants_tb WHERE raid_id=%s AND user_id=%s",(raid_id,uid)); part=c.fetchone()
+            if not raid or str(raid[7])!='active' or not part or str(part[1])!='active':return await q.answer('Esta batalla ya terminó.',show_alert=True) or True
+            state=json.loads(part[0] or '{}')
+            if int(state.get('round',0))!=round_no:return await q.answer('Ese menú ya quedó atrás; usa el combate más reciente.',show_alert=True) or True
+        finally:_put_connection(conn)
+        active=int(state.get('active',0)); rows=[]
+        for i,mon in enumerate(state.get('mons',[])):
+            if i==active or int(mon.get('hp',0))<=0:continue
+            name=mon.get('nickname') or NAMES.get(int(mon.get('species',1)),'Pokémon')
+            rows.append([InlineKeyboardButton(f'🔄 {name} · Nv.{int(mon.get("level",1))} · {int(mon.get("hp",0))}/{int(mon.get("max_hp",1))} PS',callback_data=f'pk:raidmovepick:{raid_id}:{round_no}:{i}')])
+        rows.append([InlineKeyboardButton('⬅️ Volver',callback_data=f'pk:raidattack:{raid_id}')])
+        if not rows:return await q.answer('No tienes otro Pokémon disponible.',show_alert=True)
+        await q.answer()
+        try:await q.edit_message_text('🔄 Elige el Pokémon que entrará. El jefe atacará después del cambio:',reply_markup=InlineKeyboardMarkup(rows))
+        except Exception:pass
+        return True
+
+    if action in ('raidmove','raidmovepick'):
+        raid_id,round_no,arg=int(p[2]),int(p[3]),int(p[4]); conn=_get_connection()
+        raid=None; state=None; logs=[]; move_damage=0; total_damage=0; defeated=False; team_defeated=False
+        trainer_name=f'Entrenador {uid}'; boss_name='Pokémon'; used_move='cambió de Pokémon'; capture_catcher=None; legendary=False
+        try:
+            c=conn.cursor(); c.execute(f"SELECT {RAID_SELECT} FROM pokemon_raids_tb WHERE raid_id=%s FOR UPDATE",(raid_id,)); raid=c.fetchone()
+            if not raid or str(raid[7])!='active' or (raid[10] and raid[10]<=datetime.now(timezone.utc)):
+                conn.rollback(); return await q.answer('La incursión ya terminó.',show_alert=True) or True
+            c.execute("SELECT damage,attacks,battle_state_json,battle_status FROM pokemon_raid_participants_tb WHERE raid_id=%s AND user_id=%s FOR UPDATE",(raid_id,uid)); part=c.fetchone()
+            if not part or str(part[3])!='active':
+                conn.rollback(); return await q.answer('No tienes un combate activo en esta incursión.',show_alert=True) or True
+            try:state=json.loads(part[2] or '{}')
+            except Exception:state={}
+            if not isinstance(state,dict) or str(state.get('status'))!='active' or int(state.get('round',0))!=round_no:
+                conn.rollback(); return await q.answer('Ese turno ya se resolvió. Usa los botones del combate más reciente.',show_alert=True) or True
+            mons=state.get('mons') or []; active_idx=int(state.get('active',0))
+            if not mons or not 0<=active_idx<len(mons) or int(mons[active_idx].get('hp',0))<=0:
+                conn.rollback(); return await q.answer('No encontré tu Pokémon activo.',show_alert=True) or True
+            mon=mons[active_idx]; boss=_raid_boss_state_cursor(c,raid); boss_name=NAMES.get(int(raid[3]),'Pokémon'); legendary=bool(raid[11])
+            trainer_name=_display_name_cursor(c,uid)
+            if action=='raidmove':
+                move_idx=arg; moves=mon.get('moves',[])
+                if move_idx<0 or move_idx>=len(moves):conn.rollback(); return await q.answer('Movimiento inválido.',show_alert=True) or True
+                code=str(moves[move_idx])
+                if code not in MOVES:conn.rollback(); return await q.answer('Movimiento no disponible.',show_alert=True) or True
+                locked=mon.get('choice_lock') if mon.get('held_item') in ('choice_band','choice_specs','choice_scarf') else None
+                if locked and code!=locked:conn.rollback(); return await q.answer(f"{_item_name(mon.get('held_item'))} te obliga a usar {MOVES.get(locked,(locked,))[0]}.",show_alert=True) or True
+                if int(mon.get('pp',{}).get(code,0))<=0:conn.rollback(); return await q.answer('Ese movimiento ya no tiene PP.',show_alert=True) or True
+                mon.setdefault('pp',{})[code]=int(mon['pp'].get(code,0))-1; used_move=MOVES[code][0]
+                # El combate normal calcula el daño. Se escala únicamente el daño recibido por el jefe,
+                # ya que sus PS son compartidos y mucho mayores que los de un Pokémon normal.
+                shared_hp=max(0,int(raid[6])); virtual_max=max(1,math.ceil(int(raid[5])/RAID_BOSS_DAMAGE_MULTIPLIER))
+                boss['hp']=max(1,math.ceil(max(1,shared_hp)/RAID_BOSS_DAMAGE_MULTIPLIER)); boss['max_hp']=virtual_max
+                virtual_before=int(boss['hp']); move_logs=_do_move(mon,boss,code)
+                raw_damage=max(0,virtual_before-int(boss.get('hp',virtual_before)))
+                move_damage=min(shared_hp,raw_damage*RAID_BOSS_DAMAGE_MULTIPLIER)
+                boss['hp']=max(0,shared_hp-move_damage); boss['max_hp']=int(raid[5])
+                # Corrige el registro de daño para que la cifra mostrada coincida con los PS compartidos.
+                if move_logs and raw_damage:
+                    move_logs[0]=move_logs[0].replace(f'-{raw_damage} HP',f'-{move_damage:,} HP',1)
+                logs.extend(move_logs); state['damage']=int(state.get('damage',0))+move_damage
+                c.execute("UPDATE pokemon_instances_tb SET friendship=LEAST(255,friendship+1) WHERE owner_id=%s AND pokemon_id=%s",(uid,int(mon.get('pid',0))))
+            else:
+                switch_idx=arg
+                if switch_idx<0 or switch_idx>=len(mons) or switch_idx==active_idx or int(mons[switch_idx].get('hp',0))<=0:
+                    conn.rollback(); return await q.answer('No puedes cambiar a ese Pokémon.',show_alert=True) or True
+                mon['choice_lock']=None; state['active']=switch_idx; mon=mons[switch_idx]
+                logs.append(f'🔄 Entra {_battle_title_mon(mon)}.'); used_move='cambió de Pokémon'
+
+            # Si el golpe propio debilitó al Pokémon por Vidaesfera, permite seguir con el siguiente.
+            if int(mon.get('hp',0))<=0:
+                nxt=_next_alive({'mons':mons})
+                if nxt is None:team_defeated=True; state['status']='defeated'
+                else:
+                    state['active']=nxt; mon=mons[nxt]; logs.append(f'➡️ Entra {_battle_title_mon(mon)}.')
+
+            # Un movimiento del jefe responde a cada turno válido, incluso si el entrenador cambió.
+            defeated=int(boss.get('hp',0))<=0
+            if not defeated and not team_defeated:
+                boss['hp']=max(0,int(raid[6])-move_damage); boss['max_hp']=int(raid[5])
+                usable=[m for m in boss.get('moves',[]) if m in MOVES and int(boss.get('pp',{}).get(m,0))>0]
+                if not usable:
+                    for bm in boss.get('moves',[]):
+                        if bm in MOVES:boss.setdefault('pp',{})[bm]=int(MOVES[bm][4])
+                    usable=[m for m in boss.get('moves',[]) if m in MOVES and int(boss.get('pp',{}).get(m,0))>0]
+                if usable:
+                    damaging=[m for m in usable if MOVES[m][5] in ('damage','drain','fixed','fixed40')]
+                    boss_code=random.choice(damaging if damaging and random.random()<0.82 else usable)
+                    boss['pp'][boss_code]=int(boss['pp'].get(boss_code,0))-1
+                    logs.extend(_do_move(boss,mon,boss_code))
+                # Efectos persistentes de estado al final del turno.
+                if boss.get('status')=='poison' and int(boss.get('hp',0))>0:
+                    poison_dmg=max(1,int(raid[5])//100); boss['hp']=max(0,int(boss.get('hp',0))-poison_dmg)
+                    logs.append(f'☠️ {boss_name} perdió {poison_dmg:,} PS por veneno.')
+                if mon.get('status')=='poison' and int(mon.get('hp',0))>0:
+                    poison_dmg=max(1,int(mon.get('max_hp',1))//8); mon['hp']=max(0,int(mon.get('hp',0))-poison_dmg)
+                    logs.append(f'☠️ {_battle_title_mon(mon)} perdió {poison_dmg} PS por veneno.')
+                # Cambia automáticamente cuando cae el Pokémon activo.
+                if int(mon.get('hp',0))<=0:
+                    mon['choice_lock']=None; nxt=_next_alive({'mons':mons})
+                    if nxt is None:team_defeated=True; state['status']='defeated'; logs.append('💫 Todo tu equipo quedó debilitado.')
+                    else:state['active']=nxt; mon=mons[nxt]; logs.append(f'➡️ Entra {_battle_title_mon(mon)}.')
+                defeated=int(boss.get('hp',0))<=0
+            # Conserva el efecto de Restos del motor de batalla normal al final del turno.
+            _raid_round_state={'players':{'trainer':{'mons':mons,'active':int(state.get('active',0))},'boss':{'mons':[boss],'active':0}}}
+            _apply_held_end_round(_raid_round_state,logs)
+            # Repone PP si se agotaron los movimientos del Pokémon que queda activo.
+            active=mons[int(state.get('active',0))] if mons else None
+            if active and _raid_restore_pp_if_empty(active):logs.append(f'🔋 { _battle_title_mon(active) } recuperó PP al quedarse sin movimientos.')
+            state['round']=int(state.get('round',1))+1
+            state['status']='boss_defeated' if defeated else ('defeated' if team_defeated else 'active')
+            total_damage=int(part[0])+int(move_damage); attacks_now=int(part[1])+1
+            persisted_status='completed' if defeated else ('defeated' if team_defeated else 'active')
+            c.execute("""INSERT INTO pokemon_raid_participants_tb(raid_id,user_id,damage,attacks,last_attack_at,battle_state_json,battle_status,battle_message_id)
+                         VALUES(%s,%s,%s,1,NOW(),%s,%s,%s)
+                         ON CONFLICT(raid_id,user_id) DO UPDATE SET
+                           damage=pokemon_raid_participants_tb.damage+EXCLUDED.damage,
+                           attacks=pokemon_raid_participants_tb.attacks+1,last_attack_at=NOW(),
+                           battle_state_json=EXCLUDED.battle_state_json,battle_status=EXCLUDED.battle_status,
+                           battle_message_id=COALESCE(EXCLUDED.battle_message_id,pokemon_raid_participants_tb.battle_message_id)
+                         RETURNING damage,attacks""",
+                      (raid_id,uid,move_damage,json.dumps(state,ensure_ascii=False),persisted_status,int(q.message.message_id)))
+            pr=c.fetchone() or (total_damage,attacks_now); total_damage=int(pr[0]); attacks_now=int(pr[1])
             if defeated:
-                c.execute("SELECT user_id,damage FROM pokemon_raid_participants_tb WHERE raid_id=%s ORDER BY damage DESC",(raid_id,)); parts=c.fetchall(); top=int(parts[0][0]) if parts else None
+                c.execute("UPDATE pokemon_raids_tb SET hp=0,status='capture',catcher_id=NULL,capture_attempts=0,capture_status='pending',expires_at=NOW()+(%s * INTERVAL '1 second'),finished_at=NULL WHERE raid_id=%s",(RAID_LEGENDARY_CAPTURE_SECONDS,raid_id))
+                c.execute("SELECT user_id,damage FROM pokemon_raid_participants_tb WHERE raid_id=%s AND damage>0 ORDER BY damage DESC",(raid_id,)); parts=c.fetchall()
+                top=int(parts[0][0]) if parts else None; capture_catcher=_raid_weighted_catcher(parts)
                 for puid,_dmg in parts:
                     puid=int(puid); c.execute("UPDATE usuarios_tb SET saldo=saldo+2500 WHERE id_user=%s",(puid,)); grant_item_with_cursor(c,puid,'rare_candy',1)
                     if random.random()<0.10:grant_item_with_cursor(c,puid,'safari_ticket',1)
                 if top is not None:grant_item_with_cursor(c,top,'object_box',1)
-                # Tanto raids normales como legendarias generan UN solo ejemplar capturable.
-                # El derecho se sortea ponderado por daño y el elegido dispone de 3 tiros.
-                catcher=_raid_weighted_catcher(parts)
-                c.execute("""UPDATE pokemon_raids_tb SET hp=0,status='capture',catcher_id=%s,capture_attempts=0,capture_status='pending',
-                             expires_at=NOW()+(%s * INTERVAL '1 second'),finished_at=NULL WHERE raid_id=%s""",(catcher,RAID_LEGENDARY_CAPTURE_SECONDS,raid_id))
+                c.execute("UPDATE pokemon_raids_tb SET catcher_id=%s WHERE raid_id=%s",(capture_catcher,raid_id))
+                c.execute("UPDATE pokemon_raid_participants_tb SET battle_status='completed' WHERE raid_id=%s AND battle_status='active'",(raid_id,))
+                state['status']='boss_defeated'
+                c.execute("UPDATE pokemon_raid_participants_tb SET battle_state_json=%s,battle_status='completed' WHERE raid_id=%s AND user_id=%s",(json.dumps(state,ensure_ascii=False),raid_id,uid))
             else:
-                c.execute("UPDATE pokemon_raids_tb SET hp=%s WHERE raid_id=%s",(hp,raid_id))
+                c.execute("UPDATE pokemon_raids_tb SET hp=%s,boss_state_json=%s WHERE raid_id=%s",(max(0,int(boss.get('hp',raid[6]))),json.dumps(boss,ensure_ascii=False),raid_id))
             conn.commit()
-        except Exception as e:conn.rollback(); print('[PK raid attack]',type(e).__name__,e); return await q.answer('No pude aplicar tu ataque.',show_alert=True) or True
+        except Exception as e:
+            conn.rollback(); print('[PK raid turn]',type(e).__name__,e); return await q.answer('No pude resolver ese turno.',show_alert=True) or True
         finally:_put_connection(conn)
-        await q.answer(f"💥 -{damage} PS{' · súper eficaz' if best_eff>=2 else ''}",show_alert=True)
-        # El detalle del ataque se queda en el panel privado del jugador.
-        try:
-            await q.edit_message_text(
-                f"💥 INCURSIÓN · ATAQUE COMPLETADO\n\n"
-                f"Hiciste {damage:,} de daño{' súper eficaz' if best_eff>=2 else ''}.\n"
-                f"🔥 Daño total aportado: {total_damage:,}\n"
-                f"⚔️ Ataques usados: {attacks_now}/{RAID_USER_ATTACKS}\n"
-                f"❤️ PS compartidos del jefe: {hp:,}/{int(raid[5]):,}"
-            )
-        except Exception:pass
+
+        await q.answer('Turno resuelto ⚔️')
         await _refresh_raid_message(context,raid_id)
-        # Toda la elección/ataque ocurre en privado. En el grupo solo aparece el resumen
-        # acumulado del entrenador y la tarjeta compartida con los PS ya actualizados.
+        conn2=_get_connection(); fresh_raid=None
         try:
-            await context.bot.send_message(int(raid[1]),f"⚔️ {trainer_name} acumula {total_damage:,} de daño total en la incursión. · Ataques {attacks_now}/{RAID_USER_ATTACKS}",message_thread_id=(raid[2] or None))
-        except Exception:pass
-        if defeated and catcher is not None:
-            conn=_get_connection(); cname=f'Entrenador {catcher}'
-            try:c=conn.cursor(); cname=_display_name_cursor(c,catcher)
-            finally:_put_connection(conn)
-            title='🌟 ¡INCURSIÓN LEGENDARIA COMPLETADA!' if legendary else '🏆 ¡INCURSIÓN COMPLETADA!'
-            text=(f"{title}\n\nTodos los participantes: +2,500 PiPesos +1 Caramelo Raro.\n"
-                  f"🥇 Mayor daño: Caja de Objetos Pokémon.\n\n🎯 {cname} fue elegido para intentar capturar a {NAMES[int(raid[3])]}.\n"
-                  f"🎲 Tiene {RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros. Solo un 6 lo captura.")
-            try:await context.bot.send_message(int(raid[1]),text,message_thread_id=(raid[2] or None))
+            c2=conn2.cursor(); c2.execute(f"SELECT {RAID_SELECT} FROM pokemon_raids_tb WHERE raid_id=%s",(raid_id,)); fresh_raid=c2.fetchone()
+        finally:_put_connection(conn2)
+        if fresh_raid:
+            note='\n'.join(logs[-8:])
+            out_text=_raid_battle_text(fresh_raid,state,note)
+            out_markup=_raid_battle_markup(raid_id,state)
+            try:await q.edit_message_text(out_text,reply_markup=out_markup)
             except Exception:pass
             try:
-                prefix='🌟 ' if legendary else '💥 '
-                await context.bot.send_message(catcher,f"{prefix}Te tocó la oportunidad de capturar a {NAMES[int(raid[3])]} de la incursión.\nTienes {RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros. Usa el botón de la incursión en Juegos y Casino.")
+                if move_damage>0:
+                    await context.bot.send_message(int(fresh_raid[1]),f'⚔️ {trainer_name}: {used_move} · -{move_damage:,} PS a {boss_name}. Jefe: {max(0,int(fresh_raid[6])):,}/{int(fresh_raid[5]):,} PS.',message_thread_id=(fresh_raid[2] or None))
+                elif not defeated:
+                    await context.bot.send_message(int(fresh_raid[1]),f'⚔️ {trainer_name} tomó su turno en la incursión. El jefe conserva {max(0,int(fresh_raid[6])):,}/{int(fresh_raid[5]):,} PS.',message_thread_id=(fresh_raid[2] or None))
             except Exception:pass
+            if defeated:
+                cname=f'Entrenador {capture_catcher}' if capture_catcher is not None else 'Un entrenador'
+                if capture_catcher is not None:
+                    conn3=_get_connection()
+                    try:c3=conn3.cursor(); cname=_display_name_cursor(c3,capture_catcher)
+                    finally:_put_connection(conn3)
+                title='🌟 ¡INCURSIÓN LEGENDARIA COMPLETADA!' if legendary else '🏆 ¡INCURSIÓN COMPLETADA!'
+                announce=(f'{title}\n\nTodos los participantes que hicieron daño: +2,500 PiPesos +1 Caramelo Raro.\n'
+                          f'🥇 Mayor daño: Caja de Objetos Pokémon.\n\n🎯 {cname} fue elegido para intentar capturar a {boss_name}.\n'
+                          f'🎲 Tiene {RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros. Solo un 6 lo captura.')
+                try:await context.bot.send_message(int(fresh_raid[1]),announce,message_thread_id=(fresh_raid[2] or None))
+                except Exception:pass
+                if capture_catcher is not None:
+                    try:await context.bot.send_message(int(capture_catcher),f'🌟 Te tocó la oportunidad de capturar a {boss_name} de la incursión.\nTienes {RAID_LEGENDARY_CAPTURE_ATTEMPTS} tiros. Usa el botón de la incursión en Juegos y Casino.')
+                    except Exception:pass
+            return True
         return True
     if action=='raidcatch':
         raid_id=int(p[2]); conn=_get_connection(); raid=None
