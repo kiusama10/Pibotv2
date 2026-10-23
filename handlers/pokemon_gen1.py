@@ -135,7 +135,7 @@ ROCKET_EVENT_SECONDS = 1800
 RAID_EVENT_SECONDS = 2700
 RAID_USER_ATTACKS = 5
 RAID_ATTACK_COOLDOWN_SECONDS = 60  # Compatibilidad con incursiones anteriores.
-RAID_BOSS_DAMAGE_MULTIPLIER = 25  # El jefe tiene PS compartidos muy superiores a los de un Pokémon normal.
+RAID_BOSS_DAMAGE_MULTIPLIER = 25  # Los ataques del jugador descuentan más PS compartidos del jefe.
 RAID_LEGENDARY_CHANCE = 0.10  # 10% de las incursiones pueden ser legendarias.
 RAID_LEGENDARY_BOSSES = (144,145,146,150,151)
 RAID_LEGENDARY_SHINY_DENOMINATOR = 256  # Se decide una sola vez por raid; nunca uno por participante.
@@ -2399,6 +2399,13 @@ async def _sync_single_battle_views(context,bid:int,state:dict,chat_id:int,threa
     else:
         public_text=_battle_text(state,note)
         public_markup=None if final else _battle_markup(bid)
+        # En Safari, el botón de Safari Ball también queda en la tarjeta pública:
+        # al iniciar la pelea se reemplaza la tarjeta del encuentro y no debe perderse la captura.
+        if (not final and state.get('battle_kind')=='safari'
+                and int(state.get('safari_user_id',-1)) in humans):
+            rows=[[InlineKeyboardButton('🔴 Lanzar Safari Ball',callback_data=f'pk:safbattleball:{bid}')]]
+            rows.extend([list(r) for r in public_markup.inline_keyboard])
+            public_markup=InlineKeyboardMarkup(rows)
     public_mid=message_id
     edited=False
     if message_id:
@@ -2421,16 +2428,21 @@ async def _sync_single_battle_views(context,bid:int,state:dict,chat_id:int,threa
 async def _update_single_public_final(context,bid:int,state:dict,chat_id:int,thread_id,message_id:int|None,note:str|None,result_text:str):
     """Garantiza que el cierre y sus recompensas queden visibles en el mensaje público."""
     text=_battle_text(state,note) + "\n\n🏁 Batalla terminada.\n\n" + str(result_text)
+    final_markup=None
+    if (state.get('battle_kind')=='safari'
+            and int(state.get('winner',-1))==int(state.get('safari_user_id',-2))
+            and not state.get('safari_caught') and not state.get('safari_ball_exhausted')):
+        final_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🎲 🔴 Lanzar Safari Ball',callback_data=f'pk:safbattleball:{int(bid)}')]])
     edited=False
     if message_id:
         try:
-            await context.bot.edit_message_text(chat_id=int(chat_id),message_id=int(message_id),text=text,reply_markup=None)
+            await context.bot.edit_message_text(chat_id=int(chat_id),message_id=int(message_id),text=text,reply_markup=final_markup)
             edited=True
         except Exception as e:
             if 'not modified' in str(e).lower():edited=True
     if not edited:
         try:
-            msg=await context.bot.send_message(chat_id=int(chat_id),text=text,message_thread_id=thread_id)
+            msg=await context.bot.send_message(chat_id=int(chat_id),text=text,message_thread_id=thread_id,reply_markup=final_markup)
             await _store_battle_public_message_id(bid,int(msg.message_id))
             return int(msg.message_id)
         except Exception as e:
@@ -4522,6 +4534,19 @@ def _safari_capture_probability(species:int,hp_ratio:float=1.0)->float:
     return max(0.005,min(0.95,maximum*factor))
 
 
+async def _safari_roll_capture(context,chat_id:int,thread_id:int|None,chance:float)->tuple[bool,int,str]:
+    """Anima el dado de Telegram; las caras altas favorecen la captura."""
+    dice=await context.bot.send_dice(chat_id=int(chat_id),message_thread_id=thread_id or None,emoji='🎲')
+    value=int(dice.dice.value)
+    await asyncio.sleep(WILD_DICE_ANIMATION_SECONDS)
+    # Cada cara ocupa una sexta parte del rango; así se conserva la probabilidad configurada
+    # y una tirada alta resulta más favorable sin convertir el dado en mero adorno.
+    roll=((6-value)+random.random())/6.0
+    caught=roll<float(chance)
+    effect={1:'PÉSIMO',2:'FLOJO',3:'BIEN',4:'MUY BIEN',5:'EXCELENTE',6:'PERFECTO'}.get(value,'')
+    return caught,value,effect
+
+
 def _safari_text(row)->str:
     sid=int(row[0]); status=str(row[5]); balls=int(row[6]); sp=row[7]
     left=max(0,int((row[13]-datetime.now(timezone.utc)).total_seconds())) if row[13] else 0
@@ -4855,14 +4880,12 @@ async def _spawn_raid(context,chat_id:int,thread_id:int|None,manual:bool=False,f
         legendary=(bool(forced_legendary) if forced_legendary is not None else random.random()<RAID_LEGENDARY_CHANCE)
         reference_level=_raid_reference_level_cursor(c)
         if legendary:
-            # Los legendarios quedan claramente por encima del nivel habitual del grupo,
-            # pero sin saltos absurdos (p. ej. equipos Nv.25 -> jefe aprox. Nv.31-35).
-            sp=random.choice(RAID_LEGENDARY_BOSSES); level=max(5,min(MAX_LEVEL,reference_level+random.randint(6,10))); maxhp=22_000+level*180
+            # Los legendarios quedan más arriba de nivel y tienen más PS que antes.
+            sp=random.choice(RAID_LEGENDARY_BOSSES); level=max(5,min(MAX_LEVEL,reference_level+random.randint(8,12))); maxhp=28_000+level*220
             shiny=(random.randrange(RAID_LEGENDARY_SHINY_DENOMINATOR)==0)
         else:
-            # Raid normal: solo 2-5 niveles por encima del nivel mediano de los equipos.
-            # Ejemplo pedido: equipos alrededor de Nv.25 -> jefe Nv.27-30.
-            sp=random.choice(RAID_BOSSES); level=max(3,min(MAX_LEVEL,reference_level+random.randint(2,5))); maxhp=9000+level*90; shiny=(random.randrange(RAID_NORMAL_SHINY_DENOMINATOR)==0)
+            # Los jefes normales también suben de nivel y aguantan más.
+            sp=random.choice(RAID_BOSSES); level=max(3,min(MAX_LEVEL,reference_level+random.randint(4,7))); maxhp=12_000+level*110; shiny=(random.randrange(RAID_NORMAL_SHINY_DENOMINATOR)==0)
         c.execute("""INSERT INTO pokemon_raids_tb(chat_id,thread_id,species_id,level,max_hp,hp,is_legendary,shiny)
                      VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
                      RETURNING """+RAID_SELECT,(chat_id,int(thread_id or 0),sp,level,maxhp,maxhp,legendary,shiny)); row=c.fetchone()
@@ -5800,16 +5823,17 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
                 if row[7] is None:conn.rollback(); return await q.answer('No tienes un Pokémon enfrente.',show_alert=True) or True
                 if int(row[6])<=0:
                     c.execute("UPDATE pokemon_safari_sessions_tb SET status='exhausted',finished_at=NOW() WHERE session_id=%s",(sid,)); conn.commit(); return await q.answer('🔴 Se acabaron tus Safari Balls. Safari terminado.',show_alert=True) or True
-                balls=int(row[6])-1; sp=int(row[7]); hp_ratio=0.0 if bool(row[11]) else 1.0; chance=_safari_capture_probability(sp,hp_ratio); caught=random.random()<chance
-                end_session=(balls<=0)
+                sp=int(row[7]); hp_ratio=0.0 if bool(row[11]) else 1.0; chance=_safari_capture_probability(sp,hp_ratio)
+                caught,dice_value,dice_effect=await _safari_roll_capture(context,int(q.message.chat_id),getattr(q.message,'message_thread_id',None),chance)
+                balls=int(row[6])-1; end_session=(balls<=0)
                 if caught:
                     ivs=json.loads(row[10] or '{}'); data=grant_pokemon_with_cursor(c,uid,sp,f'safari:{sid}',level_override=int(row[8]),shiny_override=bool(row[9]),ivs_override=ivs); _mission_progress_cursor(c,uid,'capture',1)
-                    c.execute("UPDATE pokemon_safari_sessions_tb SET balls=%s,current_species=NULL,current_level=NULL,current_shiny=NULL,current_ivs_json=NULL,current_defeated=FALSE,status=%s,finished_at=CASE WHEN %s THEN NOW() ELSE finished_at END WHERE session_id=%s",(balls,'exhausted' if end_session else 'active',end_session,sid)); result=('caught',data,balls,chance,end_session)
+                    c.execute("UPDATE pokemon_safari_sessions_tb SET balls=%s,current_species=NULL,current_level=NULL,current_shiny=NULL,current_ivs_json=NULL,current_defeated=FALSE,status=%s,finished_at=CASE WHEN %s THEN NOW() ELSE finished_at END WHERE session_id=%s",(balls,'exhausted' if end_session else 'active',end_session,sid)); result=('caught',data,balls,chance,end_session,dice_value,dice_effect)
                 else:
                     if end_session:
                         c.execute("UPDATE pokemon_safari_sessions_tb SET balls=0,status='exhausted',current_species=NULL,current_level=NULL,current_shiny=NULL,current_ivs_json=NULL,current_defeated=FALSE,finished_at=NOW() WHERE session_id=%s",(sid,))
                     else:c.execute("UPDATE pokemon_safari_sessions_tb SET balls=%s WHERE session_id=%s",(balls,sid))
-                    result=('escaped_ball',sp,balls,chance,end_session)
+                    result=('escaped_ball',sp,balls,chance,end_session,dice_value,dice_effect)
                 conn.commit(); row=list(row); row[5]='exhausted' if end_session else 'active'; row[6]=balls
                 if caught or end_session:row[7]=row[8]=row[9]=row[10]=None; row[11]=False
                 row=tuple(row)
@@ -5820,10 +5844,16 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             await q.answer();
         elif action=='safball' and isinstance(result,tuple) and result[0]=='caught':
             data=result[1]; await q.answer('🎉 ¡Capturado!',show_alert=True)
-            try:await q.edit_message_text(f"🌿 SAFARI · ¡CAPTURA!\n\n{'✨ SHINY · ' if data.get('shiny') else ''}#{int(data['species_id']):03d} {data['name']} {_sex_symbol(data.get('sex'))} · Nv.{int(data['level'])}\n🧬 IV {int(data['iv_percent'])}% · {data['iv_grade']}\n🔴 Safari Balls restantes: {int(result[2])}",reply_markup=_safari_markup(row))
+            try:await q.edit_message_text(f"🎲 {int(result[5])}/6 · {result[6]}\n🌿 SAFARI · ¡CAPTURA!\n\n{'✨ SHINY · ' if data.get('shiny') else ''}#{int(data['species_id']):03d} {data['name']} {_sex_symbol(data.get('sex'))} · Nv.{int(data['level'])}\n🧬 IV {int(data['iv_percent'])}% · {data['iv_grade']}\n🔴 Safari Balls restantes: {int(result[2])}",reply_markup=_safari_markup(row))
             except Exception:pass
             return True
-        elif action=='safball' and isinstance(result,tuple):await q.answer('💨 ¡Se salió de la Safari Ball!',show_alert=True)
+        elif action=='safball' and isinstance(result,tuple):
+            await q.answer('💨 ¡Se salió de la Safari Ball!',show_alert=True)
+            try:
+                missed=f"🎲 {int(result[5])}/6 · {result[6]}\n💨 #{int(result[1]):03d} {NAMES.get(int(result[1]),'Pokémon')} salió de la Safari Ball.\n\n"+_safari_text(row)
+                await q.edit_message_text(missed,reply_markup=_safari_markup(row))
+            except Exception:pass
+            return True
         else:await q.answer(result if isinstance(result,str) else 'Listo.')
         try:await q.edit_message_text(_safari_text(row),reply_markup=_safari_markup(row))
         except Exception:pass
@@ -6093,12 +6123,6 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
             out_text=_raid_battle_text(fresh_raid,state,note)
             out_markup=_raid_battle_markup(raid_id,state)
             try:await q.edit_message_text(out_text,reply_markup=out_markup)
-            except Exception:pass
-            try:
-                if move_damage>0:
-                    await context.bot.send_message(int(fresh_raid[1]),f'⚔️ {trainer_name}: {used_move} · -{move_damage:,} PS a {boss_name}. Jefe: {max(0,int(fresh_raid[6])):,}/{int(fresh_raid[5]):,} PS.',message_thread_id=(fresh_raid[2] or None))
-                elif not defeated:
-                    await context.bot.send_message(int(fresh_raid[1]),f'⚔️ {trainer_name} tomó su turno en la incursión. El jefe conserva {max(0,int(fresh_raid[6])):,}/{int(fresh_raid[5]):,} PS.',message_thread_id=(fresh_raid[2] or None))
             except Exception:pass
             if defeated:
                 cname=f'Entrenador {capture_catcher}' if capture_catcher is not None else 'Un entrenador'
@@ -7881,43 +7905,54 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         bid=int(p[2]); conn=_get_connection(); state=None; chat=None; result_text=None; session_row=None
         try:
             c=conn.cursor(); c.execute("SELECT state_json,status,chat_id,thread_id,message_id FROM pokemon_battles_tb WHERE battle_id=%s FOR UPDATE",(bid,)); br=c.fetchone()
-            if not br or br[1]!='active':conn.rollback(); return await q.answer('La pelea Safari ya terminó.',show_alert=True)
-            state=json.loads(br[0]); key=str(uid)
+            if not br:conn.rollback(); return await q.answer('La pelea Safari ya no existe.',show_alert=True)
+            state=json.loads(br[0]); key=str(uid); battle_was_finished=(str(br[1])=='finished')
+            safari_victory_retry=(battle_was_finished and state.get('battle_kind')=='safari' and int(state.get('winner',-1))==uid)
+            if str(br[1])!='active' and not safari_victory_retry:conn.rollback(); return await q.answer('La pelea Safari ya terminó.',show_alert=True)
             if state.get('battle_kind')!='safari' or int(state.get('safari_user_id',-1))!=uid or key not in state.get('players',{}):conn.rollback(); return await q.answer('Esta pelea Safari no es tuya.',show_alert=True)
+            if state.get('safari_caught'):conn.rollback(); return await q.answer('Ese Pokémon ya está capturado.',show_alert=True)
+            if state.get('safari_ball_exhausted'):conn.rollback(); return await q.answer('Ya no te quedan Safari Balls.',show_alert=True)
             sid=int(state['safari_session_id']); botkey=str(state.get('bot_player_id')); bot=state['players'].get(botkey)
             if not bot or not bot.get('mons'):conn.rollback(); return await q.answer('El Pokémon Safari ya no está disponible.',show_alert=True)
             target=bot['mons'][bot['active']]
             c.execute("SELECT session_id,user_id,chat_id,thread_id,safari_date,status,balls,current_species,current_level,current_shiny,current_ivs_json,current_defeated,created_at,expires_at FROM pokemon_safari_sessions_tb WHERE session_id=%s FOR UPDATE",(sid,)); sr=c.fetchone()
             if not sr or int(sr[1])!=uid or str(sr[5])!='active' or sr[13]<=datetime.now(timezone.utc):conn.rollback(); return await q.answer('Tu Safari ya terminó.',show_alert=True)
+            if sr[7] is None:conn.rollback(); return await q.answer('Ese Pokémon ya no está disponible; quizá ya lo capturaste o se fue.',show_alert=True)
             balls=int(sr[6])
             if balls<=0:
                 c.execute("UPDATE pokemon_safari_sessions_tb SET status='exhausted',finished_at=NOW() WHERE session_id=%s",(sid,)); c.execute("UPDATE pokemon_battles_tb SET status='cancelled',finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s",(bid,)); conn.commit(); return await q.answer('🔴 Se acabaron tus Safari Balls.',show_alert=True)
-            balls-=1; hp_ratio=float(target.get('hp',0))/max(1,float(target.get('max_hp',1))); chance=_safari_capture_probability(int(target['species']),hp_ratio); caught=random.random()<chance; end_session=(balls<=0)
+            hp_ratio=float(target.get('hp',0))/max(1,float(target.get('max_hp',1))); chance=_safari_capture_probability(int(target['species']),hp_ratio)
+            caught,dice_value,dice_effect=await _safari_roll_capture(context,int(q.message.chat_id),getattr(q.message,'message_thread_id',None),chance)
+            balls-=1; end_session=(balls<=0)
             if caught:
                 data=grant_pokemon_with_cursor(c,uid,int(target['species']),f'safari:{sid}',level_override=int(target['level']),shiny_override=bool(target.get('shiny')),ivs_override=dict(target.get('ivs') or {})); _mission_progress_cursor(c,uid,'capture',1)
                 c.execute("UPDATE pokemon_safari_sessions_tb SET balls=%s,current_species=NULL,current_level=NULL,current_shiny=NULL,current_ivs_json=NULL,current_defeated=FALSE,status=%s,finished_at=CASE WHEN %s THEN NOW() ELSE finished_at END WHERE session_id=%s",(balls,'exhausted' if end_session else 'active',end_session,sid))
-                state['status']='finished'; state['winner']=uid; state['loser']=int(state.get('bot_player_id'))
+                state['status']='finished'; state['winner']=uid; state['loser']=int(state.get('bot_player_id')); state['safari_caught']=True
+                if end_session:state['safari_ball_exhausted']=True
                 c.execute("UPDATE pokemon_battles_tb SET status='finished',winner_id=%s,state_json=%s,finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s",(uid,json.dumps(state,ensure_ascii=False),bid))
-                result_text=(f"🔴 ¡Safari Ball lanzada!\n🎉 ¡CAPTURADO!\n\n{'✨ SHINY · ' if data.get('shiny') else ''}#{int(data['species_id']):03d} {data['name']} {_sex_symbol(data.get('sex'))} · Nv.{int(data['level'])}\n🧬 IV {int(data['iv_percent'])}% · {data['iv_grade']}\n🔴 Safari Balls restantes: {balls}" + ('\n🏁 Se acabaron tus Safari Balls. Safari terminado.' if end_session else ''))
+                result_text=(f"🎲 {dice_value}/6 · {dice_effect}\n🔴 ¡Safari Ball lanzada!\n🎉 ¡CAPTURADO!\n\n{'✨ SHINY · ' if data.get('shiny') else ''}#{int(data['species_id']):03d} {data['name']} {_sex_symbol(data.get('sex'))} · Nv.{int(data['level'])}\n🧬 IV {int(data['iv_percent'])}% · {data['iv_grade']}\n🔴 Safari Balls restantes: {balls}" + ('\n🏁 Se acabaron tus Safari Balls. Safari terminado.' if end_session else ''))
             else:
                 if end_session:
                     c.execute("UPDATE pokemon_safari_sessions_tb SET balls=0,status='exhausted',current_species=NULL,current_level=NULL,current_shiny=NULL,current_ivs_json=NULL,current_defeated=FALSE,finished_at=NOW() WHERE session_id=%s",(sid,))
+                    state['safari_ball_exhausted']=True
                     state['status']='finished'; c.execute("UPDATE pokemon_battles_tb SET status='cancelled',state_json=%s,finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s",(json.dumps(state,ensure_ascii=False),bid))
-                    result_text='🔴 La Safari Ball falló.\n🏁 Era tu última Safari Ball: la sesión terminó.'
+                    result_text=f'🎲 {dice_value}/6 · {dice_effect}\n💨 La Safari Ball falló.\n🏁 Era tu última Safari Ball: la sesión terminó.'
                 else:
-                    c.execute("UPDATE pokemon_safari_sessions_tb SET balls=%s WHERE session_id=%s",(balls,sid)); c.execute("UPDATE pokemon_battles_tb SET state_json=%s,updated_at=NOW() WHERE battle_id=%s",(json.dumps(state,ensure_ascii=False),bid)); result_text=f'🔴 La Safari Ball falló. El Pokémon sigue en combate.\n🔴 Safari Balls restantes: {balls}'
+                    c.execute("UPDATE pokemon_safari_sessions_tb SET balls=%s WHERE session_id=%s",(balls,sid)); c.execute("UPDATE pokemon_battles_tb SET state_json=%s,updated_at=NOW() WHERE battle_id=%s",(json.dumps(state,ensure_ascii=False),bid)); result_text=f'🎲 {dice_value}/6 · {dice_effect}\n💨 La Safari Ball falló. El Pokémon sigue disponible.\n🔴 Safari Balls restantes: {balls}'
             conn.commit(); chat=(int(br[2]),br[3],br[4])
             c2=conn.cursor(); c2.execute("SELECT session_id,user_id,chat_id,thread_id,safari_date,status,balls,current_species,current_level,current_shiny,current_ivs_json,current_defeated,created_at,expires_at FROM pokemon_safari_sessions_tb WHERE session_id=%s",(sid,)); session_row=c2.fetchone()
         except Exception as e:
             conn.rollback(); print('[PK safari battle ball]',type(e).__name__,e); return await q.answer('No pude lanzar la Safari Ball.',show_alert=True)
         finally:_put_connection(conn)
-        await q.answer('🎉 ¡Capturado!' if state.get('winner')==uid else ('🏁 Safari terminado.' if state.get('status')=='finished' else '💨 ¡Se salió de la Safari Ball!'),show_alert=bool(state.get('status')=='finished'))
+        await q.answer('🎉 ¡Capturado!' if state.get('safari_caught') else ('🏁 Safari terminado.' if state.get('safari_ball_exhausted') else '💨 ¡Se salió de la Safari Ball!'),show_alert=bool(state.get('safari_caught') or state.get('safari_ball_exhausted')))
         await _delete_battle_transients(context,bid,uid)
         if state.get('status')=='finished':
-            await _sync_single_battle_views(context,bid,state,chat[0],chat[1],chat[2],result_text,final=True)
+            if not battle_was_finished:
+                await _sync_single_battle_views(context,bid,state,chat[0],chat[1],chat[2],result_text,final=True)
             await _update_single_public_final(context,bid,state,chat[0],chat[1],chat[2],None,result_text)
-            await _send_private_battle_result(context,state,result_text,skip_chat_id=chat[0])
-            if session_row:
+            if not battle_was_finished:
+                await _send_private_battle_result(context,state,result_text,skip_chat_id=chat[0])
+            if session_row and not battle_was_finished:
                 try:await context.bot.send_message(int(session_row[2]),_safari_text(session_row),message_thread_id=int(session_row[3] or 0) or None,reply_markup=_safari_markup(session_row))
                 except Exception:pass
         else:
