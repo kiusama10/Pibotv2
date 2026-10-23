@@ -4526,11 +4526,16 @@ def _safari_pool_species()->int:
 
 
 def _safari_capture_probability(species:int,hp_ratio:float=1.0)->float:
-    """Safari Ball: se puede lanzar siempre; bajar PS mejora mucho la captura."""
-    rarity=rarity_for(int(species)); maximum=float(SAFARI_CAPTURE_CHANCE.get(rarity,0.45))
+    """Bajar PS ayuda mucho con Pokémon normales y solo un poco con legendarios."""
+    species=int(species)
+    rarity=rarity_for(species); maximum=float(SAFARI_CAPTURE_CHANCE.get(rarity,0.45))
     hp=max(0.0,min(1.0,float(hp_ratio)))
-    # A PS completos se conserva 30% de la probabilidad máxima; a 0 PS se usa el máximo.
-    factor=0.30 + (1.0-hp)*0.70
+    if species in set(int(x) for x in LEGENDARY_IDS):
+        # Los legendarios se resisten: pasar de PS completos a 0 solo da un 20% extra.
+        factor=0.80 + (1.0-hp)*0.20
+    else:
+        # En los demás, debilitarlos aumenta claramente la probabilidad de captura.
+        factor=0.25 + (1.0-hp)*0.75
     return max(0.005,min(0.95,maximum*factor))
 
 
@@ -4538,7 +4543,8 @@ async def _safari_roll_capture(context,chat_id:int,thread_id:int|None,chance:flo
     """Anima el dado de Telegram; las caras altas favorecen la captura."""
     dice=await context.bot.send_dice(chat_id=int(chat_id),message_thread_id=thread_id or None,emoji='🎲')
     value=int(dice.dice.value)
-    await asyncio.sleep(WILD_DICE_ANIMATION_SECONDS)
+    # Telegram reproduce la animación por su cuenta; no bloqueamos el callback 4.2 s
+    # ni mantenemos abierta la transacción de Safari esperando a que termine.
     # Cada cara ocupa una sexta parte del rango; así se conserva la probabilidad configurada
     # y una tirada alta resulta más favorable sin convertir el dado en mero adorno.
     roll=((6-value)+random.random())/6.0
