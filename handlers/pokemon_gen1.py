@@ -5413,7 +5413,7 @@ async def _spawn_npc_encounter(context:ContextTypes.DEFAULT_TYPE,chat_id:int,thr
             c.execute("SELECT 1 FROM pokemon_npc_encounters_tb WHERE chat_id=%s AND thread_id IS NOT DISTINCT FROM %s AND encounter_type='leader' AND is_manual=FALSE AND (created_at AT TIME ZONE 'America/Mexico_City')::date=%s LIMIT 1",(chat_id,thread_id,today))
             if c.fetchone() and not forced_key:conn.rollback(); return False
             key=forced_key if forced_key in KANTO_LEADERS else random.choice(list(KANTO_LEADERS)); mode=3
-        c.execute("INSERT INTO pokemon_npc_encounters_tb(chat_id,thread_id,npc_key,encounter_type,mode,is_manual) VALUES(%s,%s,%s,%s,%s,%s) RETURNING encounter_id",(chat_id,thread_id,key,kind,mode,bool(forced_key))); eid=int(c.fetchone()[0]); conn.commit()
+        c.execute("INSERT INTO pokemon_npc_encounters_tb(chat_id,thread_id,npc_key,encounter_type,mode,is_manual,expires_at) VALUES(%s,%s,%s,%s,%s,%s,NOW()+INTERVAL '10 minutes') RETURNING encounter_id",(chat_id,thread_id,key,kind,mode,bool(forced_key))); eid=int(c.fetchone()[0]); conn.commit()
     except Exception as e:conn.rollback(); print('[PK NPC spawn]',type(e).__name__,e); return False
     finally:_put_connection(conn)
     return await _send_npc_encounter(context,eid)
@@ -5432,7 +5432,7 @@ async def _spawn_halloween_special_npc(context:ContextTypes.DEFAULT_TYPE,chat_id
                       (chat_id,thread_id,key,today))
             if c.fetchone():conn.rollback(); return False
         mode=int(HALLOWEEN_NPCS[key].get('event_mode',3))
-        c.execute("INSERT INTO pokemon_npc_encounters_tb(chat_id,thread_id,npc_key,encounter_type,mode,is_manual) VALUES(%s,%s,%s,'normal',%s,%s) RETURNING encounter_id",
+        c.execute("INSERT INTO pokemon_npc_encounters_tb(chat_id,thread_id,npc_key,encounter_type,mode,is_manual,expires_at) VALUES(%s,%s,%s,'normal',%s,%s,NOW()+INTERVAL '10 minutes') RETURNING encounter_id",
                   (chat_id,thread_id,key,mode,bool(manual))); eid=int(c.fetchone()[0]); conn.commit()
     except Exception as e:conn.rollback(); print('[PK Halloween NPC spawn]',type(e).__name__,e); return False
     finally:_put_connection(conn)
