@@ -6649,6 +6649,7 @@ async def _pokemon_extended_callback(update:Update,context:ContextTypes.DEFAULT_
         if notes:
             try:await q.message.reply_text('\n'.join(notes))
             except Exception:pass
+        await _notify_pending_move_learning(context,uid)
         return True
     if action in ('leg','legthrow','legmaster'):
         eid=int(p[2]); conn=_get_connection(); row=None
@@ -7430,7 +7431,9 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             conn.rollback(); print('[PK candy level]',type(e).__name__,e)
         finally:_put_connection(conn)
-        return await q.answer('🍬 '+(' · '.join(notes) if notes else 'Subió un nivel.'),show_alert=True)
+        await q.answer('🍬 '+(' · '.join(notes) if notes else 'Subió un nivel.'),show_alert=True)
+        await _notify_pending_move_learning(context,uid)
+        return
     if action=='list':
         page=int(p[2]); await q.answer()
         text=f'🎮 TUS POKÉMON\n\nColección privada. Toca uno para administrarlo.'
@@ -7683,7 +7686,10 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
                 if evo_notes:note+='\n'+'\n'.join(evo_notes)
         except Exception as e:conn.rollback(); print('[PK evolve]',e)
         finally:_put_connection(conn)
-        return await q.answer(note or 'No pude evolucionarlo.',show_alert=True)
+        await q.answer(note or 'No pude evolucionarlo.',show_alert=True)
+        if note:
+            await _notify_pending_move_learning(context,uid)
+        return
 
     if action=='teachreplace':
         code=p[2]; pid=int(p[3]); idx=int(p[4]);
@@ -7976,29 +7982,36 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         else:return await q.answer('Abre primero el privado de PiBot con /start.',show_alert=True)
         return
     if action in ('move','bswitch','bitem'):
+        # Confirmamos el callback antes del trabajo de base de datos para que Telegram
+        # no deje el botón girando mientras se resuelve la ronda.
+        try: await q.answer('Acción recibida; procesando…')
+        except Exception: pass
+        async def _battle_action_feedback(message):
+            try: await context.bot.send_message(chat_id=uid,text=message)
+            except Exception: pass
         bid=int(p[2]); conn=_get_connection(); final=None; state=None; logs=[]
         try:
             c=conn.cursor(); c.execute("SELECT state_json,status,chat_id,thread_id,message_id FROM pokemon_battles_tb WHERE battle_id=%s FOR UPDATE",(bid,)); br=c.fetchone()
-            if not br or br[1]!='active':conn.rollback(); return await q.answer('La batalla ya terminó.',show_alert=True)
+            if not br or br[1]!='active':conn.rollback(); return await _battle_action_feedback('La batalla ya terminó.')
             state=json.loads(br[0]); key=str(uid)
-            if key not in state['players']:conn.rollback(); return await q.answer('No participas en esta batalla.',show_alert=True)
-            if key in state.get('choices',{}):conn.rollback(); return await q.answer('Ya elegiste en esta ronda.',show_alert=True)
+            if key not in state['players']:conn.rollback(); return await _battle_action_feedback('No participas en esta batalla.')
+            if key in state.get('choices',{}):conn.rollback(); return await _battle_action_feedback('Ya elegiste en esta ronda.')
             player=state['players'][key]
             if action=='move':
                 idx=int(p[3]); mon=player['mons'][player['active']]
-                if idx<0 or idx>=len(mon['moves']):conn.rollback(); return await q.answer('Movimiento inválido.',show_alert=True)
+                if idx<0 or idx>=len(mon['moves']):conn.rollback(); return await _battle_action_feedback('Movimiento inválido.')
                 code=mon['moves'][idx]
                 locked=mon.get('choice_lock') if mon.get('held_item') in ('choice_band','choice_specs','choice_scarf') else None
-                if locked and code!=locked:conn.rollback(); return await q.answer(f"{_item_name(mon.get('held_item'))} te mantiene usando {MOVES.get(locked,(locked,))[0]}.",show_alert=True)
-                if int(mon.get('pp',{}).get(code,0))<=0:conn.rollback(); return await q.answer('Ese movimiento ya no tiene PP.',show_alert=True)
+                if locked and code!=locked:conn.rollback(); return await _battle_action_feedback(f"{_item_name(mon.get('held_item'))} te mantiene usando {MOVES.get(locked,(locked,))[0]}.")
+                if int(mon.get('pp',{}).get(code,0))<=0:conn.rollback(); return await _battle_action_feedback('Ese movimiento ya no tiene PP.')
                 state.setdefault('choices',{})[key]={'type':'move','move':code}
             elif action=='bswitch':
                 idx=int(p[3]);
-                if idx<0 or idx>=len(player['mons']) or idx==player['active'] or player['mons'][idx]['hp']<=0:conn.rollback(); return await q.answer('No puedes cambiar a ese Pokémon.',show_alert=True)
+                if idx<0 or idx>=len(player['mons']) or idx==player['active'] or player['mons'][idx]['hp']<=0:conn.rollback(); return await _battle_action_feedback('No puedes cambiar a ese Pokémon.')
                 state.setdefault('choices',{})[key]={'type':'switch','index':idx}
             else:
                 code=p[3]
-                if code not in ITEMS or ITEMS[code][3] not in ('heal','revive'):conn.rollback(); return await q.answer('Ese objeto no se usa en batalla.',show_alert=True)
+                if code not in ITEMS or ITEMS[code][3] not in ('heal','revive'):conn.rollback(); return await _battle_action_feedback('Ese objeto no se usa en batalla.')
                 state.setdefault('choices',{})[key]={'type':'item','item':code}
             if state.get('battle_kind')=='training' and str(TRAINING_BOT_ID) in state['players'] and str(TRAINING_BOT_ID) not in state.get('choices',{}):
                 state.setdefault('choices',{})[str(TRAINING_BOT_ID)]=_training_bot_choice(state)
@@ -8015,9 +8028,8 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             else:
                 c.execute("UPDATE pokemon_battles_tb SET state_json=%s,updated_at=NOW() WHERE battle_id=%s",(json.dumps(state,ensure_ascii=False),bid))
             conn.commit(); chat_id=int(br[2]); thread_id=br[3]; msgid=br[4]
-        except Exception as e:conn.rollback(); print('[PK action]',type(e).__name__,e); return await q.answer('No pude registrar la acción.',show_alert=True)
+        except Exception as e:conn.rollback(); print('[PK action]',type(e).__name__,e); return await _battle_action_feedback('No pude registrar la acción.')
         finally:_put_connection(conn)
-        await q.answer('Acción elegida ✅')
         # Borra selectores auxiliares de cambio/objeto usados en esta ronda.
         await _delete_battle_transients(context,bid,uid)
         if logs or final:
@@ -8027,6 +8039,8 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         note='\n'.join(logs[-8:]) if logs else 'Esperando la elección del rival…'
         await _sync_single_battle_views(context,bid,state,chat_id,thread_id,msgid,note,final=bool(final))
         if final:
+            for move_owner in _human_battle_ids(state):
+                await _notify_pending_move_learning(context,move_owner)
             if final.get('safari'):
                 result_text='\n'.join(_safari_result_lines(final))
                 await _update_single_public_final(context,bid,state,chat_id,thread_id,msgid,note,result_text)
