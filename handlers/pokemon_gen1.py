@@ -2940,6 +2940,81 @@ async def entrenamientopokemon_command(update:Update, context:ContextTypes.DEFAU
                                     f'🏋️ Centro de Entrenamiento · rival promedio Nv.{avg}\nIntentos completados hoy: {used}/{TRAINING_DAILY_LIMIT}')
 
 
+async def cancelarbatallapokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
+    """Cancela cualquier reto o batalla Pokémon pendiente/atascada del usuario."""
+    user=update.effective_user
+    if not user:
+        return
+    uid=int(user.id)
+    conn=_get_connection(); cancelled=[]
+    try:
+        c=conn.cursor()
+        c.execute("""SELECT battle_id,chat_id,thread_id,message_id,state_json,tournament_match_id
+                     FROM pokemon_battles_tb
+                     WHERE status IN ('open','active') AND (challenger_id=%s OR opponent_id=%s)
+                     ORDER BY created_at DESC FOR UPDATE""",(uid,uid))
+        rows=c.fetchall()
+        for row in rows:
+            bid,chat_id,thread_id,message_id,state_json,match_id=row
+            state={}
+            try:
+                state=json.loads(state_json or '{}') if isinstance(state_json,(str,bytes,bytearray)) else (state_json or {})
+                if not isinstance(state,dict): state={}
+            except Exception:
+                state={}
+            state['status']='cancelled'
+            c.execute("""UPDATE pokemon_battles_tb
+                         SET status='cancelled',state_json=%s,finished_at=NOW(),updated_at=NOW()
+                         WHERE battle_id=%s AND status IN ('open','active')""",
+                      (json.dumps(state,ensure_ascii=False),int(bid)))
+            if match_id:
+                c.execute("""UPDATE pokemon_tournament_matches_tb
+                             SET battle_id=NULL,status='pending'
+                             WHERE match_id=%s AND status='active'""",(int(match_id),))
+            c.execute("UPDATE pokemon_training_sessions_tb SET status='cancelled',finished_at=NOW() WHERE battle_id=%s AND status='active'",(int(bid),))
+            # Safari: cancela solo el combate actual, no la sesión ni las Safari Balls.
+            c.execute("DELETE FROM pokemon_safari_battles_tb WHERE battle_id=%s",(int(bid),))
+            cancelled.append((int(bid),int(chat_id),int(message_id) if message_id else None))
+
+        # Incursiones: liberar el combate individual atascado sin cancelar la incursión
+        # compartida ni borrar el daño/recompensas ya registrados del jugador.
+        c.execute("""SELECT raid_id FROM pokemon_raid_participants_tb
+                     WHERE user_id=%s AND battle_status='active'
+                     FOR UPDATE""",(uid,))
+        raid_rows=c.fetchall()
+        for raid_row in raid_rows:
+            raid_id=int(raid_row[0])
+            c.execute("""UPDATE pokemon_raid_participants_tb
+                         SET battle_status='cancelled',battle_state_json='{}',battle_message_id=NULL
+                         WHERE raid_id=%s AND user_id=%s AND battle_status='active'""",(raid_id,uid))
+            cancelled.append((f'raid-{raid_id}',None,None))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print('[PK cancel battle command]',type(e).__name__,e)
+        return await update.effective_message.reply_text('⚠️ No pude cancelar la batalla por un error interno. Inténtalo de nuevo.')
+    finally:
+        _put_connection(conn)
+
+    if not cancelled:
+        return await update.effective_message.reply_text('⚔️ No tienes retos ni batallas Pokémon pendientes para cancelar.')
+
+    # Actualiza los mensajes antiguos para que no parezcan seguir activos.
+    for bid,chat_id,message_id in cancelled:
+        if message_id and chat_id is not None:
+            try:
+                await context.bot.edit_message_text(chat_id=chat_id,message_id=message_id,
+                    text=f'❌ Batalla Pokémon #{bid} cancelada manualmente. Puedes volver a retar.')
+            except Exception:
+                pass
+    count=len(cancelled)
+    return await update.effective_message.reply_text(
+        f'🛑 Cancelé/liberé {count} combate(s) o reto(s) Pokémon pendiente(s).\n'
+        'Safari e incursiones grupales no se cierran: solo se libera tu combate individual.\n'
+        'Ya puedes volver a retar o entrar de nuevo a tu combate.'
+    )
+
+
 async def batallapokemon_command(update:Update, context:ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type=='private':return await update.effective_message.reply_text('⚔️ Las batallas Pokémon se retan en el tema Juegos y Casino.')
     if not _is_games_topic(update):return await update.effective_message.reply_text('⚠️ Las batallas Pokémon solo se pueden iniciar en el tema Juegos y Casino.')
