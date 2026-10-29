@@ -562,11 +562,14 @@ def main() -> None:
         # Halloween 2026: las funciones se apagan solas después del 5 de noviembre 23:59 (México).
         app.job_queue.run_repeating(pokemon_halloween_event_job, interval=10800, first=900, name='pokemon_halloween_surprise_3h')
         app.job_queue.run_daily(pokemon_halloween_npc_job, time=_pk_dt_time(hour=19, minute=15, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_halloween_npc_daily')
-        app.job_queue.run_daily(pokemon_halloween_boss_job, time=_pk_dt_time(hour=22, minute=15, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_halloween_boss_weekend')
+        # El jefe reintenta durante la ventana nocturna si Telegram o el tema fallaron.
+        app.job_queue.run_repeating(pokemon_halloween_boss_job, interval=900, first=10, name='pokemon_halloween_boss_retry_15m')
         # Expansión Pokémon: clima, Rocket diario, incursiones cada ~2 días y mantenimiento de eventos.
         app.job_queue.run_repeating(pokemon_weather_job, interval=21600, first=600, name='pokemon_weather_6h')
         app.job_queue.run_daily(pokemon_rocket_job, time=_pk_dt_time(hour=17, minute=45, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_rocket_daily')
-        app.job_queue.run_daily(pokemon_raid_job, time=_pk_dt_time(hour=21, minute=45, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_raid_check_daily')
+        # Reintenta el chequeo varias veces al día. El propio job respeta el cooldown
+        # de 47 h desde una incursión publicada con éxito y limpia intentos fantasma.
+        app.job_queue.run_repeating(pokemon_raid_job, interval=21600, first=300, name='pokemon_raid_check_6h')
         app.job_queue.run_daily(pokemon_daily_missions_job, time=_pk_dt_time(hour=0, minute=0, tzinfo=ZoneInfo('America/Mexico_City')), name='pokemon_daily_missions_24h')
         app.job_queue.run_repeating(pokemon_adventure_maintenance_job, interval=60, first=30, name='pokemon_adventure_maintenance')
         # Pregunta del Día: 10:00 AM hora de México. El coordinador reserva su ventana para evitar choques.
