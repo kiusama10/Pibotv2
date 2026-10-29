@@ -2140,10 +2140,113 @@ async def presumirpokemon_command(update:Update, context:ContextTypes.DEFAULT_TY
     if update.effective_chat.type!='private': await update.effective_message.reply_text('📩 No tienes principal todavía; te mandé tu colección por privado.')
 
 
+async def _delete_public_pokemon_message_job(context:ContextTypes.DEFAULT_TYPE):
+    """Borra publicaciones de Pokémon temporales sin afectar sus datos de juego."""
+    data=getattr(getattr(context,'job',None),'data',None) or {}
+    try:
+        chat_id=int(data.get('chat_id'))
+        message_id=int(data.get('message_id'))
+    except (TypeError,ValueError):
+        return
+    try:
+        await context.bot.delete_message(chat_id=chat_id,message_id=message_id)
+    except Exception as exc:
+        # Puede que un administrador ya haya borrado el mensaje o que Telegram lo haya retirado.
+        print('[PK public media cleanup]',type(exc).__name__,exc)
+
+
+def _schedule_public_pokemon_cleanup(context,chat_id:int,message_id:int,shiny:bool,species:int):
+    """Programa 3 minutos de permanencia para medios públicos comunes."""
+    try:
+        public_chat=int(chat_id)<0
+        legendary=int(species) in {int(x) for x in LEGENDARY_IDS}
+        if not public_chat or bool(shiny) or legendary or not context.job_queue:
+            return False
+        context.job_queue.run_once(
+            _delete_public_pokemon_message_job,
+            180,
+            data={'chat_id':int(chat_id),'message_id':int(message_id)},
+            name=f'pk_public_media_delete:{int(chat_id)}:{int(message_id)}',
+        )
+        return True
+    except Exception as exc:
+        print('[PK public media cleanup schedule]',type(exc).__name__,exc)
+        return False
+
+
+def _pokemon_sprite_gif_urls(species:int,shiny:bool=False,sex=None)->list[str]:
+    """GIFs locales al repo; las variantes ausentes caen a la variante disponible."""
+    species=max(1,min(151,int(species)))
+    base=('https://raw.githubusercontent.com/kiusama10/Pibotv2/main/'
+          'sprites%5Cpokemon%5Cversions%5Cgeneration-vii%5Clets-go-pikachu-lets-go-eevee')
+    sex_text=str(sex or '').strip().lower()
+    female=sex_text in ('female','f','♀','hembra','mujer','2')
+    candidates=[]
+    if bool(shiny) and female:
+        candidates.append(f'{base}/Shiny/Female/{species}.gif')
+    if bool(shiny):
+        candidates.append(f'{base}/Shiny/{species}.gif')
+    if female and not bool(shiny):
+        candidates.append(f'{base}/female/{species}.gif')
+    candidates.append(f'{base}/{species}.gif')
+    # Preserve order while avoiding duplicate URLs.
+    return list(dict.fromkeys(candidates))
+
+
+async def _send_captured_pokemon_public(context,chat_id:int,thread_id:int|None,result_text:str,
+                                        owner_id:int,caught:dict,species:int,shiny:bool):
+    """Publica la captura con el GIF correcto y cae a medios propios/PNG si falta."""
+    message=None
+    media_type=None
+    media_file_id=None
+    pokemon_id=caught.get('pokemon_id')
+    if pokemon_id:
+        try:
+            own_row=_get_instance(int(owner_id),int(pokemon_id))
+            if own_row:
+                media_type=own_row[6] if len(own_row)>6 else None
+                media_file_id=own_row[7] if len(own_row)>7 else None
+        except Exception as exc:
+            print('[PK captured media lookup]',type(exc).__name__,exc)
+    kwargs={'chat_id':int(chat_id),'message_thread_id':thread_id or None}
+    # Solo se usa el archivo personalizado de ESTE ejemplar y su dueño.
+    if media_file_id:
+        try:
+            if media_type=='animation':
+                message=await context.bot.send_animation(animation=media_file_id,caption=result_text,**kwargs)
+            elif media_type=='photo':
+                message=await context.bot.send_photo(photo=media_file_id,caption=result_text,**kwargs)
+            elif media_type=='video':
+                message=await context.bot.send_video(video=media_file_id,caption=result_text,**kwargs)
+        except Exception as exc:
+            print('[PK captured own media fallback]',type(exc).__name__,exc)
+    # GIF femenino/shiny si existe; cada variante fallida pasa a la siguiente.
+    if message is None:
+        for sprite_url in _pokemon_sprite_gif_urls(species,shiny,caught.get('sex')):
+            try:
+                message=await context.bot.send_animation(animation=sprite_url,caption=result_text,**kwargs)
+                break
+            except Exception as exc:
+                print('[PK sprite GIF fallback]',type(exc).__name__,exc)
+    # Fallback final independiente de las carpetas GIF.
+    if message is None:
+        variant='shiny/' if bool(shiny) else ''
+        static_url=f'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{variant}{int(species)}.png'
+        try:
+            message=await context.bot.send_photo(photo=static_url,caption=result_text,**kwargs)
+        except Exception as exc:
+            print('[PK sprite PNG fallback]',type(exc).__name__,exc)
+    if message is None:
+        message=await context.bot.send_message(text=result_text,**kwargs)
+    _schedule_public_pokemon_cleanup(context,int(chat_id),int(message.message_id),bool(shiny),int(species))
+    return message
+
+
 async def _send_brag(context, uid:int, pid:int, target:dict):
     row=_get_instance(uid,pid)
     if not row:return False
     species=int(row[1]); nickname=row[2]; level=int(row[3]); media_type=row[6]; file_id=row[7]; wins=int(row[8]); losses=int(row[9]); shiny=bool(row[10]) if len(row)>10 else False
+    sex=row[17] if len(row)>17 else None
     conn=_get_connection()
     try:
         c=conn.cursor(); owner=_display_name_cursor(c,uid)
@@ -2153,20 +2256,51 @@ async def _send_brag(context, uid:int, pid:int, target:dict):
     principal_line='⭐ PRINCIPAL\n' if principal else ''
     caption=(f"✨ POKÉMON DE {owner}\n"
              f"{principal_line}"
-             f"{rarity_emoji(rarity_for(species))} #{species:03d} {'✨ SHINY · ' if shiny else ''}{title} {_sex_symbol(row[17]) if len(row)>17 else ''}\n"
+             f"{rarity_emoji(rarity_for(species))} #{species:03d} {'✨ SHINY · ' if shiny else ''}{title} {_sex_symbol(sex) if sex else ''}\n"
              f"{NAMES[species]} · Nv.{level}\n"
              f"{_types_text(species)}\n"
              f"🧬 IV: {ivpct}% · {_iv_grade(ivpct)}\n"
              f"⚔️ {wins}V / {losses}D\n\n"
              "Su equipo y sus movimientos siguen siendo privados.")
     kwargs={'chat_id':target['chat_id'],'message_thread_id':target.get('thread_id')}
-    try:
-        if media_type=='photo' and file_id: await context.bot.send_photo(photo=file_id,caption=caption,**kwargs)
-        elif media_type=='animation' and file_id: await context.bot.send_animation(animation=file_id,caption=caption,**kwargs)
-        elif media_type=='video' and file_id: await context.bot.send_video(video=file_id,caption=caption,**kwargs)
-        else: await context.bot.send_message(text=caption,**kwargs)
-        return True
-    except Exception:return False
+    msg=None
+    # Primero conserva el medio que el entrenador asignó a ESTE ejemplar.
+    # Si no tiene medio (o su file_id dejó de funcionar), se usa el GIF de GitHub.
+    if file_id and media_type in ('photo','animation','video'):
+        try:
+            if media_type=='photo':
+                msg=await context.bot.send_photo(photo=file_id,caption=caption,**kwargs)
+            elif media_type=='animation':
+                msg=await context.bot.send_animation(animation=file_id,caption=caption,**kwargs)
+            elif media_type=='video':
+                msg=await context.bot.send_video(video=file_id,caption=caption,**kwargs)
+        except Exception as exc:
+            print('[PK brag custom media fallback]',type(exc).__name__,exc)
+    # Respaldo: GIF correspondiente a la especie y, cuando exista, shiny/femenino.
+    if msg is None:
+        for sprite_url in _pokemon_sprite_gif_urls(species,shiny,sex):
+            try:
+                msg=await context.bot.send_animation(animation=sprite_url,caption=caption,**kwargs)
+                break
+            except Exception as exc:
+                print('[PK brag sprite GIF fallback]',type(exc).__name__,exc)
+    # Último respaldo por si no se puede cargar ningún GIF de GitHub.
+    if msg is None:
+        variant='shiny/' if shiny else ''
+        static_url=f'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{variant}{species}.png'
+        try:
+            msg=await context.bot.send_photo(photo=static_url,caption=caption,**kwargs)
+        except Exception as exc:
+            print('[PK brag static sprite fallback]',type(exc).__name__,exc)
+    # Nunca pierde el anuncio: si fallan todos los medios, envía al menos la ficha en texto.
+    if msg is None:
+        try:
+            msg=await context.bot.send_message(text=caption,**kwargs)
+        except Exception as exc:
+            print('[PK brag send]',type(exc).__name__,exc)
+            return False
+    _schedule_public_pokemon_cleanup(context,int(target['chat_id']),int(msg.message_id),shiny,species)
+    return True
 
 
 # ------------------------------ BATALLAS ------------------------------
@@ -4399,7 +4533,9 @@ async def pokemon_halloween_npc_job(context:ContextTypes.DEFAULT_TYPE):
 
 
 async def pokemon_halloween_boss_job(context:ContextTypes.DEFAULT_TYPE):
-    if not _halloween_active() or _halloween_now().weekday() not in (4,5,6):return
+    # El jefe aparece cualquier día del evento desde las 22:00; el job reintenta cada 15 min.
+    now=_halloween_now()
+    if not _halloween_active(now) or now.hour < 22:return
     for community in COMUNIDADES:
         try:
             chat_id=int(community.get('id_comunidad')); thread_id=_games_topic(chat_id)
@@ -4955,9 +5091,12 @@ def _raid_reference_level_cursor(c)->int:
 async def _spawn_raid(context,chat_id:int,thread_id:int|None,manual:bool=False,forced_legendary:bool|None=None)->bool:
     conn=_get_connection(); row=None
     try:
-        c=conn.cursor(); c.execute("SELECT created_at FROM pokemon_raids_tb WHERE chat_id=%s AND thread_id=%s ORDER BY raid_id DESC LIMIT 1",(chat_id,int(thread_id or 0))); last=c.fetchone()
-        if last and not manual and (datetime.now(timezone.utc)-last[0]).total_seconds()<47*3600:conn.rollback(); return False
-        if _raid_active_cursor(c,chat_id,thread_id):conn.rollback(); return False
+        c=conn.cursor()
+        # Los intentos que nunca llegaron a Telegram no cuentan para el cooldown.
+        c.execute("UPDATE pokemon_raids_tb SET status='expired',finished_at=COALESCE(finished_at,NOW()) WHERE chat_id=%s AND thread_id=%s AND status IN ('active','capture') AND message_id IS NULL AND created_at<NOW()-INTERVAL '2 minutes'",(chat_id,int(thread_id or 0)))
+        c.execute("SELECT created_at FROM pokemon_raids_tb WHERE chat_id=%s AND thread_id=%s AND message_id IS NOT NULL ORDER BY raid_id DESC LIMIT 1",(chat_id,int(thread_id or 0))); last=c.fetchone()
+        if last and not manual and (datetime.now(timezone.utc)-last[0]).total_seconds()<47*3600:conn.commit(); return False
+        if _raid_active_cursor(c,chat_id,thread_id):conn.commit(); return False
         legendary=(bool(forced_legendary) if forced_legendary is not None else random.random()<RAID_LEGENDARY_CHANCE)
         reference_level=_raid_reference_level_cursor(c)
         if legendary:
@@ -4982,11 +5121,27 @@ async def _spawn_raid(context,chat_id:int,thread_id:int|None,manual:bool=False,f
         sprite_url=f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{sprite_variant}{int(row[3])}.png"
         try:
             msg=await context.bot.send_photo(chat_id,photo=sprite_url,caption=_raid_text(row),message_thread_id=thread_id or None,reply_markup=_raid_markup(row))
-        except Exception:
-            # Si Telegram no puede descargar el sprite, la incursión sigue apareciendo como texto.
+        except Exception as sprite_error:
+            print('[PK raid sprite fallback]',type(sprite_error).__name__,sprite_error)
             msg=await context.bot.send_message(chat_id,_raid_text(row),message_thread_id=thread_id or None,reply_markup=_raid_markup(row))
-        conn=_get_connection(); c=conn.cursor(); c.execute("UPDATE pokemon_raids_tb SET message_id=%s WHERE raid_id=%s",(msg.message_id,int(row[0]))); conn.commit(); _put_connection(conn); return True
-    except Exception as e:print('[PK raid send]',type(e).__name__,e); return False
+        update_conn=_get_connection()
+        try:
+            cur=update_conn.cursor(); cur.execute("UPDATE pokemon_raids_tb SET message_id=%s WHERE raid_id=%s",(msg.message_id,int(row[0]))); update_conn.commit()
+        except Exception:
+            update_conn.rollback()
+            # El mensaje ya existe aunque el id no se haya guardado; no volver a crear otro raid activo.
+            raise
+        finally:
+            _put_connection(update_conn)
+        return True
+    except Exception as e:
+        print('[PK raid send]',type(e).__name__,e)
+        failed_conn=_get_connection()
+        try:
+            cur=failed_conn.cursor(); cur.execute("UPDATE pokemon_raids_tb SET status='expired',finished_at=COALESCE(finished_at,NOW()) WHERE raid_id=%s AND message_id IS NULL",(int(row[0]),)); failed_conn.commit()
+        except Exception:failed_conn.rollback()
+        finally:_put_connection(failed_conn)
+        return False
 
 
 async def pokemon_raid_job(context:ContextTypes.DEFAULT_TYPE):
@@ -5022,13 +5177,55 @@ async def raidahora_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
 
 async def pokemon_adventure_maintenance_job(context:ContextTypes.DEFAULT_TYPE):
-    rocket_ids=[]; raid_ids=[]
+    rocket_ids=[]; raid_ids=[]; stale_battles=[]; expired_safari_battle_ids=[]
     conn=_get_connection()
     try:
         c=conn.cursor()
+        # Caducan primero las sesiones Safari; después se cancelan sus combates vinculados.
         c.execute("UPDATE pokemon_safari_sessions_tb SET status='expired',finished_at=NOW() WHERE status='active' AND expires_at<=NOW()")
+        c.execute("""SELECT b.battle_id,b.chat_id,b.thread_id,b.challenger_id,b.opponent_id,b.status,
+                          b.state_json,b.message_id,b.tournament_match_id
+                   FROM pokemon_battles_tb b
+                   JOIN pokemon_safari_battles_tb sb ON sb.battle_id=b.battle_id
+                   JOIN pokemon_safari_sessions_tb s ON s.session_id=sb.session_id
+                   WHERE b.status='active'
+                     AND (s.status<>'active' OR s.expires_at<=NOW()
+                          OR b.updated_at<NOW()-INTERVAL '30 minutes')
+                   FOR UPDATE OF b""")
+        expired_safari_battle_ids=[r[0] for r in c.fetchall()]
+        # También limpia retos olvidados y combates sin actividad que bloquean comandos para siempre.
+        c.execute("""SELECT battle_id,chat_id,thread_id,challenger_id,opponent_id,status,state_json,message_id,tournament_match_id
+                   FROM pokemon_battles_tb
+                   WHERE ((status='open' AND tournament_match_id IS NULL AND created_at<NOW()-INTERVAL '20 minutes')
+                       OR (status='active' AND updated_at<NOW()-INTERVAL '30 minutes'))
+                   FOR UPDATE""")
+        stale_battles=c.fetchall()
+        safari_rows=[]
+        # Fetch full rows for the Safari battle ids selected above.
+        if expired_safari_battle_ids:
+            c.execute("""SELECT battle_id,chat_id,thread_id,challenger_id,opponent_id,status,state_json,message_id,tournament_match_id
+                         FROM pokemon_battles_tb WHERE battle_id=ANY(%s) FOR UPDATE""",(expired_safari_battle_ids,))
+            safari_rows=c.fetchall()
+        rows_by_id={int(r[0]):r for r in stale_battles}
+        for r in safari_rows:rows_by_id[int(r[0])]=r
+        stale_battles=list(rows_by_id.values())
+        for r in stale_battles:
+            bid=int(r[0]); old_status=str(r[5]); raw_state=r[6]
+            try:state=json.loads(raw_state or '{}') if isinstance(raw_state,str) else (raw_state or {})
+            except Exception:state={}
+            if not isinstance(state,dict):state={}
+            state['status']='cancelled'
+            state['cancel_reason']='Safari expirado' if bid in {int(x[0]) for x in safari_rows} else 'Inactividad'
+            state['cancelled_at']=datetime.now(timezone.utc).isoformat()
+            c.execute("UPDATE pokemon_battles_tb SET status='cancelled',state_json=%s,finished_at=NOW(),updated_at=NOW() WHERE battle_id=%s AND status IN ('open','active')",
+                      (json.dumps(state,ensure_ascii=False),bid))
+            # No dejar una partida de torneo apuntando a un combate ya cancelado.
+            if r[8] is not None:
+                c.execute("UPDATE pokemon_tournament_matches_tb SET battle_id=NULL,status='pending' WHERE match_id=%s AND battle_id=%s AND status='active'",(int(r[8]),bid))
         c.execute("SELECT event_id FROM pokemon_rocket_events_tb WHERE status='active' AND expires_at<=NOW() FOR UPDATE"); rocket_ids=[int(r[0]) for r in c.fetchall()]
         if rocket_ids:c.execute("UPDATE pokemon_rocket_events_tb SET status='expired',finished_at=NOW() WHERE event_id=ANY(%s)",(rocket_ids,))
+        # Incursiones activas sin mensaje son intentos incompletos, no eventos reales.
+        c.execute("UPDATE pokemon_raids_tb SET status='expired',finished_at=COALESCE(finished_at,NOW()) WHERE status IN ('active','capture') AND message_id IS NULL AND created_at<NOW()-INTERVAL '2 minutes'")
         c.execute("SELECT raid_id FROM pokemon_raids_tb WHERE status='active' AND expires_at<=NOW() FOR UPDATE"); active_raid_ids=[int(r[0]) for r in c.fetchall()]
         if active_raid_ids:c.execute("UPDATE pokemon_raids_tb SET status='expired',finished_at=NOW() WHERE raid_id=ANY(%s)",(active_raid_ids,))
         c.execute("SELECT raid_id FROM pokemon_raids_tb WHERE status='capture' AND expires_at<=NOW() FOR UPDATE"); capture_raid_ids=[int(r[0]) for r in c.fetchall()]
@@ -5036,8 +5233,27 @@ async def pokemon_adventure_maintenance_job(context:ContextTypes.DEFAULT_TYPE):
         raid_ids=active_raid_ids+capture_raid_ids
         c.execute("DELETE FROM pokemon_fugitives_tb WHERE last_seen_at<NOW()-INTERVAL '7 days'")
         conn.commit()
-    except Exception as e:conn.rollback(); print('[PK adventure maintenance]',type(e).__name__,e)
+    except Exception as e:
+        conn.rollback(); print('[PK adventure maintenance]',type(e).__name__,e)
+        stale_battles=[]; rocket_ids=[]; raid_ids=[]
     finally:_put_connection(conn)
+    # Termina los paneles públicos/privados de batallas caducadas sin dejar botones colgados.
+    for r in stale_battles:
+        try:
+            bid=int(r[0]); chat_id=int(r[1]); thread_id=r[2]; state=r[6]
+            if isinstance(state,str):state=json.loads(state or '{}')
+            if not isinstance(state,dict):state={}
+            if str(r[5])=='open':
+                if r[7]:
+                    try:await context.bot.edit_message_text(chat_id=chat_id,message_id=int(r[7]),text='⌛ Este reto caducó por inactividad. Puedes crear uno nuevo.',reply_markup=None)
+                    except Exception:pass
+                continue
+            state['status']='cancelled'
+            note='🌿 La sesión Safari terminó; el combate se cerró automáticamente.' if state.get('battle_kind')=='safari' else '⌛ El combate se cerró por inactividad.'
+            await _sync_single_battle_views(context,bid,state,chat_id,thread_id,r[7],note,final=True)
+            await _delete_all_battle_transients(context,bid,state)
+            await _send_private_battle_result(context,state,note,skip_chat_id=chat_id)
+        except Exception as e:print('[PK stale battle refresh]',type(e).__name__,e)
     for eid in rocket_ids:
         try:await _refresh_rocket_event_message(context,eid)
         except Exception:pass
@@ -5503,7 +5719,9 @@ async def _spawn_halloween_special_npc(context:ContextTypes.DEFAULT_TYPE,chat_id
         if not manual:
             c.execute("""SELECT 1 FROM pokemon_npc_encounters_tb
                          WHERE chat_id=%s AND thread_id IS NOT DISTINCT FROM %s AND npc_key=%s
-                           AND is_manual=FALSE AND (created_at AT TIME ZONE 'America/Mexico_City')::date=%s LIMIT 1""",
+                           AND is_manual=FALSE AND message_id IS NOT NULL
+                           AND status NOT IN ('expired','cancelled')
+                           AND (created_at AT TIME ZONE 'America/Mexico_City')::date=%s LIMIT 1""",
                       (chat_id,thread_id,key,today))
             if c.fetchone():conn.rollback(); return False
         mode=int(HALLOWEEN_NPCS[key].get('event_mode',3))
@@ -5511,7 +5729,14 @@ async def _spawn_halloween_special_npc(context:ContextTypes.DEFAULT_TYPE,chat_id
                   (chat_id,thread_id,key,mode,bool(manual))); eid=int(c.fetchone()[0]); conn.commit()
     except Exception as e:conn.rollback(); print('[PK Halloween NPC spawn]',type(e).__name__,e); return False
     finally:_put_connection(conn)
-    return await _send_npc_encounter(context,eid)
+    sent=await _send_npc_encounter(context,eid)
+    if not sent:
+        cleanup_conn=_get_connection()
+        try:
+            cur=cleanup_conn.cursor(); cur.execute("UPDATE pokemon_npc_encounters_tb SET status='expired',finished_at=COALESCE(finished_at,NOW()) WHERE encounter_id=%s AND message_id IS NULL",(int(eid),)); cleanup_conn.commit()
+        except Exception:cleanup_conn.rollback()
+        finally:_put_connection(cleanup_conn)
+    return sent
 
 
 async def pokemon_npc_spawn_job(context:ContextTypes.DEFAULT_TYPE):
@@ -7266,7 +7491,10 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             await q.answer('🟣 ¡Captura garantizada!',show_alert=True)
             try:await q.edit_message_text(f'🏆 CAPTURADO POR {trainer_name}\n\n{identity}',reply_markup=None)
             except Exception:pass
-            return await context.bot.send_message(q.message.chat_id,result,message_thread_id=getattr(q.message,'message_thread_id',None))
+            return await _send_captured_pokemon_public(
+                context,q.message.chat_id,getattr(q.message,'message_thread_id',None),result,
+                uid,caught,species,shiny,
+            )
         attempt_line=(f"🎲 Tiro {attempts}/{WILD_MAX_ATTEMPTS} en curso..." if attempts<WILD_MAX_ATTEMPTS else "🎲 Último tiro en curso...")
         encounter_text=(f"🎯 {trainer_name} tomó el encuentro.\n\n"
                         f"❓ El Pokémon sigue siendo desconocido...\n\n{attempt_line}")
@@ -7340,7 +7568,10 @@ async def pokemon_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
             try:
                 await context.bot.edit_message_text(chat_id=q.message.chat_id,message_id=q.message.message_id,text=f'🏆 CAPTURADO POR {trainer_name}\n\n{identity}',reply_markup=None)
             except Exception:pass
-            return await context.bot.send_message(q.message.chat_id,result,message_thread_id=getattr(q.message,'message_thread_id',None))
+            return await _send_captured_pokemon_public(
+                context,q.message.chat_id,getattr(q.message,'message_thread_id',None),result,
+                uid,caught,species,shiny,
+            )
         remaining=WILD_MAX_ATTEMPTS-attempts
         trainer_name=q.from_user.first_name
         conn=_get_connection()
