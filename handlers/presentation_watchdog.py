@@ -19,6 +19,8 @@ TIMEOUT_MINUTES = 20
 MIN_TEXT_WORDS = 4
 FAREWELL_GIF_ID = os.getenv("PRESENTATION_FAREWELL_GIF_ID", "").strip()
 PROMPT_DELAY_SECONDS = max(2, int(os.getenv("PRESENTATION_PROMPT_DELAY_SECONDS", "8")))
+AUTO_DELETE_SECONDS = 120
+FAREWELL_GIF_DELAY_SECONDS = 120
 
 
 def ensure_presentation_tables():
@@ -202,6 +204,21 @@ async def _delete_pibot_prompt(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
         pass
 
 
+def _schedule_message_deletion(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, delay: int = AUTO_DELETE_SECONDS, name: str = "presentation_message"):
+    """Delete a PiBot presentation notice automatically after the chosen delay."""
+    if not message_id or not context.job_queue:
+        return
+    try:
+        context.job_queue.run_once(
+            _delete_notice_job,
+            when=delay,
+            data={"chat_id": chat_id, "message_id": message_id},
+            name=f"{name}_{chat_id}_{message_id}",
+        )
+    except Exception as exc:
+        print(f"[PRESENTACION BORRADO] No pude programar el borrado: {exc}")
+
+
 async def _send_voice_prompt(context: ContextTypes.DEFAULT_TYPE):
     data=context.job.data or {}; chat_id=data.get('chat_id'); user_id=data.get('user_id')
     if not chat_id or not user_id or not _presentation_enabled(chat_id): return
@@ -214,6 +231,7 @@ async def _send_voice_prompt(context: ContextTypes.DEFAULT_TYPE):
             f"«{phrase}»\n\nTienes {TIMEOUT_MINUTES} minutos desde tu entrada."
         ))
         _set_prompt_message_id(chat_id, user_id, sent.message_id)
+        _schedule_message_deletion(context, chat_id, sent.message_id, delay=TIMEOUT_MINUTES * 60 + AUTO_DELETE_SECONDS, name="presentation_prompt_expiry")
     except Exception as exc: print(f"[PRESENTACION VOZ] {exc}")
 
 
@@ -226,10 +244,10 @@ async def _send_text_prompt(context: ContextTypes.DEFAULT_TYPE):
     label = visible_user(user_id=user_id)
     try:
         sent = await context.bot.send_message(chat_id=chat_id, text=(
-            f"📝 {label}, preséntate con un mensaje de al menos {MIN_TEXT_WORDS} palabras.\n\n"
-            f"Un simple hola o emojis no cuentan. Tienes {TIMEOUT_MINUTES} minutos desde tu entrada."
+            f"📝 {label}, preséntate en los próximos {TIMEOUT_MINUTES} minutos, como indican las reglas del grupo."
         ))
         _set_prompt_message_id(chat_id, user_id, sent.message_id)
+        _schedule_message_deletion(context, chat_id, sent.message_id, delay=TIMEOUT_MINUTES * 60 + AUTO_DELETE_SECONDS, name="presentation_prompt_expiry")
     except Exception as exc:
         print(f"[PRESENTACION TEXTO] {exc}")
 
@@ -368,7 +386,8 @@ async def detect_presentation_message(update: Update, context: ContextTypes.DEFA
             except Exception:
                 pass
             try:
-                await msg.reply_text(f"✅ Presentación por texto registrada, {visible_user(user=user)}.")
+                confirmation = await msg.reply_text(f"✅ Presentación por texto registrada, {visible_user(user=user)}.")
+                _schedule_message_deletion(context, chat.id, confirmation.message_id, name="presentation_confirmation")
             except Exception:
                 pass
         return
@@ -382,7 +401,8 @@ async def detect_presentation_message(update: Update, context: ContextTypes.DEFA
             record_system_event(chat.id, user.id, 'presentation_forward_rejected')
         except Exception:
             pass
-        await msg.reply_text(f"🎙️ {visible_user(user=user)}, la nota reenviada no cuenta como presentación. Envía una nota de voz nueva.")
+        notice = await msg.reply_text(f"🎙️ {visible_user(user=user)}, la nota reenviada no cuenta como presentación. Envía una nota de voz nueva.")
+        _schedule_message_deletion(context, chat.id, notice.message_id, name="presentation_rejected")
         return
     if mark_presented(chat.id, user.id):
         await _delete_pibot_prompt(context, chat.id, user.id)
@@ -391,7 +411,8 @@ async def detect_presentation_message(update: Update, context: ContextTypes.DEFA
             record_system_event(chat.id, user.id, 'presentation_completed', {'voice': True})
         except Exception:
             pass
-        await msg.reply_text(f"✅ Presentación registrada, {visible_user(user=user)}.")
+        confirmation = await msg.reply_text(f"✅ Presentación registrada, {visible_user(user=user)}.")
+        _schedule_message_deletion(context, chat.id, confirmation.message_id, name="presentation_confirmation")
 
 
 def _claim_overdue():
@@ -436,6 +457,23 @@ async def _delete_notice_job(context: ContextTypes.DEFAULT_TYPE):
     try: await context.bot.delete_message(chat_id=data['chat_id'],message_id=data['message_id'])
     except Exception: pass
 
+async def _send_farewell_gif_job(context: ContextTypes.DEFAULT_TYPE):
+    """Send the farewell GIF two minutes after a newcomer is removed."""
+    data = context.job.data or {}
+    chat_id = data.get("chat_id")
+    user_id = data.get("user_id")
+    if not chat_id or not user_id:
+        return
+    try:
+        farewell_gif_id = _get_random_farewell_gif(chat_id)
+        farewell_text = f"👋 {visible_user(user_id=user_id)} no alcanzó a presentarse en {TIMEOUT_MINUTES} minutos. ¡Hasta luego!"
+        if farewell_gif_id:
+            await context.bot.send_animation(chat_id=chat_id, animation=farewell_gif_id, caption=farewell_text)
+        else:
+            await context.bot.send_message(chat_id=chat_id, text=farewell_text)
+    except Exception as exc:
+        print(f"[PRESENTACION DESPEDIDA] {exc}")
+
 async def presentation_watchdog_job(context: ContextTypes.DEFAULT_TYPE):
     if not _presentation_enabled(MAIN_CHAT_ID): return
     for chat_id,user_id in _claim_overdue():
@@ -447,17 +485,17 @@ async def presentation_watchdog_job(context: ContextTypes.DEFAULT_TYPE):
             ok = True
             await _delete_pibot_prompt(context, chat_id, user_id)
             try:
-                farewell_gif_id = _get_random_farewell_gif(chat_id)
-                farewell_text = f'👋 {visible_user(user_id=user_id)} no alcanzó a presentarse en {TIMEOUT_MINUTES} minutos. ¡Hasta luego!'
-                if farewell_gif_id:
-                    await context.bot.send_animation(chat_id=chat_id, animation=farewell_gif_id, caption=farewell_text)
-                else:
-                    await context.bot.send_message(chat_id=chat_id, text=farewell_text)
+                context.job_queue.run_once(
+                    _send_farewell_gif_job,
+                    when=FAREWELL_GIF_DELAY_SECONDS,
+                    data={"chat_id": chat_id, "user_id": user_id},
+                    name=f"presentation_farewell_{chat_id}_{user_id}",
+                )
             except Exception as exc:
-                print(f'[PRESENTACION DESPEDIDA] {exc}')
+                print(f"[PRESENTACION DESPEDIDA] No pude programar el GIF: {exc}")
             try:
                 notice=await context.bot.send_message(chat_id=chat_id,text=f'🚪 PiBot retiró a {visible_user(user_id=user_id)} por no completar su presentación a tiempo.')
-                context.job_queue.run_once(_delete_notice_job, when=120, data={'chat_id':chat_id,'message_id':notice.message_id}, name=f'presentation_notice_{chat_id}_{notice.message_id}')
+                context.job_queue.run_once(_delete_notice_job, when=AUTO_DELETE_SECONDS, data={'chat_id':chat_id,'message_id':notice.message_id}, name=f'presentation_notice_{chat_id}_{notice.message_id}')
             except Exception as exc:
                 print(f'[PRESENTACION AVISO] {exc}')
         except Exception as exc:
