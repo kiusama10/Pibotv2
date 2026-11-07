@@ -20,6 +20,7 @@ MIN_TEXT_WORDS = 4
 FAREWELL_GIF_ID = os.getenv("PRESENTATION_FAREWELL_GIF_ID", "").strip()
 PROMPT_DELAY_SECONDS = max(2, int(os.getenv("PRESENTATION_PROMPT_DELAY_SECONDS", "8")))
 AUTO_DELETE_SECONDS = 120
+FAREWELL_GIF_DELAY_SECONDS = 120
 
 
 def ensure_presentation_tables():
@@ -55,13 +56,6 @@ def ensure_presentation_tables():
                 PRIMARY KEY (chat_id, file_id)
             )""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_presentation_pending_deadline ON presentation_watchdog_tb(status, deadline_at)")
-            cur.execute("""CREATE TABLE IF NOT EXISTS presentation_member_messages_tb (
-                chat_id BIGINT NOT NULL,
-                user_id BIGINT NOT NULL,
-                message_id BIGINT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                PRIMARY KEY (chat_id, user_id, message_id)
-            )""")
         conn.commit()
     except Exception:
         conn.rollback(); raise
@@ -122,7 +116,6 @@ def _set_presentations_enabled(chat_id: int, enabled: bool):
                            ON CONFLICT(chat_id) DO UPDATE SET enabled=EXCLUDED.enabled,updated_at=NOW()""", (chat_id, enabled))
             if not enabled:
                 cur.execute("UPDATE presentation_watchdog_tb SET status='cancelled' WHERE chat_id=%s AND status='pending'", (chat_id,))
-                cur.execute("DELETE FROM presentation_member_messages_tb WHERE chat_id=%s", (chat_id,))
         conn.commit()
     except Exception:
         conn.rollback(); raise
@@ -143,8 +136,6 @@ def _create_pending_if_new(chat_id: int, user_id: int) -> bool:
                     presented_at=NULL, removed_at=NULL, verification_phrase=EXCLUDED.verification_phrase,
                     prompt_message_id=NULL
             """, (chat_id, user_id, TIMEOUT_MINUTES, _new_phrase()))
-            # A re-entry starts a clean tracking window for this user.
-            cur.execute("DELETE FROM presentation_member_messages_tb WHERE chat_id=%s AND user_id=%s", (chat_id, user_id))
         conn.commit(); return True
     except Exception:
         conn.rollback(); return False
@@ -203,70 +194,6 @@ def _get_prompt_message_id(chat_id: int, user_id: int):
         _put_connection(conn)
 
 
-def _track_pending_user_message(chat_id: int, user_id: int, message_id: int):
-    """Remember a newcomer message so it can be removed if the user times out."""
-    conn = _get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO presentation_member_messages_tb(chat_id,user_id,message_id)
-                SELECT %s,%s,%s
-                 WHERE EXISTS (
-                    SELECT 1 FROM presentation_watchdog_tb
-                     WHERE chat_id=%s AND user_id=%s AND status='pending'
-                 )
-                ON CONFLICT (chat_id,user_id,message_id) DO NOTHING
-            """, (chat_id, user_id, message_id, chat_id, user_id))
-        conn.commit()
-    except Exception as exc:
-        conn.rollback()
-        print(f"[PRESENTACION MENSAJES] No pude registrar mensaje {message_id}: {exc}")
-    finally:
-        _put_connection(conn)
-
-
-def _get_tracked_user_messages(chat_id: int, user_id: int):
-    conn = _get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT message_id FROM presentation_member_messages_tb
-                 WHERE chat_id=%s AND user_id=%s ORDER BY message_id
-            """, (chat_id, user_id))
-            return [int(row[0]) for row in cur.fetchall()]
-    finally:
-        _put_connection(conn)
-
-
-def _clear_tracked_user_messages(chat_id: int, user_id: int):
-    conn = _get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM presentation_member_messages_tb WHERE chat_id=%s AND user_id=%s", (chat_id, user_id))
-        conn.commit()
-    except Exception:
-        conn.rollback()
-    finally:
-        _put_connection(conn)
-
-
-async def _delete_tracked_user_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int):
-    """Delete messages the bot recorded from a newcomer who failed to present."""
-    message_ids = _get_tracked_user_messages(chat_id, user_id)
-    deleted = 0
-    failed = 0
-    for message_id in message_ids:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-            deleted += 1
-        except Exception as exc:
-            failed += 1
-            print(f"[PRESENTACION MENSAJES] No pude borrar {message_id} de {user_id}: {exc}")
-    _clear_tracked_user_messages(chat_id, user_id)
-    if message_ids:
-        print(f"[PRESENTACION MENSAJES] Usuario {user_id}: {deleted} borrados, {failed} fallidos.")
-
-
 async def _delete_pibot_prompt(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int):
     message_id = _get_prompt_message_id(chat_id, user_id)
     if not message_id:
@@ -317,7 +244,10 @@ async def _send_text_prompt(context: ContextTypes.DEFAULT_TYPE):
     label = visible_user(user_id=user_id)
     try:
         sent = await context.bot.send_message(chat_id=chat_id, text=(
-            f"📝 {label}, preséntate en los próximos {TIMEOUT_MINUTES} minutos, como indican las reglas del grupo."
+            f"👋 ¡Bienvenido/a, {label}!\n\n"
+            "Lee las reglas con /rules y realiza tu presentación como indica Rose. "
+            f"Tienes {TIMEOUT_MINUTES} minutos para hacerlo; de lo contrario, PiBot te retirará del grupo.\n\n"
+            "¡No olvides cumplir las indicaciones!"
         ))
         _set_prompt_message_id(chat_id, user_id, sent.message_id)
         _schedule_message_deletion(context, chat_id, sent.message_id, delay=TIMEOUT_MINUTES * 60 + AUTO_DELETE_SECONDS, name="presentation_prompt_expiry")
@@ -441,12 +371,6 @@ async def detect_presentation_message(update: Update, context: ContextTypes.DEFA
     user = update.effective_user
     if not msg or not chat or not user or user.is_bot or chat.id != MAIN_CHAT_ID or not _presentation_enabled(chat.id):
         return
-
-    # Track every message from a pending newcomer (text, media, stickers, etc.).
-    # The existing message handler must receive all message types for full coverage.
-    if not getattr(msg, 'new_chat_members', None) and msg.message_id:
-        _track_pending_user_message(chat.id, user.id, msg.message_id)
-
     if getattr(msg, 'message_thread_id', None) is not None:
         return
 
@@ -458,7 +382,6 @@ async def detect_presentation_message(update: Update, context: ContextTypes.DEFA
         if len(words) < MIN_TEXT_WORDS:
             return
         if mark_presented(chat.id, user.id):
-            _clear_tracked_user_messages(chat.id, user.id)
             await _delete_pibot_prompt(context, chat.id, user.id)
             try:
                 from handlers.dante import record_system_event
@@ -485,7 +408,6 @@ async def detect_presentation_message(update: Update, context: ContextTypes.DEFA
         _schedule_message_deletion(context, chat.id, notice.message_id, name="presentation_rejected")
         return
     if mark_presented(chat.id, user.id):
-        _clear_tracked_user_messages(chat.id, user.id)
         await _delete_pibot_prompt(context, chat.id, user.id)
         try:
             from handlers.dante import record_system_event
@@ -538,20 +460,20 @@ async def _delete_notice_job(context: ContextTypes.DEFAULT_TYPE):
     try: await context.bot.delete_message(chat_id=data['chat_id'],message_id=data['message_id'])
     except Exception: pass
 
-async def _send_farewell_gif(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int):
-    """Send the farewell immediately and remove it after two minutes."""
+async def _send_farewell_gif_job(context: ContextTypes.DEFAULT_TYPE):
+    """Send the farewell GIF two minutes after a newcomer is removed."""
+    data = context.job.data or {}
+    chat_id = data.get("chat_id")
+    user_id = data.get("user_id")
+    if not chat_id or not user_id:
+        return
     try:
         farewell_gif_id = _get_random_farewell_gif(chat_id)
         farewell_text = f"👋 {visible_user(user_id=user_id)} no alcanzó a presentarse en {TIMEOUT_MINUTES} minutos. ¡Hasta luego!"
         if farewell_gif_id:
-            sent = await context.bot.send_animation(chat_id=chat_id, animation=farewell_gif_id, caption=farewell_text)
+            await context.bot.send_animation(chat_id=chat_id, animation=farewell_gif_id, caption=farewell_text)
         else:
-            sent = await context.bot.send_message(chat_id=chat_id, text=farewell_text)
-        _schedule_message_deletion(
-            context, chat_id, sent.message_id,
-            delay=AUTO_DELETE_SECONDS,
-            name="presentation_farewell_gif",
-        )
+            await context.bot.send_message(chat_id=chat_id, text=farewell_text)
     except Exception as exc:
         print(f"[PRESENTACION DESPEDIDA] {exc}")
 
@@ -565,9 +487,15 @@ async def presentation_watchdog_job(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.unban_chat_member(chat_id=chat_id, user_id=user_id, only_if_banned=True)
             ok = True
             await _delete_pibot_prompt(context, chat_id, user_id)
-            await _delete_tracked_user_messages(context, chat_id, user_id)
-            # The farewell is sent now; its own deletion is scheduled for 120 seconds later.
-            await _send_farewell_gif(context, chat_id, user_id)
+            try:
+                context.job_queue.run_once(
+                    _send_farewell_gif_job,
+                    when=FAREWELL_GIF_DELAY_SECONDS,
+                    data={"chat_id": chat_id, "user_id": user_id},
+                    name=f"presentation_farewell_{chat_id}_{user_id}",
+                )
+            except Exception as exc:
+                print(f"[PRESENTACION DESPEDIDA] No pude programar el GIF: {exc}")
             try:
                 notice=await context.bot.send_message(chat_id=chat_id,text=f'🚪 PiBot retiró a {visible_user(user_id=user_id)} por no completar su presentación a tiempo.')
                 context.job_queue.run_once(_delete_notice_job, when=AUTO_DELETE_SECONDS, data={'chat_id':chat_id,'message_id':notice.message_id}, name=f'presentation_notice_{chat_id}_{notice.message_id}')
